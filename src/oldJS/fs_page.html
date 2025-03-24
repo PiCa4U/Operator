@@ -1,0 +1,545 @@
+{% load static %}
+{% load filters %}
+
+
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Glagol - робот оператор колл-центра</title>
+    <meta charset="utf-8">
+    <meta name="description" content="Автоматический робот оператор колл-центра Glagol">
+    <meta name="keywords" content="робот оператор,колл-центр,автопрозвон,автоинформатор">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+    <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/daterangepicker/daterangepicker.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/selectize.js/0.13.3/css/selectize.bootstrap4.min.css" integrity="sha512-MMojOrCQrqLg4Iarid2YMYyZ7pzjPeXKRvhW9nZqLo6kPBBTuvNET9DBVWptAo/Q20Fy11EIHM5ig4WlIrJfQw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+
+
+    <link href="https://fonts.googleapis.com/css?family=Roboto:300,400,400i,500,500i,700" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <!-- App styles -->
+    <link rel="stylesheet" href="{% static 'office/chat_temp/dist/css/app.css' %}">
+
+    <link href="{% static 'alertify/css/alertify.css' %}" rel="stylesheet">
+    <link href="{% static 'alertify/css/themes/default.css' %}" rel="stylesheet">
+    <link href="{% static 'tiny_text/dist/tagify.css' %}" rel="stylesheet">
+
+
+    <link href="{% static 'office/dist/css/app.css' %}" rel="stylesheet">
+    <link href="{% static 'tokens/tokenize2.min.css' %}" rel="stylesheet">
+
+    <link href="{% static 'dropzone/dropzone.css' %}" rel="stylesheet">
+
+    <!-- Google Nunito font -->
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@200;300;400;600;700&display=swap" rel="stylesheet">
+
+    <!-- Themify icons -->
+    <link href="{% static 'office/chat_temp/dist/icons/themify/themify-icons.css' %}" rel="stylesheet">
+
+    <!-- Material design icons -->
+    <link href="{% static 'office/chat_temp/dist/icons/materialicons/css/materialdesignicons.min.css' %}" rel="stylesheet">
+
+    <!-- Bundle styles -->
+    <link rel="stylesheet" href="{% static 'office/chat_temp/dist/vendor/bundle.css' %}">
+
+    <!-- Slick -->
+    <link rel="stylesheet" href="{% static 'office/chat_temp/dist/vendor/slick/slick-theme.css' %}">
+    <link rel="stylesheet" href="{% static 'office/chat_tempdist/vendor/slick/slick.css' %}">
+
+    <!-- Fancybox -->
+    <link rel="stylesheet" href="{% static 'office/chat_tempdist/vendor/fancybox/jquery.fancybox.min.css' %}" type="text/css"/>
+
+    <!-- Intro js -->
+    <link rel="stylesheet" href="{% static 'office/chat_tempdist/vendor/introjs/introjs.css' %}" type="text/css"/>
+
+
+
+
+     <link rel="stylesheet" href="{% static 'office/perfect/perfect-scrollbar.css' %}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/selectize.js/0.13.3/css/selectize.bootstrap4.min.css" integrity="sha512-MMojOrCQrqLg4Iarid2YMYyZ7pzjPeXKRvhW9nZqLo6kPBBTuvNET9DBVWptAo/Q20Fy11EIHM5ig4WlIrJfQw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+
+
+
+
+<style>
+        /* Force scrollbars onto browser window */
+
+
+        /* Box styles */
+        .button_box {
+        border: none;
+        padding: 5px;
+        max-width:100%;
+        margin: auto;
+        width: 100%;
+
+        max-height: 200px;
+        overflow: scroll;
+        overflow-x: hidden;
+
+        }
+
+        /* Scrollbar styles */
+        ::-webkit-scrollbar {
+        width: 12px;
+        height: 12px;
+        overflow-x: hidden;
+        }
+
+        ::-webkit-scrollbar-track {
+        background: #f5f5f5;
+        border-radius: 10px;
+        overflow-x: hidden;
+        }
+
+        ::-webkit-scrollbar-thumb {
+        border-radius: 10px;
+        background: #ccc;
+        overflow-x: hidden;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+        background: #999;
+        }
+    </style>
+
+
+    <style>
+        .btn.btn-outline-success {
+    background: none;
+    border-color: #0BB918;
+    color: #0BB918;
+    border-width: 1px; }
+    .btn.btn-outline-success:not(:disabled):not(.disabled):hover {
+      background: #0BB918;
+      border-color: #0BB918;
+      color: white; }
+
+        audio {
+          width:100%;
+
+        }
+
+        /* Red border */
+        hr.new1 {
+          border-top: 1px solid red;
+        }
+
+        /* Dashed red border */
+        hr.new2 {
+          border-top: 1px dashed red;
+        }
+
+        /* Dotted red border */
+        hr.new3 {
+          border-top: 1px dotted red;
+        }
+
+        .dropzone {
+          border: 2px dashed #dedede;
+          border-radius: 5px;
+          background: #fafafa;
+          height: 100%;
+          padding: 7px 7px;
+        }
+
+        .dropper_box {
+        border: none;
+
+
+        max-height: 200px;
+        overflow: scroll;
+        overflow-x: hidden;
+
+        }
+
+        .script_box {
+        border: none;
+
+        display: flex;
+        height: 450px;
+        overflow: scroll;
+        overflow-x: hidden;
+
+        }
+
+
+        .dz-preview  {
+          min-height: 50px;
+          min-width: 90px;
+          margin: 5px 8px;
+        }
+
+        .dz-image  {
+          height: 50px;
+          width:90px;
+        }
+
+        .dropzone .dz-preview {
+            min-height: 60px;
+            height: 60px;
+            margin: 5px 8px;
+        }
+
+        .dropzone .dz-preview .dz-image  {
+          height: 50px;
+          width: 90px;
+        }
+
+        .dropzone i{
+          font-size: 5rem;
+        }
+
+        .dz-success-mark {
+          height: 20px;
+          width: 20px;
+        }
+
+        .dropzone .dz-preview .dz-details {
+          font-size: 8px;
+        }
+
+        .dropzone .dz-preview .dz-details .dz-size {
+          font-size: 12px;
+          margin-bottom: 0.3em;
+        }
+
+        .dz-size {
+          font-size: 12px;
+          margin-bottom: 0.3em;
+        }
+
+        .dropzone .dz-message {
+          color: rgba(0,0,0,.54);
+          font-weight: 500;
+          font-size: initial;
+          text-transform: uppercase;
+          margin-top: 3em;
+        }
+
+        .container-audio {
+            width: auto;
+            height: auto;
+            padding: 1px;
+            border-radius: 5px;
+            background-color: #F0F2F3;
+            color: #F0F2F3;
+
+            overflow: hidden;
+        }
+        .custom-select{
+            padding-bottom: 5px;
+            padding-top: 3px;
+        }
+
+        .ce-block__content, .ce-toolbar__content { max-width:calc(100% - 80px) !important; } .cdx-block { max-width: 100% !important; }
+
+
+    </style>
+
+<link rel="shortcut icon" type="image/png" href="{% static 'favicon.png' %}"/>
+<script src="//cdnjs.cloudflare.com/ajax/libs/socket.io/2.2.0/socket.io.js" integrity="sha256-yr4fRk/GU1ehYJPAs8P4JlTgu0Hdsp4ZKrx8bDEDC3I=" crossorigin="anonymous"></script>
+<script
+  src="https://code.jquery.com/jquery-3.6.0.js"
+  integrity="sha256-H+K7U5CnXl1h5ywQfKtSj8PCmoN9aaq30gDh27Xc0jk="
+  crossorigin="anonymous"></script>
+
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sifter/0.5.4/sifter.js" integrity="sha512-5nTN1ckgN3ul7NZ6WqsHqvraBTjnUZ6Y8kzX6jr0p5yqXTiz/wQE+wM8tXLGJxnZ98qABARpRdZVBJ5iYhHHmg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/selectize.js/0.13.3/js/standalone/selectize.js" integrity="sha512-pF+DNRwavWMukUv/LyzDyDMn8U2uvqYQdJN0Zvilr6DDo/56xPDZdDoyPDYZRSL4aOKO/FGKXTpzDyQJ8je8Qw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+
+    <script>
+
+    const login = "{{worker}}";
+    const api = "{{api}}";
+    const scenario = 'glagol_smart';
+    const worker = '{{worker}}';
+    //const session_key = "{{session_key}}";
+    const activeproject = "{{activeproject}}"
+    const session_check = "{{session_key}}";
+    const req_path = '{{request.path}}'
+    r_path = '{{request.path}}'
+    console.log(r_path)
+    const load_link = "{% static '/office/gif/load_crop.gif' %}";
+    const tick_link = "{% static '/office/gif/tick.png' %}";
+    const cross_link = "{% static '/office/gif/cross.png' %}";
+
+</script>
+
+
+
+<input type="hidden" name="next" value="{{ next }}" />
+{% block content %}
+{% load widget_tweaks %}
+
+
+
+
+    <div class="row col-12 pr-0" style="margin-left:0px;">
+
+         <div class="card col ml-3">
+
+            <div class="card-body" id="glagol_play_text">
+
+                <div class="row col-12 pr-0" id="status_user">
+                <h5 id="user_name"></h5>
+                <div class="mt-0 mb-0 mr-3" >
+                    <div class="row ml-0 pl-0">
+                        <p id="status" class="font-weight-bold mb-1">Обновляется</p> <div class="row ml-1" style="width:140px;" id="time_place"></div>
+                    </div>
+                <p id="sofia_status" class="font-weight-bold mt-0 mb-0">Обновляется</p>
+                </div>
+                <button name="online" id="post_stop" class="btn btn-outline-success mx-1 ml-2" onclick="post_stop_fs()" title="Закончить обработку">
+                     <i class="align-middle mr-1 fas fa-fw fa-sign-in-alt"></i> <span class="align-middle text text-dark">Закончить обработку</span>
+                 </button>
+
+                <button name="online" id="online" class="btn btn-outline-success mx-1 ml-2" onclick="start_fs_with_reason('manual_start')" title="Выйти в перерыв">
+                     <i class="align-middle mr-1 fas fa-fw fa-sign-in-alt"></i> <span class="align-middle text text-dark">Выйти на линию</span>
+                 </button>
+                <button name="pause_calls" id="pause" class="btn btn-outline-warning mx-1 ml-2" onclick="pause_fs()" title="Выйти в перерыв">
+                     <i class="align-middle mr-1 fas fa-fw fa-pause"></i> <span class="align-middle text text-dark">Перерыв</span>
+                 </button>
+                 <button name="logout_calls" id="logout" class="btn btn-outline-danger mx-1 ml-2" onclick="logout_fs()" title="Выйти в перерыв">
+                     <i class="align-middle mr-1 fas fa-fw fa-sign-out-alt"></i> <span class="align-middle text text-dark">Закончить смену</span>
+                 </button>
+                <button name="logout_calls" id="statuses" class="btn btn-outline-light text text-dark mx-1 ml-2" onclick="statuses_vis()" title="Статусы коллег">
+                     <i class="align-middle mr-1 fas fa-fw fa-users"></i> <span class="align-middle text text-dark">Кто онлайн?</span>
+                 </button>
+
+                 <button name="script_look" id="script_look" class="btn btn-outline-light text text-dark mx-1 ml-2" onclick="script_look()" title="Смотреть скрипты">
+                     <i class="align-middle mr-1 fas fa-fw fa-font"></i> <span class="align-middle text text-dark">Скрипты</span>
+                 </button>
+                </div>
+            </div>
+        </div>
+        <div id="start_section" class="card ml-3 mr-0">
+
+            <div class="card-body pr-0" id="glagol_actions">
+                <div class="row col-12 pr-0" id="start_inner">
+
+
+                <input type="text" oninput="phone_control()" class="form-control col input mb-0 mr-2" style="height:40px;" placeholder="Номер для вызова" id="phone_num">
+
+
+
+                 <button name="start_calls" id="start_call" class="btn btn-outline-success mx-1 ml-2"  onclick="click_to_call()" title="Вызов по введенному номеру телефона">
+                     <i class="align-middle mr-1 fas fa-fw fa-address-book"></i> <span class="align-middle" id="vizov_btn">Вызов по номеру</span>
+                 </button>
+                <!--
+                 <button name="start_calls" id="output_clicker" class="btn btn-outline-success mx-1 ml-2 pl-0" style="width:185px" onclick="start_clicker('output')" title="Обзвон контактов из базы">
+                     <i class="align-middle mr-1 fas fa-fw fa-caret-square-right ml-0"></i> <span class="align-middle">Обзвон по базе</span>
+                 </button>
+                -->
+                </div>
+
+            </div>
+        </div>
+        <div class="card ml-3 mr-0">
+
+            <div class="card-body mt-0">
+                 <div class="row col-12 my-0 py-0 mx-0 pr-0 pl-0">
+
+                  <div id="ver_place" class="my-0 py-0"></div>
+              </div>
+                <div class="row col-12 pr-0">
+            <a href="/worker_main/" name="sharp_stop" id="exit" class="btn btn-outline-danger mr-3">
+                    Назад
+            </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <div id="active_sips" class="row col-12 pr-0 py-2" style="margin-left:0px;">
+        <div class="card col-12 ml-3 pl-0">
+            <div class="card-header mt-0">
+            <div class="row col-12">
+                <div id="monitor_group" class="input-group input-group col-11 ml2 my-3 pb-0">
+
+                    <div class="input-group-prepend ml-0 pt-0 pb-0" style="height:36px">
+                        <span class="input-group-text mb-0" ><i class="align-middle fas fa-fw fa-search"></i></span>
+                    </div>
+                    <input type="text" class="form-control col-5 input mb-0" style="height:36px" placeholder="НАЙТИ ПОЛЬЗОВАТЕЛЕЙ" id="search_param" oninput="sip_searcher()">
+                </div>
+            </div>
+            </div>
+            <div class="card-body mt-0">
+            <div id="connection_lines" class="row col-12 pr-0 py-2">
+            </div>
+            </div>
+        </div>
+    </div>
+
+
+
+    <div class="row col-12 pr-0 py-2" style="margin-left:0px;">
+         <div id="module_butts" class="row col-12 pb-4" style="margin-left:0px;">
+             <div class=" col"></div>
+             <p class="mr-2" style="margin-top:11px;"><strong>Модули:</strong></p>
+             <div id="module_place" class="row mx-0 px-0 py-0 my-0" style="margin-left:0px;">
+             </div>
+         </div>
+
+        <div id="script_place" class="col-7 pl-0 pr-3 mr-2 py-1" style="margin-left:0px;">
+            <div class="row col-12" style="height:40px">
+                <div class="col"></div>
+                <button class="btn btn-outline-light text text-dark" onclick="back()">
+                    <i class="fas fa-fw fa-times"></i>
+                </button>
+            </div>
+             <div class="col-12">
+                 <div id="replica_box" class="col-12 script_box">
+
+
+                     <div id="replica_place" class="col-12" style="margin-top: auto;">
+
+                     </div>
+                  </div>
+                 <div id="question_place" class="col-12 mt-4 pr-3 pb-4" style="background-color: #F2F2F2; border-radius: 5px;">
+
+                 </div>
+             </div>
+
+        </div>
+        <script>
+            $('#script_place').fadeOut(300);
+        </script>
+        <div id="report_place" class="row col-7 pl-0 pr-3 mr-2 py-1" style="margin-left:0px; justify-content: start;">
+            <div id="search_row" class="row col-12 mb-3">
+                <input id="date_range_search" type="text" style="width:250px;" class="form-control ml-3">
+                <input id="phone_search" style="width:250px;" class="form-control ml-3" placeholder="Найти по телефону">
+                <button id="search_click" class="btn btn-outline-success ml-3" style="height:40px;" onclick="date_phone_searcher('find')">Найти</button>
+                <button id="cancel_click" class="btn btn-outline-warning ml-3 text text-dark" style="height:40px;" onclick="date_phone_searcher('no')">Показать все</button>
+                <div class="col"></div>
+            </div>
+
+            <div id="pg_row" class="row col-12">
+                <div class="col"></div>
+                <div id="paginator" class="row"></div>
+                <div class="col"></div>
+            </div>
+            <div id="calls_to_fill_card" class="card col-12 ml-3 mr-4 pt-2 pb-2 mb-2">
+                <h5>Незаполненные вызовы</h5>
+                <div id="calls_to_fill" class="row col-12 pb-0 pt-2">
+                    <p>У вас пока нет вызовов в незаполненном статусе.</p>
+                </div>
+
+            </div>
+            <div id="calls_filled_card" class="card col-12 ml-3 mr-4 pt-2 pb-2 mb-2">
+                <h5>Заполненные вызовы</h5>
+                <div id="calls_filled" class="row col-12 pb-0 pt-2">
+                    <p>У вас пока нет вызовов в заполненном статусе.</p>
+                </div>
+            </div>
+            <div id="filler" class="row col" style="height: 100%;">
+            </div>
+        </div>
+        <div class="col ml-2 pr-0 mr-0">
+         <div class="card col ml-0">
+            <div id="call_section_1" class="row col-12 pb-0 pt-2 ml-2">
+
+                <div id="header_sect_1" class="row col-12 mt-3"></div>
+                <div id="audio_sect_1" class="col-12">
+
+                </div>
+                <div id="body_sect_1" class="row col-12"></div>
+
+            </div>
+
+             <div id="call_section_2" class="row col-12 pb-0 pt-2 ml-2 border-top border-info">
+
+                <div id="header_sect_2" class="row col-12 mt-3"></div>
+                <div id="audio_sect_2" class="col-12">
+
+                </div>
+                <div id="body_sect_2" class="row col-12"></div>
+
+            </div>
+
+             <div id="call_section_3" class="row col-12 pb-0 pt-2 ml-2 border-top border-info">
+
+                <div id="header_sect_3" class="row col-12  mt-3"></div>
+                <div id="audio_sect_3" class="col-12">
+
+                </div>
+                <div id="body_sect_3" class="row col-12"></div>
+
+            </div>
+         </div>
+
+        </div>
+
+    </div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microplugin/0.0.3/microplugin.js" integrity="sha512-IGkpKApwIHDYxPMj2y0hX8dZsPslpdO8Bi12c2aNvLKsF8YjnwJHtjx0NvrTXBm8R9Qq+Nn0Sf/Hf+InGpmBeA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sifter/0.5.4/sifter.js" integrity="sha512-5nTN1ckgN3ul7NZ6WqsHqvraBTjnUZ6Y8kzX6jr0p5yqXTiz/wQE+wM8tXLGJxnZ98qABARpRdZVBJ5iYhHHmg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/selectize.js/0.13.3/js/standalone/selectize.js" integrity="sha512-pF+DNRwavWMukUv/LyzDyDMn8U2uvqYQdJN0Zvilr6DDo/56xPDZdDoyPDYZRSL4aOKO/FGKXTpzDyQJ8je8Qw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+
+<script src="{% static 'office/dist/js/app.js' %}"></script>
+<script src="{% static 'office/dist/js/tables.js' %}"></script>
+
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/momentjs/latest/moment.min.js"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/daterangepicker/daterangepicker.min.js"></script>
+
+
+<!-- Sweetalert2 -->
+<script src="{% static 'office/chat_temp/dist/vendor/sweetalert2.js' %}"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+
+
+<script src="https://cdn.jsdelivr.net/npm/@editorjs/editorjs@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/@editorjs/header@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/@editorjs/paragraph@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/@editorjs/simple-image@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/@editorjs/embed@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/@editorjs/delimiter@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/@editorjs/list@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/@editorjs/table@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/@editorjs/marker@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/@editorjs/warning@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/editorjs-text-alignment-blocktune@latest"></script>
+
+
+
+<script src="{% static 'office/online_page.js' %}"></script>
+
+
+
+<!-- Bundle scripts -->
+<script src="{% static 'office/chat_temp/dist/vendor/bundle.js' %]"></script>
+
+<!-- App scripts -->
+<script src="{% static 'office/chat_temp/dist/js/app.min.js' %}"></script>
+
+
+<!-- Feather icons -->
+<script src="{% static 'office/chat_temp/dist/icons/feather/feather.min.js' %}"></script>
+
+<!-- Slick -->
+<script src="{% static 'office/chat_temp/dist/vendor/slick/slick.min.js' %}"></script>
+
+<!-- Fancybox -->
+<script src="{% static 'office/chat_temp/dist/vendor/fancybox/jquery.fancybox.min.js' %}"></script>
+
+<!-- Intro js -->
+<script src="{% static 'office/chat_temp/dist/vendor/introjs/intro.js' %}"></script>
+
+<!-- Jquery Stopwatch -->
+<script src="{% static 'office/chat_temp/dist/vendor/jquery.stopwatch.js' %}"></script>
+
+<!-- Sweetalert2
+<script src="{% static 'office/chat_temp/dist/vendor/sweetalert2.js' %}"></script> -->
+
+<!-- App scripts -->
+<script src="{% static 'office/chat_temp/dist/js/app.js' %}"></script>
+
+<!-- Examples -->
+<script src="{% static 'office/chat_temp/dist/js/examples.min.js' %}"></script>
+
+{% endblock %}

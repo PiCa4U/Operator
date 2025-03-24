@@ -1,0 +1,26 @@
+/* Стили для самого input (через props className="my-date-picker-input") */
+.my-date-picker-input {
+    height: 40px;
+    width: 220px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 14px;
+    color: #333;
+    /* Если хотите иконку календаря, можно добавить background-image и пр. */
+}
+
+/* Стили для всплывающего календаря (через props calendarClassName="my-date-picker-calendar") */
+.my-date-picker-calendar {
+    /* Например, чуть скруглённые углы */
+    border-radius: 6px;
+    /* Можно задать фон */
+    background-color: #fff;
+    /* И т.д. */
+}
+
+/* Месяц/год в шапке календаря */
+.react-datepicker__current-month {
+    color: #333;
+    font-weight: bold;
+}

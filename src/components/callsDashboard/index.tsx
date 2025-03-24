@@ -1,22 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { useSelector } from 'react-redux';
-import { DateRange } from 'react-date-range';
-import { addDays } from 'date-fns'; // date-fns, если нужно что-то форматировать дополнительно
-import 'react-date-range/dist/styles.css'; // основной стиль
-import 'react-date-range/dist/theme/default.css'; // тема
-
+import DatePicker from 'react-datepicker';
+import "react-datepicker/dist/react-datepicker.css";
+import "./picker.css"
 import { RootState } from '../../redux/store';
 import { socket } from '../../socket';
 import { getCookies } from '../../utils';
 
-// Хук для дебаунса (необязательно, если вы уже его где-то используете)
 function useDebounce<T>(value: T, delay: number): T {
-    const [debouncedValue, setDebouncedValue] = useState(value);
+    const [debounced, setDebounced] = useState(value);
+
     useEffect(() => {
-        const handler = setTimeout(() => setDebouncedValue(value), delay);
-        return () => clearTimeout(handler);
+        const timer = setTimeout(() => setDebounced(value), delay);
+        return () => clearTimeout(timer);
     }, [value, delay]);
-    return debouncedValue;
+
+    return debounced;
 }
 
 function getDisplayNumber(call: any): string {
@@ -40,63 +39,58 @@ function formatLenTime(lenTime: number): string {
 }
 
 const CallsDashboard: React.FC = () => {
-    // Пример получения данных из cookies
     const sessionKey = getCookies('session_key') || '';
-    const sipLogin = getCookies('sip_login') || '';
-    const fsServer = getCookies('fs_server') || '';
-    const worker = getCookies('worker') || '';
+    const sipLogin   = getCookies('sip_login')   || '';
+    const fsServer   = getCookies('fs_server')   || '';
+    const worker     = getCookies('worker')      || '';
 
-    // Redux: roomId, fsReport
-    const roomId = useSelector((state: RootState) => state.room.roomId) || 'default_room';
+    const roomId   = useSelector((state: RootState) => state.room.roomId) || 'default_room';
     const fsReport = useSelector((state: RootState) => state.operator.fsReport);
 
-    // Состояния
+    // Значения для инпутов
+    const [startDate, setStartDate] = useState<Date | null>(new Date());
+    const [endDate,   setEndDate]   = useState<Date | null>(null);
     const [phoneSearch, setPhoneSearch] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
-
-    // Храним диапазон дат в формате, который требует react-date-range:
-    // массив из одного объекта с полями startDate, endDate, key
-    const [dateRange, setDateRange] = useState([
-        {
-            startDate: new Date(),         // Начальная дата (по умолчанию — сегодня)
-            endDate: addDays(new Date(), 7), // Конечная дата (по умолчанию — +7 дней)
-            key: 'selection',             // ключ обязательно "selection"
-        },
-    ]);
 
     // Пагинация
     const [currentPage, setCurrentPage] = useState(1);
-    const [totalPages, setTotalPages] = useState(1);
+    const [totalPages,  setTotalPages]  = useState(1);
 
-    // Разделённые списки вызовов
-    const [callsToFill, setCallsToFill] = useState<any[]>([]);
-    const [callsFilled, setCallsFilled] = useState<any[]>([]);
+    const [callsToFill,  setCallsToFill]  = useState<any[]>([]);
+    const [callsFilled,  setCallsFilled]  = useState<any[]>([]);
+    const [isLoading,    setIsLoading]    = useState(false);
 
-    // Дебаунсим ввод телефона и сам dateRange
-    const debouncedPhone = useDebounce(phoneSearch, 500);
-    const debouncedDateRange = useDebounce(dateRange, 500);
+    // Новый стейт для хранения параметров поиска, обновляемых по нажатию "Найти"
+    const [searchParams, setSearchParams] = useState({
+        start: startDate,
+        end: endDate,
+        phone: phoneSearch,
+    });
 
-    // Подписка на fs_count (для totalPages)
     useEffect(() => {
-        const handleFsCount = (msg: { count: number }) => {
+        function handleFsCount(msg: { count: number }) {
             setTotalPages(Math.ceil(msg.count / 10));
-        };
+        }
         socket.on('fs_count', handleFsCount);
-
         return () => {
             socket.off('fs_count', handleFsCount);
         };
     }, []);
 
-    // Эффект запроса данных, когда меняются фильтры (dateRange, phone) или страница
+    // Эффект срабатывает только при изменении параметров поиска или текущей страницы
     useEffect(() => {
-        // Сформируем строку для диапазона дат "DD.MM.YYYY - DD.MM.YYYY"
-        const start = debouncedDateRange[0].startDate;
-        const end = debouncedDateRange[0].endDate;
-        const dateRangeString = `${start.toLocaleDateString('ru-RU')} - ${end.toLocaleDateString('ru-RU')}`;
+        let dateRangeString = '';
+        if (searchParams.start) {
+            const startStr = searchParams.start.toLocaleDateString('ru-RU');
+            if (searchParams.end) {
+                const endStr = searchParams.end.toLocaleDateString('ru-RU');
+                dateRangeString = `${startStr} - ${endStr}`;
+            } else {
+                dateRangeString = startStr;
+            }
+        }
 
         setIsLoading(true);
-
         socket.emit('get_fs_report', {
             worker,
             session_key: sessionKey,
@@ -105,74 +99,76 @@ const CallsDashboard: React.FC = () => {
             fs_server: fsServer,
             level: (currentPage - 1) * 10,
             date_range: dateRangeString,
-            phone_search: debouncedPhone,
+            phone_search: searchParams.phone,
         });
-    }, [debouncedDateRange, debouncedPhone, currentPage]);
+    }, [searchParams, currentPage, worker, sessionKey, sipLogin, roomId, fsServer]);
 
-    // Когда fsReport обновляется в Redux, раскладываем данные по спискам
     useEffect(() => {
         if (!fsReport || !Array.isArray(fsReport)) return;
-        const toFill = fsReport.filter((call) => !call.call_reason && !call.call_result);
-        const filled = fsReport.filter((call) => call.call_reason || call.call_result);
+        const toFill = fsReport.filter(call => !call.call_reason && !call.call_result);
+        const filled = fsReport.filter(call => call.call_reason || call.call_result);
         setCallsToFill(toFill);
         setCallsFilled(filled);
         setIsLoading(false);
     }, [fsReport]);
 
-    // Пагинация
     const handlePageChange = (newPage: number) => {
         if (newPage < 1 || newPage > totalPages) return;
         setCurrentPage(newPage);
     };
 
-    // Сброс фильтров
     const handleShowAll = () => {
+        const newStart = new Date();
         setPhoneSearch('');
-        // сбрасываем дату на «сегодня - сегодня»
-        setDateRange([
-            {
-                startDate: new Date(),
-                endDate: new Date(),
-                key: 'selection',
-            },
-        ]);
+        setStartDate(newStart);
+        setEndDate(null);
         setCurrentPage(1);
+        setSearchParams({
+            start: newStart,
+            end: null,
+            phone: '',
+        });
     };
 
-    // Нажатие кнопки "Найти" (просто сбрасываем страницу)
     const handleSearchClick = () => {
+        setSearchParams({
+            start: startDate,
+            end: endDate,
+            phone: phoneSearch,
+        });
         setCurrentPage(1);
     };
 
-    // Пример показа формы
+    // При клике на вызов
     const showCallEdit = (callId: number, isFilled: boolean) => {
         console.log('Показать форму для вызова', callId, 'Заполнен?', isFilled);
+        // Открыть модалку/панель
+    };
+
+    // Обработчик изменения диапазона дат в react-datepicker
+    const handleDateChange = (dates: [Date | null, Date | null]) => {
+        const [start, end] = dates;
+        setStartDate(start);
+        setEndDate(end);
     };
 
     return (
         <div
             id="report_place"
-            className="row col-12 pl-0 pr-3 mr-2 py-1"
+            className="row  pl-0 pr-3 mr-2 py-1"
             style={{ marginLeft: 0, justifyContent: 'start' }}
         >
-            {/* Фильтры */}
             <div id="search_row" className="row col-12 mb-3">
                 <div className="ml-3" style={{ width: '250px' }}>
-                    {/* Компонент выбора диапазона дат */}
-                    <DateRange
-                        ranges={dateRange}
-                        onChange={(item: any) => {
-                            // react-date-range при изменении вернёт { selection: { startDate, endDate, key } }
-                            // нам нужно обновить dateRange
-                            if (item.selection) {
-                                setDateRange([item.selection]);
-                            }
-                        }}
-                        moveRangeOnFirstSelection={false}
-                        rangeColors={['#3ecf8e']} // цвет выделения (по желанию)
+                    <DatePicker
+                        selected={startDate}
+                        className="my-date-picker-input"
+                        onChange={handleDateChange}
+                        startDate={startDate}
+                        endDate={endDate}
+                        selectsRange
                     />
                 </div>
-
                 <input
                     id="phone_search"
                     style={{ width: '250px' }}
@@ -199,8 +195,6 @@ const CallsDashboard: React.FC = () => {
                 </button>
                 <div className="col" />
             </div>
-
-            {/* Пагинация */}
             <div id="pg_row" className="row col-12">
                 <div className="col"></div>
                 <div id="paginator" className="row">
@@ -224,14 +218,12 @@ const CallsDashboard: React.FC = () => {
                 </div>
                 <div className="col"></div>
             </div>
-
-            {/* Незаполненные вызовы */}
             <div
                 id="calls_to_fill_card"
                 className="card col-12 ml-3 mr-4 pt-2 pb-2 mb-2"
             >
                 <h5>Незаполненные вызовы</h5>
-                <div id="calls_to_fill" className="row col-12 pb-0 pt-2">
+                <div id="calls_to_fill" className="row col-12 pb-4 pt-2">
                     {isLoading ? (
                         <div className="text-center w-100">
                             <strong>Загрузка...</strong>
@@ -261,14 +253,12 @@ const CallsDashboard: React.FC = () => {
                     )}
                 </div>
             </div>
-
-            {/* Заполненные вызовы */}
             <div
                 id="calls_filled_card"
                 className="card col-12 ml-3 mr-4 pt-2 pb-2 mb-2"
             >
                 <h5>Заполненные вызовы</h5>
-                <div id="calls_filled" className="row col-12 pb-0 pt-2">
+                <div id="calls_filled" className="row col-12 pb-4 pt-2">
                     {isLoading ? (
                         <div className="text-center w-100">
                             <strong>Загрузка...</strong>
@@ -298,7 +288,6 @@ const CallsDashboard: React.FC = () => {
                     )}
                 </div>
             </div>
-
             <div id="filler" className="row col" style={{ height: '100%' }}></div>
         </div>
     );

@@ -6,23 +6,13 @@ import "./picker.css"
 import { RootState } from '../../redux/store';
 import { socket } from '../../socket';
 import { getCookies } from '../../utils';
-
-function useDebounce<T>(value: T, delay: number): T {
-    const [debounced, setDebounced] = useState(value);
-
-    useEffect(() => {
-        const timer = setTimeout(() => setDebounced(value), delay);
-        return () => clearTimeout(timer);
-    }, [value, delay]);
-
-    return debounced;
-}
+import {CallData} from "../callControlPanel";
 
 function getDisplayNumber(call: any): string {
-    if (call.direction === 'outbound') {
-        return call.destination_id || call.caller_id || '—';
+    if (call.total_direction === 'outbound') {
+        return call.b_line_num || call.caller_id || '—';
     } else {
-        return call.caller_id || call.destination_id || '—';
+        return call.a_line_num || call.destination_id || '—';
     }
 }
 
@@ -38,7 +28,11 @@ function formatLenTime(lenTime: number): string {
     return result;
 }
 
-const CallsDashboard: React.FC = () => {
+type CallsDashboardProps = {
+    setSelectedCall: (call: CallData) => void
+    selectedCall: CallData | null
+}
+const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelectedCall}) => {
     const sessionKey = getCookies('session_key') || '';
     const sipLogin   = getCookies('sip_login')   || '';
     const fsServer   = getCookies('fs_server')   || '';
@@ -60,12 +54,20 @@ const CallsDashboard: React.FC = () => {
     const [callsFilled,  setCallsFilled]  = useState<any[]>([]);
     const [isLoading,    setIsLoading]    = useState(false);
 
-    // Новый стейт для хранения параметров поиска, обновляемых по нажатию "Найти"
     const [searchParams, setSearchParams] = useState({
         start: startDate,
         end: endDate,
         phone: phoneSearch,
     });
+
+    useEffect(() => {
+        if (!isLoading && !selectedCall) {
+            const allCalls = [...callsToFill, ...callsFilled];
+            if (allCalls.length > 0) {
+                setSelectedCall(allCalls[0]);
+            }
+        }
+    }, [isLoading, callsToFill, callsFilled, selectedCall, setSelectedCall]);
 
     useEffect(() => {
         function handleFsCount(msg: { count: number }) {
@@ -77,7 +79,6 @@ const CallsDashboard: React.FC = () => {
         };
     }, []);
 
-    // Эффект срабатывает только при изменении параметров поиска или текущей страницы
     useEffect(() => {
         let dateRangeString = '';
         if (searchParams.start) {
@@ -139,13 +140,14 @@ const CallsDashboard: React.FC = () => {
         setCurrentPage(1);
     };
 
-    // При клике на вызов
     const showCallEdit = (callId: number, isFilled: boolean) => {
-        console.log('Показать форму для вызова', callId, 'Заполнен?', isFilled);
-        // Открыть модалку/панель
+        const allCalls: CallData[] = [...callsToFill, ...callsFilled];
+        const selected = allCalls.find(call => call.id === callId);
+        if (selected) {
+            setSelectedCall(selected);
+        }
     };
 
-    // Обработчик изменения диапазона дат в react-datepicker
     const handleDateChange = (dates: [Date | null, Date | null]) => {
         const [start, end] = dates;
         setStartDate(start);
@@ -237,12 +239,21 @@ const CallsDashboard: React.FC = () => {
                             return (
                                 <div
                                     key={call.id}
-                                    className="row col-12 border border-danger rounded my-1 ml-2"
+                                    className="row col-12 border border-danger rounded my-1 ml-2 align-items-center"
                                     style={{ height: '55px', cursor: 'pointer' }}
                                     onClick={() => showCallEdit(call.id, false)}
                                 >
+                                    {call.total_direction === "outbound" ? (
+                                        <span className="material-icons" style={{color: "#7cd420"}}>
+                                            login
+                                        </span>
+                                    ) : (
+                                        <span className="material-icons" style={{color: "#f26666"}}>
+                                            logout
+                                        </span>
+                                    )}
                                     <p
-                                        className="font-weight-bold mb-2 mt-3 ml-2"
+                                        className="font-weight-bold mb-2 mt-2 ml-2 align-items-center"
                                         style={{ fontSize: '13px' }}
                                     >
                                         {phoneNumber} | {call.datetime_start} | {callDuration}
@@ -272,12 +283,21 @@ const CallsDashboard: React.FC = () => {
                             return (
                                 <div
                                     key={call.id}
-                                    className="row col-12 border border-info rounded my-1 ml-2"
+                                    className="row col-12 border border-info rounded my-1 ml-2 align-items-center"
                                     style={{ height: '55px', cursor: 'pointer' }}
                                     onClick={() => showCallEdit(call.id, true)}
                                 >
+                                    {call.total_direction === "outbound" ? (
+                                        <span className="material-icons" style={{color: "#7cd420"}}>
+                                            login
+                                        </span>
+                                    ) : (
+                                        <span className="material-icons" style={{color: "#f26666"}}>
+                                            logout
+                                        </span>
+                                    )}
                                     <p
-                                        className="font-weight-bold mb-2 mt-3 ml-2"
+                                        className="font-weight-bold mb-2 mt-2 ml-2"
                                         style={{ fontSize: '13px' }}
                                     >
                                         {phoneNumber} | {call.datetime_start} | {callDuration}

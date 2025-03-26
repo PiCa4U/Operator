@@ -6,7 +6,10 @@ import { socket } from '../../socket';
 import {getCookies, parseMonitorData} from '../../utils';
 import {selectMyProjects, selectProjectPool, setMonitorData} from "../../redux/operatorSlice";
 
-const HeaderPanel: React.FC = () => {
+interface HeaderPanelProps {
+    onScriptToggle: () => void
+}
+const HeaderPanel: React.FC<HeaderPanelProps> = ({onScriptToggle}) => {
     const sessionKey = getCookies('session_key') || '';
     const sipLogin = getCookies('sip_login') || '';
     const fsServer = getCookies('fs_server') || '';
@@ -23,28 +26,13 @@ const HeaderPanel: React.FC = () => {
 
     const myCallCenter = monitorCallcenter[sipLogin]?.[0];
     console.log("myCallCenter: ", myCallCenter)
-    const myProjects = useSelector((state: RootState) => selectMyProjects(state, sipLogin));
     const projectPool = useSelector((state: RootState) => selectProjectPool(state, sipLogin));
+    console.log("projectPool: ", projectPool)
 
 
-    // socket.emit('outbound_calls', {
-    //     worker: worker,
-    //     sip_login: sipLogin,
-    //     session_key: sessionKey,
-    //     room_id: roomId,
-    //     fs_server: fsServer,
-    //     project_pool: projectPool,
-    //     action: 'get_phone_to_call'
-    // });
-
-    // Получаем статус оператора и имя из Redux
     const fsStatus = useSelector((state: RootState) => state.operator.fsStatus);
     const operatorName = useSelector((state: RootState) => state.operator.name) || 'Имя оператора';
 
-    // Получаем нужные куки и roomId
-
-
-    // Локальный стейт
     const [showStatuses, setShowStatuses] = useState(false);
     const [phone, setPhone] = useState('');
     // Выбранная линия для вызова (prefix)
@@ -74,16 +62,38 @@ const HeaderPanel: React.FC = () => {
         console.log("outExtensions: ", outExtensions)
     },[outExtensions])
     const outProjectClickToCall = () => {
-        // В этой функции реализуйте логику перехода в режим исходящего вызова
         console.log("outProjectClickToCall вызвана");
     };
 
     const changeStateFs = (state:any, reason:any) => {
-        // Здесь можно, например, диспатчить экшен или вызывать socket.emit('change_state_fs', ...)
         console.log("changeStateFs", state, reason);
     };
 
+    const statusMapping: { [key: string]: { text: string, color: string } } = {
+        'Available': { text: 'На линии', color: '#0BB918' },
+        'Available (On Demand)': { text: 'На линии', color: '#0BB918' },
+        'Logged Out': { text: 'Выключен', color: '#f33333' },
+        'On Break': { text: 'Перерыв', color: '#cba200' },
+        'Post': { text: 'Постобработка', color: '#cba200' },
+    };
+    const sofiaMapping: { [key: string]: { text: string, color: string } } = {
+        'Registered': { text: 'Авторизован', color: '#0BB918' },
+        'Unregistered': { text: 'Выключен', color: '#f33333' },
+    };
 
+    const getSofiaStatus = (status: string) => {
+        return status.includes('Unregistered')
+            ? sofiaMapping['Unregistered']
+            : sofiaMapping['Registered'];
+    };
+
+// Если fsStatus.sofia_status приходит с доп. информацией, передаем её напрямую:
+    const currentSofia =
+        fsStatus && fsStatus.sofia_status
+            ? getSofiaStatus(fsStatus.sofia_status)
+            : { text: 'Обновляется', color: '#cba200' };
+    // Определяем текст и цвет для статуса вызов-центра и SIP‑регистрации
+    const callStatus = fsStatus && fsStatus.status ? (statusMapping[fsStatus.status] || { text: fsStatus.status, color: '#cba200' }) : { text: 'Обновляется', color: '#cba200' };
     useEffect(() => {
         const handleGetPhoneToCall = (msg:any) => {
             // Сохраняем полученные данные в стейт
@@ -144,7 +154,6 @@ const HeaderPanel: React.FC = () => {
                     }
                 });
             } else if (msg.start_type === 'auto') {
-                // Если вызов назначен автоматически – показываем уведомление на 3 секунды
                 Swal.fire({
                     title: `Исходящий вызов - ${allProjects[msg.project_name]?.glagol_name || msg.project_name}`,
                     text: `На номер ${msg.phone?.phone || msg.phone}`,
@@ -185,21 +194,16 @@ const HeaderPanel: React.FC = () => {
         fsServer,
         projectPool,
     ]);
-    // Обновляем текущее время каждую секунду
     useEffect(() => {
         take()
         const timer = setInterval(() => setCurrentTime(new Date()), 1000);
         return () => clearInterval(timer);
     }, []);
 
-    // Подписка на события сокета для обновления статуса (и, возможно, для получения информации о назначенных линиях)
     useEffect(() => {
         socket.on('fs_status', (data: any) => {
             console.log('Получили fs_status:', data);
-            // Здесь можно обновлять Redux или локальный стейт
-            // Например: dispatch(setFsStatus(data));
         });
-        // Пример получения назначенных линий для исходящих вызовов:
 
         socket.on('monitor_projects', (data: any) => {
             console.log('Получены данные monitor_projects:', data);
@@ -209,7 +213,7 @@ const HeaderPanel: React.FC = () => {
         });
         return () => {
             socket.off('monitor_projects')
-            socket.off('fs_status');
+            // socket.off('fs_status');
             socket.off('assigned_out_extensions');
         };
 
@@ -278,7 +282,6 @@ const HeaderPanel: React.FC = () => {
         }
     };
 
-    // Обработчики для кнопок в хедере
     const handlePostStop = () => {
         console.log('Нажали "Закончить обработку"');
         socket.emit('change_stat_fs', {
@@ -291,23 +294,71 @@ const HeaderPanel: React.FC = () => {
             page: 'online',
         });
     };
-
-    const handleStartFs = () => {
-        console.log('Нажали "Выйти на линию"');
+    const handleStartFs = (reason?: string, idle_set?: boolean) => {
         socket.emit('change_stat_fs', {
             fs_server: fsServer,
             sip_login: sipLogin,
             room_id: roomId,
-            worker: sipLogin,
+            worker,
             session_key: sessionKey,
             action: 'available',
+            reason,
+            state: "waiting",
+            idle_set,
             page: 'online',
         });
+        socket.emit('change_state_fs', {
+            fs_server: fsServer,
+            sip_login: sipLogin,
+            room_id: roomId,
+            worker,
+            session_key: sessionKey,
+            action: 'available',
+            state: "waiting",
+            reason,
+            page: 'online',
+        });
+        // socket_click.emit('change_state_fs', {
+        //     'fs_server':fs_server,
+        //     'sip_login':sip_login,
+        //     'room_id':room_id,
+        //     'worker':login,
+        //     'session_key':session_key,
+        //     'state':state,
+        //     'reason':reason,
+        //     'page':'online'})
+
+        // socket_click.emit('change_stat_fs', {
+        //     'fs_server':fs_server,
+        //     'sip_login':sip_login,
+        //     'room_id':room_id,
+        //     'worker':login,
+        //     'session_key':session_key,
+        //     'action':'available',
+        //     'page':'online',
+        //     'reason':reason_fs,
+        //     'idle_set':idle_set
+        // })
+
     };
 
+    // const start = (state: string, reason: string) => {
+    //     console.log('Нажали "Выйти на линию"');
+    //     socket.emit('change_stat_fs', {
+    //         fs_server: fsServer,
+    //         sip_login: sipLogin,
+    //         room_id: roomId,
+    //         worker,
+    //         session_key: sessionKey,
+    //         action: 'available',
+    //         state,
+    //         reason,
+    //         page: 'online',
+    //     });
+    // }
     const handlePauseFs = async () => {
         console.log('Нажали "Перерыв"');
-        const { value: reason } = await Swal.fire({
+        const { value:  reason } = await Swal.fire({
             title: 'Укажите причину перерыва',
             input: 'select',
             inputOptions: {
@@ -351,11 +402,9 @@ const HeaderPanel: React.FC = () => {
     };
 
     const handleScriptLook = () => {
-        console.log('Нажали "Скрипты"');
-        take()
+        onScriptToggle()
     };
 
-    // Функция для отрисовки кнопок в зависимости от fsStatus
     const renderButtons = () => {
         if (!fsStatus || !fsStatus.status) return null;
         const currentStatus = fsStatus.status;
@@ -376,7 +425,7 @@ const HeaderPanel: React.FC = () => {
                         name="online"
                         id="online"
                         className="btn btn-outline-success mx-1 ml-2"
-                        onClick={handleStartFs}
+                        onClick={() => handleStartFs('manual_start')}
                     >
                         Выйти на линию
                     </button>
@@ -423,32 +472,23 @@ const HeaderPanel: React.FC = () => {
 
     return (
         <div className="row col-12 pr-0" style={{ marginLeft: 0 }}>
-            {/* Панель статусов */}
             <div className="card col ml-3">
                 <div className="card-body" id="glagol_play_text">
                     <div className="row col-12 pr-0" id="status_user">
                         <div className="mt-0 mb-0 mr-3">
                             <div className="row ml-0 pl-0">
-                                <p id="status" className="font-weight-bold mb-1">
-                                    {fsStatus?.sofia_status || 'Обновляется'}
+                                <p id="status" className={`font-weight-bold mb-1 text`} style={{color: `${callStatus.color}`}}>
+                                    {callStatus.text}
                                 </p>
-                                {/* Блок с текущим временем (аналог time_place) */}
-                                <div className="row ml-1" style={{ width: '140px' }}>
-                                    <p className="font-weight-bold mb-1">
-                                        {currentTime.toLocaleTimeString()}
-                                    </p>
-                                </div>
                             </div>
-                            <p id="sofia_status" className="font-weight-bold mt-0 mb-0">
-                                {fsStatus?.status || 'Обновляется'}
+                            <p id="sofia_status" className={`font-weight-bold mt-0 mb-0 text`} style={{color: `${currentSofia.color}`}}>
+                                {currentSofia.text}
                             </p>
                         </div>
                         {renderButtons()}
                     </div>
                 </div>
             </div>
-
-            {/* Блок ввода номера и кнопка вызова */}
             <div id="start_section" className="card ml-3 mr-0">
                 <div className="card-body pr-0" id="glagol_actions">
                     <div className="row col-12 pr-0" id="start_inner">
@@ -473,8 +513,6 @@ const HeaderPanel: React.FC = () => {
                     </div>
                 </div>
             </div>
-
-            {/* Блок с версией и кнопкой "Назад" */}
             <div className="card ml-3 mr-0">
                 <div className="card-body mt-0">
                     <div className="row col-12 my-0 py-0 mx-0 pr-0 pl-0" id="ver_place">
@@ -487,8 +525,6 @@ const HeaderPanel: React.FC = () => {
                     </div>
                 </div>
             </div>
-
-            {/* Панель со статусами коллег (условный рендер) */}
             {showStatuses && (
                 <div id="active_sips" className="row col-12 pr-0 py-2" style={{ marginLeft: 0 }}>
                     <div className="card col-12 ml-3 pl-0">

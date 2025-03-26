@@ -1,36 +1,25 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { setRoomId } from './redux/roomSlice';
 import HeaderPanel from './components/headerPanel';
-import CallControlPanel from './components/callControlPanel';
+import CallControlPanel, { CallData } from './components/callControlPanel';
 import CallsDashboard from './components/callsDashboard';
-import ModulesPanel from './components/modulesPanel';
 import ScriptPanel from './components/scriptPanel';
-import StatusPanel from './components/statusPanel';
 import { socket } from "./socket";
 import { getCookies, makeId } from "./utils";
 import { setFsStatus } from './redux/operatorSlice';
 
-const session_key = getCookies("session_key");
-const sip_login = getCookies("sip_login");
-const fs_server = getCookies("fs_server");
-
 const App: React.FC = () => {
+    const [selectedCall, setSelectedCall] = useState<CallData | null>(null);
+    const [showScriptPanel, setShowScriptPanel] = useState(false);
     const dispatch = useDispatch();
 
     const roomId = useMemo(() => makeId(40), []);
 
     useEffect(() => {
-        // Подписываемся на событие 'fs_status'
         socket.on('fs_status', (msg: any) => {
-            console.log('Получили fs_status:', msg);
             dispatch(setFsStatus(msg));
         });
-
-        // При размонтировании удаляем подписку
-        // return () => {
-        //     socket.off('fs_status');
-        // };
     }, [dispatch]);
 
     useEffect(() => {
@@ -38,15 +27,26 @@ const App: React.FC = () => {
     }, [dispatch, roomId]);
 
     return (
-        <div className="app-container">
-            <HeaderPanel />
-            <div style={{display: "flex", flexDirection: "row", gap: "16px"}}>
-                <CallsDashboard />
-                <CallControlPanel />
+        <div className="row col-12 pr-0" style={{ marginLeft: 0 }}>
+            <HeaderPanel onScriptToggle={() => setShowScriptPanel(!showScriptPanel)} />
+            {showScriptPanel && (
+                <ScriptPanel
+                    projectName={selectedCall ? selectedCall.project_name || '' : ''}
+                    onClose={() => setShowScriptPanel(false)}
+                />
+            )}
+            <div className="row col-12 pr-0 py-2" style={{ marginLeft: 0 }}>
+                <div id="report_place" className="row col-7 pl-0 pr-3 mr-2 py-1" style={{ marginLeft: 0, justifyContent: 'start' }}>
+                    <CallsDashboard setSelectedCall={setSelectedCall} selectedCall={selectedCall} />
+                </div>
+                <div className="col ml-2 pr-0 mr-0">
+                    <div className="card col ml-0">
+                        {selectedCall && (
+                            <CallControlPanel call={selectedCall} onClose={() => setSelectedCall(null)} />
+                        )}
+                    </div>
+                </div>
             </div>
-            {/*<ModulesPanel />*/}
-            {/*<ScriptPanel />*/}
-            {/*<StatusPanel />*/}
         </div>
     );
 };

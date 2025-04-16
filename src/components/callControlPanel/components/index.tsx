@@ -8,10 +8,10 @@ interface EditableFieldsProps {
 }
 
 const EditableFields: React.FC<EditableFieldsProps> = ({
-    params,
-    initialValues = {},
-    onChange
-}) => {
+                                                           params,
+                                                           initialValues = {},
+                                                           onChange
+                                                       }) => {
     const [fieldValues, setFieldValues] = useState<{ [fieldId: string]: string }>(initialValues);
 
     const visibleParams = params.filter(param => !param.deleted);
@@ -37,17 +37,34 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                     value: currentValue,
                     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
                         handleChange(param.field_id, e.target.value),
-                    readOnly: !param.editable, // Если поле не редактируемое
+                    readOnly: !param.editable,
                 };
 
                 return (
-                    <div key={param.id} className="form-group">
-                        <label>
+                    <div
+                        key={param.id}
+                        className="form-group"
+                        style={{
+                            display: 'flex',
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            flexWrap: 'nowrap',
+                            marginBottom: '1rem'
+                        }}
+                    >
+                        <label
+                            style={{
+                                whiteSpace: 'nowrap',
+                                fontWeight: '400',
+                                fontSize: '16px',
+                                marginRight: '8px'
+                            }}
+                        >
                             {param.field_name}
                             {param.must_have && <span style={{ color: 'red' }}> *</span>}:
                         </label>
 
-                        {/* Варианты рендера в зависимости от field_type */}
+                        {/* Рендеринг в зависимости от типа поля */}
                         {param.field_type === "regular" && (
                             <input type="text" {...commonProps} />
                         )}
@@ -80,14 +97,16 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         )}
 
                         {param.field_type === "checkbox" && (
-                            <div className="form-check">
+                            <div className="form-check" style={{ marginLeft: '8px' }}>
                                 <input
                                     type="checkbox"
                                     className="form-check-input"
                                     id={`checkbox_${param.id}`}
                                     checked={currentValue === 'true'}
                                     disabled={!param.editable}
-                                    onChange={(e) => handleChange(param.field_id, e.target.checked ? 'true' : 'false')}
+                                    onChange={(e) =>
+                                        handleChange(param.field_id, e.target.checked ? 'true' : 'false')
+                                    }
                                 />
                                 <label className="form-check-label" htmlFor={`checkbox_${param.id}`}>
                                     {param.field_vals || 'Выбрать'}
@@ -98,18 +117,27 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         {param.field_type === "radio" && (
                             <>
                                 {param.field_vals?.split(',').map((opt, idx) => (
-                                    <div className="form-check" key={idx} style={{ marginRight: '10px' }}>
+                                    <div
+                                        className="form-check"
+                                        key={idx}
+                                        style={{ marginRight: '10px', marginLeft: '8px' }}
+                                    >
                                         <input
                                             type="radio"
                                             className="form-check-input"
                                             id={`radio_${param.id}_${idx}`}
-                                            name={param.field_id} // одна группа
+                                            name={param.field_id}
                                             value={opt}
                                             checked={currentValue === opt}
                                             disabled={!param.editable}
-                                            onChange={(e) => handleChange(param.field_id, e.target.value)}
+                                            onChange={(e) =>
+                                                handleChange(param.field_id, e.target.value)
+                                            }
                                         />
-                                        <label className="form-check-label" htmlFor={`radio_${param.id}_${idx}`}>
+                                        <label
+                                            className="form-check-label"
+                                            htmlFor={`radio_${param.id}_${idx}`}
+                                        >
                                             {opt}
                                         </label>
                                     </div>
@@ -119,14 +147,22 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
 
                         {param.field_type === "many" && (
                             (() => {
-                                const selectedValues = currentValue.split(',').map(v => v.trim()).filter(Boolean);
-                                const options = param.field_vals?.split(',').map(opt => opt.trim()) || [];
+                                const selectedValues = currentValue
+                                    .split(',')
+                                    .map(v => v.trim())
+                                    .filter(Boolean);
+                                const options =
+                                    param.field_vals?.split(',').map(opt => opt.trim()) || [];
                                 return (
-                                    <div>
+                                    <div style={{ marginLeft: '8px' }}>
                                         {options.map((opt, idx) => {
                                             const isChecked = selectedValues.includes(opt);
                                             return (
-                                                <div className="form-check" key={idx} style={{ marginRight: '10px' }}>
+                                                <div
+                                                    className="form-check"
+                                                    key={idx}
+                                                    style={{ marginRight: '10px' }}
+                                                >
                                                     <input
                                                         type="checkbox"
                                                         className="form-check-input"
@@ -139,12 +175,17 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                                             if (e.target.checked) {
                                                                 newSelected = [...selectedValues, opt];
                                                             } else {
-                                                                newSelected = selectedValues.filter(v => v !== opt);
+                                                                newSelected = selectedValues.filter(
+                                                                    v => v !== opt
+                                                                );
                                                             }
                                                             handleChange(param.field_id, newSelected.join(','));
                                                         }}
                                                     />
-                                                    <label className="form-check-label" htmlFor={`many_${param.id}_${idx}`}>
+                                                    <label
+                                                        className="form-check-label"
+                                                        htmlFor={`many_${param.id}_${idx}`}
+                                                    >
                                                         {opt}
                                                     </label>
                                                 </div>

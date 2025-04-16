@@ -1,21 +1,52 @@
-import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import {RootState} from "./store";
+import { createSlice, PayloadAction, createSelector } from '@reduxjs/toolkit';
+import isEqual from 'lodash/isEqual';
+import { RootState } from "./store";
 
-interface MonitorData {
+// Типы для данных
+export interface ReasonItem {
+    id: string;
+    name: string;
+    description?: string;
+    project_name: string;
+    [key: string]: any;
+}
+export interface ResultItem {
+    id: string;
+    name: string;
+    description?: string;
+    project_name: string;
+    [key: string]: any;
+}
+export interface FieldDefinition {
+    field_id: string;
+    field_name: string;
+    field_type: string;
+    field_vals: string | null;
+    editable: boolean;
+    must_have: boolean;
+    project_name: string;
+    [key: string]: any;
+}
+
+export interface MonitorData {
     monitorUsers: Record<string, any>;
     monitorProjects: Record<string, string>;
     allProjects: Record<string, any>;
     monitorCallcenter: Record<string, string[]>;
 }
 
-interface OperatorState {
+export interface OperatorState {
     fsReport: any;
     fsStatus: any;
     activeCalls: any;
     roomId: string;
     name: string;
-    // Добавляем новые поля для monitor_projects
     monitorData: MonitorData;
+    fsReasons: {
+        call_reasons: ReasonItem[];
+        call_results: ResultItem[];
+        as_is_dict: FieldDefinition[];
+    } | null;
 }
 
 const initialState: OperatorState = {
@@ -30,41 +61,79 @@ const initialState: OperatorState = {
         allProjects: {},
         monitorCallcenter: {},
     },
+    fsReasons: null,
 };
 
-export function selectMyProjects(state: RootState, sipLogin: string) {
-    return state.operator.monitorData.monitorCallcenter[sipLogin] || [];
-}
+// Мемоизированный селектор для полной коллекции проектов для оператора
+export const makeSelectFullProjectPool = (sipLogin: string) =>
+    createSelector(
+        (state: RootState) => state.operator.monitorData.allProjects,
+        (state: RootState) => state.operator.monitorData.monitorCallcenter[sipLogin] || [],
+        (allProjects, myProjects) => {
+            // Если проектов нет – вернём пустой массив.
+            return myProjects
+                .map((pName: string) => allProjects[pName])
+                .filter(proj => proj && proj.out_active);
+        }
+    );
 
-export function selectProjectPool(state: RootState, sipLogin: string) {
-    const { allProjects } = state.operator.monitorData;
-    const myProjects = selectMyProjects(state, sipLogin);
-    return myProjects.filter((pName: string) => allProjects[pName]?.out_active);
-}
+// Другие селекторы, если нужно
+export const selectMyProjects = createSelector(
+    [(state: RootState) => state.operator.monitorData.monitorCallcenter, (_: RootState, sipLogin: string) => sipLogin],
+    (monitorCallcenter, sipLogin) => monitorCallcenter[sipLogin] || []
+);
+
+export const selectProjectPool = createSelector(
+    [
+        (state: RootState) => state.operator.monitorData.allProjects,
+        selectMyProjects,
+    ],
+    (allProjects, myProjects) =>
+        myProjects.filter((pName: string) => allProjects[pName]?.out_active)
+);
 
 const operatorSlice = createSlice({
     name: 'operator',
     initialState,
     reducers: {
         setFsReport(state, action: PayloadAction<any>) {
-            state.fsReport = action.payload;
+            if (!isEqual(state.fsReport, action.payload)) {
+                state.fsReport = action.payload;
+            }
         },
         setFsStatus(state, action: PayloadAction<any>) {
-            state.fsStatus = action.payload;
+            if (!isEqual(state.fsStatus, action.payload)) {
+                state.fsStatus = action.payload;
+            }
         },
         setActiveCalls(state, action: PayloadAction<any>) {
-            state.activeCalls = action.payload;
+            if (!isEqual(state.activeCalls, action.payload)) {
+                state.activeCalls = action.payload;
+            }
         },
         setRoomId(state, action: PayloadAction<string>) {
-            state.roomId = action.payload;
+            if (state.roomId !== action.payload) {
+                state.roomId = action.payload;
+            }
         },
         setName(state, action: PayloadAction<string>) {
-            state.name = action.payload;
+            if (state.name !== action.payload) {
+                state.name = action.payload;
+            }
         },
-
-        // Новый экшен для записи monitorData
         setMonitorData(state, action: PayloadAction<MonitorData>) {
-            state.monitorData = action.payload;
+            if (!isEqual(state.monitorData, action.payload)) {
+                state.monitorData = action.payload;
+            }
+        },
+        setFsReasons(state, action: PayloadAction<{
+            call_reasons: ReasonItem[];
+            call_results: ResultItem[];
+            as_is_dict: FieldDefinition[];
+        } | null>) {
+            if (!isEqual(state.fsReasons, action.payload)) {
+                state.fsReasons = action.payload;
+            }
         },
     },
 });
@@ -75,7 +144,8 @@ export const {
     setActiveCalls,
     setRoomId,
     setName,
-    setMonitorData, // <-- Экспортируем новый экшен
+    setMonitorData,
+    setFsReasons,
 } = operatorSlice.actions;
 
 export default operatorSlice.reducer;

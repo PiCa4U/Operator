@@ -1,7 +1,7 @@
 import  io  from 'socket.io-client';
 import { store } from '../redux/store';
-import { setFsReport, setFsStatus, setActiveCalls } from '../redux/operatorSlice';
-import {getCookies} from "../utils";
+import {setFsReport, setFsStatus, setActiveCalls, setMonitorData, setFsReasons} from '../redux/operatorSlice';
+import {getCookies, parseMonitorData} from "../utils";
 
 export const socket = io("wss://operator.glagol.ai", {
     transports: ['websocket']
@@ -24,9 +24,18 @@ socket.on('connect', () => {
     emitStatus();
 
     setInterval(emitStatus, 3000);
+
 });
 
+socket.on("monitor_projects", (data: any) => {
+    console.log('Получены данные monitor_projects:', data);
 
+    const parsedData = parseMonitorData(data);
+    console.log("parsedData: ", parsedData);
+
+    // Нужно вызвать store.dispatch, чтобы изменить Redux-состояние
+    store.dispatch(setMonitorData(parsedData));
+});
 // Логирование ответа на тестовое событие
 socket.on('test_event_response', (data: any) => {
     console.log('Получили ответ на тестовое событие:', data);
@@ -42,6 +51,11 @@ socket.on('fs_report', (data: any) => {
 socket.on('fs_status', (data: any) => {
     console.log('Получили fs_status:', data);
     store.dispatch(setFsStatus(data));
+});
+
+socket.on('fs_reasons', (data: any) => {
+    console.log('Получили fs_reasons:', data);
+    store.dispatch(setFsReasons(data));
 });
 
 // Если нужны другие события:

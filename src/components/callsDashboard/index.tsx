@@ -31,23 +31,26 @@ function formatLenTime(lenTime: number): string {
 type CallsDashboardProps = {
     setSelectedCall: (call: CallData) => void
     selectedCall: CallData | null
+    currentPage: number
+    setCurrentPage: (currentPage: number) => void
 }
-const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelectedCall}) => {
+const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelectedCall, currentPage, setCurrentPage}) => {
     const sessionKey = getCookies('session_key') || '';
     const sipLogin   = getCookies('sip_login')   || '';
     const fsServer   = getCookies('fs_server')   || '';
     const worker     = getCookies('worker')      || '';
 
     const roomId   = useSelector((state: RootState) => state.room.roomId) || 'default_room';
-    const fsReport = useSelector((state: RootState) => state.operator.fsReport);
-
+    const [fsReport, setFsReport] = useState<any[]>([])
+    // const fsReport = useSelector((state: RootState) => state.operator.fsReport);
+    useEffect(()=>     console.log("fsReport: ", fsReport),[fsReport])
     // Значения для инпутов
-    const [startDate, setStartDate] = useState<Date | null>(new Date());
+    const [startDate, setStartDate] = useState<Date | null >(null);
     const [endDate,   setEndDate]   = useState<Date | null>(null);
     const [phoneSearch, setPhoneSearch] = useState('');
 
     // Пагинация
-    const [currentPage, setCurrentPage] = useState(1);
+    // const [currentPage, setCurrentPage] = useState(1);
     const [totalPages,  setTotalPages]  = useState(1);
 
     const [callsToFill,  setCallsToFill]  = useState<any[]>([]);
@@ -60,14 +63,24 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelecte
         phone: phoneSearch,
     });
 
-    useEffect(() => {
-        if (!isLoading && !selectedCall) {
-            const allCalls = [...callsToFill, ...callsFilled];
-            if (allCalls.length > 0) {
-                setSelectedCall(allCalls[0]);
-            }
+    // useEffect(() => {
+    //     if (!isLoading && !selectedCall) {
+    //         const allCalls = [...callsToFill, ...callsFilled];
+    //         if (allCalls.length > 0) {
+    //             setSelectedCall(allCalls[0]);
+    //         }
+    //     }
+    // }, [isLoading, callsToFill, callsFilled, selectedCall, setSelectedCall]);
+
+    useEffect(()=> {
+        const getFsReport = (msg: any) => {
+            setFsReport(msg)
         }
-    }, [isLoading, callsToFill, callsFilled, selectedCall, setSelectedCall]);
+        socket.on('fs_report', getFsReport)
+        return () => {
+            socket.off('fs_report', getFsReport);
+        };
+    },[])
 
     useEffect(() => {
         function handleFsCount(msg: { count: number }) {
@@ -119,7 +132,7 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelecte
     };
 
     const handleShowAll = () => {
-        const newStart = new Date();
+        const newStart = null
         setPhoneSearch('');
         setStartDate(newStart);
         setEndDate(null);
@@ -155,70 +168,71 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelecte
     };
 
     return (
-        <div
-            id="report_place"
-            className="row  pl-0 pr-3 mr-2 py-1"
-            style={{ marginLeft: 0, justifyContent: 'start' }}
-        >
-            <div id="search_row" className="row col-12 mb-3">
-                <div className="ml-3" style={{ width: '250px' }}>
+        <div className="container-fluid" style={{ marginLeft: 0 }}>
+            {/* Блок с поиском (дата + телефон) и кнопками */}
+            <div className="row ml-1 mb-3 align-items-center">
+                <div className="col-auto">
                     <DatePicker
                         selected={startDate}
-                        className="my-date-picker-input"
                         onChange={handleDateChange}
                         startDate={startDate}
                         endDate={endDate}
                         selectsRange
+                        placeholderText="Выберите период"
+                        className="form-control"
                     />
                 </div>
-                <input
-                    id="phone_search"
-                    style={{ width: '250px' }}
-                    className="form-control ml-3"
-                    placeholder="Номер для поиска"
-                    value={phoneSearch}
-                    onChange={(e) => setPhoneSearch(e.target.value)}
-                />
-                <button
-                    id="search_click"
-                    className="btn btn-outline-success ml-3"
-                    style={{ height: '40px' }}
-                    onClick={handleSearchClick}
-                >
-                    Найти
-                </button>
-                <button
-                    id="cancel_click"
-                    className="btn btn-outline-warning ml-3 text text-dark"
-                    style={{ height: '40px' }}
-                    onClick={handleShowAll}
-                >
-                    Показать все
-                </button>
+                <div className="col-auto">
+                    <input
+                        id="phone_search"
+                        className="form-control"
+                        style={{ minWidth: '180px' }}
+                        placeholder="Номер для поиска"
+                        value={phoneSearch}
+                        onChange={(e) => setPhoneSearch(e.target.value)}
+                    />
+                </div>
+                <div className="col-auto">
+                    <button
+                        id="search_click"
+                        className="btn btn-outline-success"
+                        onClick={handleSearchClick}
+                    >
+                        Найти
+                    </button>
+                </div>
+                <div className="col-auto">
+                    <button
+                        id="cancel_click"
+                        className="btn btn-outline-warning text-dark"
+                        onClick={handleShowAll}
+                    >
+                        Показать все
+                    </button>
+                </div>
                 <div className="col" />
             </div>
-            <div id="pg_row" className="row col-12">
-                <div className="col"></div>
-                <div id="paginator" className="row">
+
+            <div className="row mb-2">
+                <div className="col d-flex justify-content-center align-items-center">
                     <button
-                        className="btn btn-light mr-2"
+                        className="btn btn-light mr-3"
                         onClick={() => handlePageChange(currentPage - 1)}
                         disabled={currentPage <= 1}
                     >
                         &lt;
                     </button>
-                    <p style={{ marginTop: '5px' }}>
+                    <span style={{ minWidth: '90px', textAlign: 'center' }}>
                         {currentPage} из {totalPages}
-                    </p>
+                    </span>
                     <button
-                        className="btn btn-light ml-2"
+                        className="btn btn-light ml-3"
                         onClick={() => handlePageChange(currentPage + 1)}
                         disabled={currentPage >= totalPages}
                     >
                         &gt;
                     </button>
                 </div>
-                <div className="col"></div>
             </div>
             <div
                 id="calls_to_fill_card"
@@ -244,12 +258,12 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelecte
                                     onClick={() => showCallEdit(call.id, false)}
                                 >
                                     {call.total_direction === "outbound" ? (
-                                        <span className="material-icons" style={{color: "#7cd420"}}>
-                                            login
-                                        </span>
-                                    ) : (
                                         <span className="material-icons" style={{color: "#f26666"}}>
                                             logout
+                                        </span>
+                                    ) : (
+                                        <span className="material-icons" style={{color: "#7cd420"}}>
+                                            login
                                         </span>
                                     )}
                                     <p
@@ -288,12 +302,12 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelecte
                                     onClick={() => showCallEdit(call.id, true)}
                                 >
                                     {call.total_direction === "outbound" ? (
-                                        <span className="material-icons" style={{color: "#7cd420"}}>
-                                            login
-                                        </span>
-                                    ) : (
                                         <span className="material-icons" style={{color: "#f26666"}}>
                                             logout
+                                        </span>
+                                    ) : (
+                                        <span className="material-icons" style={{color: "#7cd420"}}>
+                                            login
                                         </span>
                                     )}
                                     <p

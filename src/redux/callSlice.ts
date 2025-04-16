@@ -68,7 +68,7 @@ export const initiateCall = createAsyncThunk<
         };
 
         // Отправляем запрос через сокет
-        socket.emit('click_to_call', payload);
+        // socket.emit('click_to_call', payload);
 
         // Здесь можно добавить логику ожидания ответа от сервера (например, через событие "click_to_call_start")
         // В данном примере сразу возвращаем данные, предполагая успешное начало вызова.

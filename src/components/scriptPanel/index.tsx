@@ -118,8 +118,8 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
                 fs_server: fsServer,
                 action: 'start_script',
                 direction,
-                uuid: currentUuid,
-                b_uuid: currentBUuid,
+                uuid: currentUuid || "",
+                b_uuid: currentBUuid || "",
                 project_name: projectName
             });
         }

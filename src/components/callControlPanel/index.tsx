@@ -6,6 +6,7 @@ import { RootState } from "../../redux/store";
 import Swal from "sweetalert2";
 import EditableFields from "./components";
 import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
+import {OutActivePhone} from "../headerPanel";
 
 // Типы (упрощённые — оставьте свои)
 export interface ReasonItem {
@@ -131,10 +132,15 @@ interface CallControlPanelProps {
     postActive: boolean;
     setPostActive: (postActive: boolean) => void;
     currentPage: number;
+    hasActiveCall: boolean
+    outActivePhone: OutActivePhone | null
+    outActiveProjectName: string
+    assignedKey: string
+
 }
 
 
-const CallControlPanel: React.FC<CallControlPanelProps> = ({ call, onClose, activeProject, setPostActive, postActive,currentPage   }) => {
+const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActiveProjectName, outActivePhone,call, hasActiveCall, onClose, activeProject, setPostActive, postActive,currentPage   }) => {
     // Из cookies
     const sessionKey = getCookies('session_key') || '';
     const sipLogin   = getCookies('sip_login') || '';
@@ -163,7 +169,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({ call, onClose, acti
     // Активные звонки (из redux)
     const activeCalls: ActiveCall[] = useSelector((state: RootState) => state.operator.activeCalls);
 
-    const hasActiveCall = Array.isArray(activeCalls) ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
+    // const hasActiveCall = Array.isArray(activeCalls) ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
 
     // Логика «постобработки»
     const POST_LIMIT = worker.includes('fs.at.akc24.ru') ? 120 : 15;
@@ -171,14 +177,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({ call, onClose, acti
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
 
     const fsReport = useSelector((state: RootState) => state.operator.fsReport);
-    useEffect(()=> console.log("callselected: ", call),[call])
+    useEffect(()=> console.log("selectedCall postCallData: ", postCallData),[postCallData])
 
-    // Для отслеживания завершения звонка
     const prevCallRef = useRef<ActiveCall | null>(null);
 
-    useEffect(()=> console.log("postCallData: ", postCallData),[postCallData])
-    // useEffect(()=> console.log("callResults: ", callResults),[callResults])
-    // useEffect(()=> console.log("params: ", params),[params])
 
     useEffect(() => {
         if (hasActiveCall) {
@@ -192,19 +194,22 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({ call, onClose, acti
     },[hasActiveCall])
     useEffect(() => {
 
-        if (hasActiveCall && activeCalls[0].b_cid_num && !postActive){
+        if (hasActiveCall && !postActive && activeCalls[0].application){
             setPostCallData(activeCalls[0] as ActiveCall);
         }
 
-        if (hasActiveCall && !postActive && activeCalls[0].b_cid_num) {
+        if (hasActiveCall && !postActive && activeCalls[0].application) {
             const startModules = modules.filter(
                 (mod) => mod.start_modes && mod.start_modes[activeProject] === "start"
             );
-            startModules.forEach((mod) => {
-                handleModuleRun(mod);
-            });
+            if (activeCalls.length === 1) {
+                startModules.forEach((mod) => {
+                    handleModuleRun(mod);
+                });
+
+            }
         }
-    }, [activeCalls, hasActiveCall, postActive]);
+    }, [activeCalls, activeProject, hasActiveCall, modules, postActive]);
 
     const findNameProject = (projectName: string)=> {
         if (!projectName) return "";
@@ -246,17 +251,17 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({ call, onClose, acti
         handleFsReasons(fsReasons)
     }, [call, activeProject, fsReasons, hasActiveCall]);
 
-    useEffect(() => {
-        const handleFsDiaDes = (data: any) => {
-            console.log("Получены данные fs_dia_des:", data);
-            // Здесь можно, например, сохранить project_name из полученных данных
-            // или обновить состояние компонента, чтобы отобразить специфичные поля.
-            // Пример:
-            // setProjectName(data.project_name);
-        };
-
-        socket.on('fs_dia_des', handleFsDiaDes);
-    }, [activeCalls]);
+    // useEffect(() => {
+    //     const handleFsDiaDes = (data: any) => {
+    //         console.log("Получены данные fs_dia_des:", data);
+    //         // Здесь можно, например, сохранить project_name из полученных данных
+    //         // или обновить состояние компонента, чтобы отобразить специфичные поля.
+    //         // Пример:
+    //         // setProjectName(data.project_name);
+    //     };
+    //
+    //     socket.on('fs_dia_des', handleFsDiaDes);
+    // }, [activeCalls]);
 
     // ***** МОДУЛИ *****
     // При открытии панели вызова (если вызов не активен) запрашиваем список модулей
@@ -389,10 +394,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({ call, onClose, acti
     useEffect(() => {
         const prevCall = prevCallRef.current;
         const thisCall = hasActiveCall ? activeCalls[0] : null;
-        if (prevCall && !postActive ) {
+        if (prevCall && !postActive && !activeCalls[0].application ) {
+            console.log("POSTSTSTSTS")
             setPostActive(true);
             setPostSeconds(POST_LIMIT);
-
         }
         if (hasActiveCall) {
             setPostActive(false);
@@ -481,7 +486,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({ call, onClose, acti
 
     const handleRedirect = () => {
         if (activeCalls.length < 2) return;
-        const uuid1 = activeCalls[0]?.uuid;
+        // const uuid1 = activeCalls[0]?.uuid;
+        const uuid1 = activeCalls[0]?.b_uuid;
         const uuid2 = activeCalls[1]?.b_uuid;
         if (!uuid1 || !uuid2) return;
         socket.emit('sofia_operations', {
@@ -552,7 +558,22 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({ call, onClose, acti
         const resultText =
             callResults.find((r) => String(r.id) === callResult)?.name || "";
 
-        // Предположим, что это логика сохранения данных вызова
+        socket.emit('outbound_calls', {
+            'worker': worker,
+            'sip_login':sipLogin,
+            'session_key':sessionKey,
+            'room_id':roomId,
+            'fs_server':fsServer,
+            'project_pool':projectPool,
+            'action':'update_phone_to_call',
+            'assigned_key': assignedKey,
+            'base_fields':baseFieldValues,
+            'log_status':'saved',
+            'phone_status':callResult,
+            'special_key':outActivePhone?.special_key,
+            'project_name':outActiveProjectName
+        })
+
         socket.emit("edit_call_fs", {
             fs_server: fsServer,
             call_id: fsReport.find((c: any) => c.special_key_call === postCallData?.call_uuid)
@@ -666,7 +687,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({ call, onClose, acti
 
         const iconColor = postCallData?.direction === 'outbound' ? '#f26666' : '#7cd420';
         const iconName = postCallData?.direction === 'outbound' ? 'logout' : 'login';
-        const phoneNumber = postCallData?.direction === 'outbound' ? postCallData.cid_num : postCallData?.cid_num;
+        const phoneNumber = postCallData?.direction === 'outbound' ? postCallData.b_dest : postCallData?.cid_num;
         const startDate = new Date(postCallData?.b_created || "0").toLocaleString();
 
         return (

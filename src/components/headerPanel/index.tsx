@@ -43,16 +43,25 @@ interface HeaderPanelProps {
     showScriptPanel: boolean
     selectedProject: Project | null;
     setSelectedProject: (selectedProject: Project) => void;
+    setPostActive: (postActive: boolean) => void
+    setOutboundCall: (outBoundCall: boolean) => void
+    setActiveProjectName:(activeProjectName: string) => void
+    outActivePhone: OutActivePhone | null
+    setOutActivePhone: (outActivePhone: OutActivePhone | null) => void
+    outActiveProjectName: string
+    setOutActiveProjectName: (outActiveProjectName: string) => void
+    assignedKey: string
+    setAssignedKey: (assignedKey: string) => void
 }
 
-interface OutActivePhone {
+export interface OutActivePhone {
     phone?: string;
     special_key?: string;
     status?: string;
     // другие поля, если нужно
 }
 
-const HeaderPanel: React.FC<HeaderPanelProps> = ({ setShowScriptPanel, showScriptPanel, selectedProject, setSelectedProject }) => {
+const HeaderPanel: React.FC<HeaderPanelProps> = ({setActiveProjectName,outActivePhone, assignedKey, setAssignedKey, setOutActivePhone, outActiveProjectName, setOutActiveProjectName, setOutboundCall, setShowScriptPanel, setPostActive, showScriptPanel, selectedProject, setSelectedProject }) => {
     const sessionKey = getCookies('session_key') || '';
     const sipLogin = getCookies('sip_login') || '';
     const fsServer = getCookies('fs_server') || '';
@@ -75,8 +84,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({ setShowScriptPanel, showScrip
     const projectPool = useSelector(selectFullProjectPool) || [];
     console.log("projectPool: ", projectPool)
     const projectPoolForCall = useMemo(() => {
-        return projectPool.filter(project => project.out_active).map(project => project.project_name);
+        return projectPool.filter(project => (project.out_active && project.active)).map(project => project.project_name);
     }, [projectPool]);
+    const projectGateawayPrefix = projectPool.length && projectPool.filter(project => (project.out_active && project.active))[0].out_gateways[2].prefix
     useEffect(()=>     console.log("projectPoolForCall: ", projectPoolForCall)
     ,[projectPoolForCall])
     // --- Преобразуем activeCalls к массиву, чтобы .some() не вызывал ошибку ---
@@ -86,8 +96,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({ setShowScriptPanel, showScrip
             ? rawActiveCalls
             : Object.values(rawActiveCalls || {});
     }, [rawActiveCalls]);
-    // === Старый принцип: возьмём одну «линию» из monitorCallcenter, если она есть ===
-    // Это может быть список проектов или «линий»
+    useEffect(()=> console.log("activeCalls: ", activeCalls),[activeCalls])
     const myCallCenter = monitorCallcenter[sipLogin]?.[0];
 
     // Локальные стейты
@@ -100,38 +109,53 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({ setShowScriptPanel, showScrip
     const [activeCallUuid, setActiveCallUuid] = useState<string>('');
 
     // Стейты для исходящих/автодозвона
-    const [outActivePhone, setOutActivePhone] = useState<OutActivePhone | null>(null);
-    const [outActiveProjectName, setOutActiveProjectName] = useState('');
+    const [handleOutboundCall, setHandleOutboundCall] = useState<boolean>(false)
+    // const [outActivePhone, setOutActivePhone] = useState<OutActivePhone | null>(null);
+    // const [outActiveProjectName, setOutActiveProjectName] = useState('');
     const [outActiveStartType, setOutActiveStartType] = useState('');
     const [outActiveStart, setOutActiveStart] = useState('');
     const [outActiveTakenReason, setOutActiveTakenReason] = useState('');
     const [outExtensions, setOutExtensions] = useState<any[]>([]);
-    const [assignedKey, setAssignedKey] = useState('');
+    // const [assignedKey, setAssignedKey] = useState('');
     const [outPreparation, setOutPreparation] = useState(false);
     const [hasActiveCall, setHasActiveCall] = useState<boolean>(false)
     // Список операторов
     const [searchTerm, setSearchTerm] = useState('');
     const [typeFilter, setTypeFilter] = useState<'all' | 'operators' | 'robots'>('all');
     const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
-
     useEffect(() => {
-      if (activeCalls.length > 0 && Object.keys(activeCalls[0]).length > 0) {
-        setHasActiveCall(true);
-
-
-      } else {
+        if (activeCalls.length > 0 && Object.keys(activeCalls[0]).length > 0) {
+            setHasActiveCall(true);
+        } else {
         setHasActiveCall(false);
       }
     }, [activeCalls]);
-    useEffect(()=>console.log("hasActiveCall: ", hasActiveCall),[hasActiveCall])
+
+    useEffect(()=>{
+        setHandleOutboundCall(false)
+        if(!hasActiveCall && handleOutboundCall){
+            socket.emit('outbound_calls', {
+                worker,
+                sip_login: sipLogin,
+                session_key: sessionKey,
+                room_id: roomId,
+                fs_server: fsServer,
+                project_pool: projectPoolForCall,
+                action: 'update_phone_to_call',
+                assigned_key: assignedKey,
+                log_status: 'finished',
+                phone_status: 'finished',
+                special_key: outActivePhone?.special_key,
+                project_name: outActiveProjectName,
+            });
+        }
+    },[hasActiveCall])
 
     const getRegisteredSofia = (status: string) => {
         return status.includes('Registered')
     };
 
     const gateway: any = useSelector((state: RootState) => state.operator.monitorData.allProjects)
-    console.log("gateway: ", gateway)
-    const cookieOutExtension = getCookies('out_extension') || '';
 
     useEffect(() => {
         const s_dot = worker.indexOf('.');
@@ -317,15 +341,13 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({ setShowScriptPanel, showScrip
     // Автодозвон (раз в 30 секунд)
     useEffect(() => {
         const interval = setInterval(() => {
-            console.log("AUTOCALL try")
             if (
                 !hasActiveCall &&
                 projectPoolForCall.length > 0 &&
                 getRegisteredSofia(fsStatus.sofia_status) &&
                 fsStatus.state === "Waiting" &&
-                fsStatus.status === "Available (On Demand)"
+                (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
             ) {
-                console.log("AUTOCALL")
                 socket.emit('outbound_calls', {
                     worker,
                     sip_login: sipLogin,
@@ -339,26 +361,27 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({ setShowScriptPanel, showScrip
         }, 30000);
         return () => clearInterval(interval);
     }, [hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, fsServer, projectPoolForCall, fsStatus.state, fsStatus.status]);
-
+    useEffect(()=> console.log("handleOutboundCall: ", handleOutboundCall))
     useEffect(() => {
         const handleGetOutStart = (msg: any) => {
             console.log("Получено get_out_start:", msg);
+            setOutboundCall(true)
             setOutActivePhone(msg.phone);
             setOutActiveProjectName(msg.project_name);
             setAssignedKey(msg.assigned_key);
             setOutPreparation(false);
-            if(!hasActiveCall) {
-                console.log("AUTOCALL POSHEL")
-                socket.emit('click_to_call', {
-                    worker,
-                    sip_login: sipLogin,
-                    session_key: sessionKey,
-                    room_id: roomId,
-                    fs_server: fsServer,
-                    phone: msg.phone?.phone || msg.phone,
-                    out_extension: msg.out_extension,
-                    call_type: 'call',
-                    project_name: msg.project_name
+             if (!hasActiveCall && !handleOutboundCall) {
+                  console.log("handleOutboundCall poxx")
+                  socket.emit('click_to_call', {
+                      worker,
+                      sip_login: sipLogin,
+                      session_key: sessionKey,
+                      room_id: roomId,
+                      fs_server: fsServer,
+                      phone: msg.phone?.phone || msg.phone,
+                      out_extension: msg.out_extension,
+                      call_type: 'call',
+                      project_name: msg.project_name
                 });
             }
         };
@@ -372,33 +395,26 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({ setShowScriptPanel, showScrip
     const handleCallByNumber = () => {
         setOutExtension('');
         setOutBaseFieldValues({});
+        if (!activeCalls[0].application) {
+            setHandleOutboundCall(true)
+        }
+        setOutboundCall(true)
         // outProjectClickToCall()
 
         let selectedExtension = '';
 
         // 1) Проверяем, есть ли массив outExtensions, пришедший от сервера
-        if (outExtensions && outExtensions.length > 0) {
-            selectedExtension = outExtensions[0].prefix;
-            setOutExtension(selectedExtension);
-        }
-        // 2) Если outExtensions нет, но есть gateway
-        else if (gateway && gateway.prefix) {
-            selectedExtension = gateway.prefix;
-            setOutExtension(selectedExtension);
-        }
-        // 3) Если есть куки out_extension
-        else if (cookieOutExtension) {
-            selectedExtension = cookieOutExtension;
-            setOutExtension(selectedExtension);
-        }
-        // 4) Иначе берём myCallCenter (если есть)
-        else if (myCallCenter) {
-            selectedExtension = myCallCenter;
-            setOutExtension(selectedExtension);
+        if (projectGateawayPrefix) {
+            selectedExtension = projectGateawayPrefix;
+            setOutExtension(projectGateawayPrefix);
+            const project = projectPool.find(proj => proj.out_gateways[2].prefix === projectGateawayPrefix)
+            if (!activeCalls[0].application) {
+                setActiveProjectName(project.project_name)
+            }
         }
 
         // Далее — проверка: если activeCall есть, значит callType='redirect', иначе 'call'
-        if (hasActiveCall) {
+        if (hasActiveCall && activeCalls[0].direction === "outbound") {
             setCallType('redirect');
         } else {
             setCallType('call');
@@ -414,7 +430,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({ setShowScriptPanel, showScrip
             return;
         }
 
-        // Если всё норм, делаем click_to_call
         if (callType === 'redirect') {
             socket.emit('click_to_call', {
                 worker,
@@ -454,6 +469,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({ setShowScriptPanel, showScrip
             reason: "manual_return",
             page: 'online',
         });
+        setPostActive(false)
     };
 
     const handleStartFs = (reason?: string, idle_set?: boolean) => {
@@ -791,26 +807,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({ setShowScriptPanel, showScrip
                     </div>
                 </div>
             </div>
-            {/*<div className="card ml-3 mr-0">*/}
-            {/*    <div className="card-body">*/}
-            {/*        <label htmlFor="projectSelect" className="mr-2">*/}
-            {/*            Выберите проект:*/}
-            {/*        </label>*/}
-            {/*        <select*/}
-            {/*            id="projectSelect"*/}
-            {/*            className="form-control"*/}
-            {/*            value={selectedProject ? selectedProject.project_name : ''}*/}
-            {/*            onChange={handleProjectChange}*/}
-            {/*        >*/}
-            {/*            {projectPool.map((proj) => (*/}
-            {/*                <option key={proj.project_name} value={proj.project_name}>*/}
-            {/*                    {proj.glagol_name} ({proj.project_name})*/}
-            {/*                </option>*/}
-            {/*            ))}*/}
-            {/*        </select>*/}
-            {/*    </div>*/}
-            {/*</div>*/}
-            {/*<OutgoingCallPanel/>*/}
             <div id="start_section" className="card ml-3 mr-0">
                 <div className="card-body pr-0" id="glagol_actions">
                     <div className="row col-12 pr-0" id="start_inner">
@@ -830,7 +826,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({ setShowScriptPanel, showScrip
                             onClick={handleCallByNumber}
                         >
                             <i className="align-middle mr-1 fas fa-fw fa-address-book"></i>
-                            <span className="align-middle" id="vizov_btn">Вызов по номеру</span>
+                            <span className="align-middle" id="vizov_btn">{callType ==="redirect" ? 'Перевести' : "Вызов по номеру"}</span>
                         </button>
                     </div>
                 </div>

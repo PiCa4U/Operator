@@ -161,6 +161,17 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
         if (!hasActiveCall && !hasAppField && postCallData?.application) {
             console.log("hasAppFINISHED")
+            if (fsStatus.status === "On Break") {
+                socket.emit('change_stat_fs', {
+                    fs_server: fsServer,
+                    sip_login: sipLogin,
+                    room_id: roomId,
+                    worker: sipLogin,
+                    session_key: sessionKey,
+                    action: 'available',
+                    page: 'online',
+                });
+            }
             socket.emit('outbound_calls', {
                 worker,
                 sip_login: sipLogin,
@@ -460,30 +471,27 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             return;
         }
 
-        if (callType === 'redirect') {
-            socket.emit('click_to_call', {
-                worker,
-                sip_login: sipLogin,
-                session_key: sessionKey,
-                room_id: roomId,
-                fs_server: fsServer,
-                phone,
-                out_extension: selectedExtension,
-                call_type: 'redirect',
-                uuid: activeCallUuid,
-            });
-        } else {
-            socket.emit('click_to_call', {
-                worker,
-                sip_login: sipLogin,
-                session_key: sessionKey,
-                room_id: roomId,
-                fs_server: fsServer,
-                phone,
-                out_extension: selectedExtension,
-                call_type: 'call',
-            });
-        }
+        socket.emit('sofia_operations', {
+            worker,
+            sip_login: sipLogin,
+            session_key: sessionKey,
+            room_id: roomId,
+            fs_server: fsServer,
+            uuid: activeCalls[0].uuid,
+            action: 'hold_toggle'
+        });
+
+        socket.emit('click_to_call', {
+            worker,
+            sip_login: sipLogin,
+            session_key: sessionKey,
+            room_id: roomId,
+            fs_server: fsServer,
+            phone,
+            out_extension: selectedExtension,
+            call_type: 'call',
+        });
+
     };
 
     // Кнопки управления статусом (как в старом)
@@ -856,7 +864,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                             onClick={handleCallByNumber}
                         >
                             <i className="align-middle mr-1 fas fa-fw fa-address-book"></i>
-                            <span className="align-middle" id="vizov_btn">{callType ==="redirect" ? 'Перевести' : "Вызов по номеру"}</span>
+                            <span className="align-middle" id="vizov_btn">{"Вызов по номеру"}</span>
                         </button>
                     </div>
                 </div>

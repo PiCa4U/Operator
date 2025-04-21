@@ -138,11 +138,13 @@ interface CallControlPanelProps {
     outActivePhone: OutActivePhone | null
     outActiveProjectName: string
     assignedKey: string
+    isLoading: boolean
+    setIsLoading: (isLoading: boolean) => void
 
 }
 
 
-const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActiveProjectName, outActivePhone,call, hasActiveCall, onClose, activeProject, setPostActive, postActive,currentPage   }) => {
+const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoading, assignedKey, outActiveProjectName, outActivePhone,call, hasActiveCall, onClose, activeProject, setPostActive, postActive,currentPage   }) => {
     // Из cookies
     const sessionKey = getCookies('session_key') || '';
     const sipLogin   = getCookies('sip_login') || '';
@@ -158,7 +160,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
     const [baseFieldValues, setBaseFieldValues] = useState<{ [fieldId: string]: string }>(
         call?.base_fields || {}
     );
-    useEffect(()=> {console.log("baseFieldValues: ", baseFieldValues)},[baseFieldValues])
     // Списки причин, результатов и полей для заполнения
     const [callReasons, setCallReasons] = useState<ReasonItem[]>([]);
     const [callResults, setCallResults] = useState<ResultItem[]>([]);
@@ -182,7 +183,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
 
     const fsReport = useSelector((state: RootState) => state.operator.fsReport);
-    useEffect(()=> console.log("selectedCall postCallData: ", postCallData),[postCallData])
+
+    const forbiddenProjects = ['outbound', 'api_call'];
+    const project = call?.project_name || '';
+    const hideReportFields = forbiddenProjects.includes(project);
 
     const prevCallRef = useRef<ActiveCall | null>(null);
 
@@ -256,17 +260,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
         handleFsReasons(fsReasons)
     }, [call, activeProject, fsReasons, hasActiveCall]);
 
-    // useEffect(() => {
-    //     const handleFsDiaDes = (data: any) => {
-    //         console.log("Получены данные fs_dia_des:", data);
-    //         // Здесь можно, например, сохранить project_name из полученных данных
-    //         // или обновить состояние компонента, чтобы отобразить специфичные поля.
-    //         // Пример:
-    //         // setProjectName(data.project_name);
-    //     };
-    //
-    //     socket.on('fs_dia_des', handleFsDiaDes);
-    // }, [activeCalls]);
 
     // ***** МОДУЛИ *****
     // При открытии панели вызова (если вызов не активен) запрашиваем список модулей
@@ -287,7 +280,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
     // Обработка ответа сервера для "get_modules"
     useEffect(() => {
         const handleModules = (data: any) => {
-            console.log("Получены модули:", data.modules);
             setModules(data.modules || []);
         };
         socket.on('get_modules', handleModules);
@@ -352,7 +344,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
 
         payload.to_parse = to_parse;
 
-        console.log("Отправляем параметры модуля:", payload);
         socket.emit("module_operations", payload);
     };
 
@@ -400,7 +391,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
         const prevCall = prevCallRef.current;
         const thisCall = hasActiveCall ? activeCalls[0] : null;
         if (prevCall && !postActive && !activeCalls[0].application ) {
-            console.log("POSTSTSTSTS")
             setPostActive(true);
             setPostSeconds(POST_LIMIT);
         }
@@ -475,6 +465,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
             action: 'uuid_break',
             idle_set: true
         });
+        setIsLoading(true)
         socket.emit('get_fs_report', {
             worker,
             session_key: sessionKey,
@@ -526,6 +517,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
             reason_text: reasonText,
             result_text: resultText
         });
+        setIsLoading(true)
         socket.emit('get_fs_report', {
             worker,
             session_key: sessionKey,
@@ -553,7 +545,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
         );
 
         afterModules.forEach((mod) => {
-            console.log("Запуск модуля AFTER:", mod.name);
             handleModuleRun(mod);
         });
 
@@ -602,7 +593,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
             reason: "manual_return",
             page: "online",
         });
-
+        setIsLoading(true)
         socket.emit("get_fs_report", {
             worker,
             session_key: sessionKey,
@@ -840,76 +831,78 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
                                             </audio>
                                         </div>
                                     )}
-                                    <label
-                                        className="mb-2"
-                                        style={{ whiteSpace: 'nowrap', marginTop: "4px", fontWeight: 600, fontSize: 16 }}
-                                    >
-                                        Проект:&nbsp;
-                                        <span >
-                                            {findNameProject(call?.project_name || "")}
-                                        </span>
-                                    </label>
+                                    {((hasActiveCall || postActive) || !hideReportFields) && (
+                                        <label
+                                            className="mb-2"
+                                            style={{
+                                                whiteSpace: 'nowrap',
+                                                marginTop: "4px",
+                                                fontWeight: 600,
+                                                fontSize: 16
+                                            }}
+                                        >
+                                            Проект:&nbsp;
+                                            <span>
+                                                {findNameProject(call?.project_name || "")}
+                                            </span>
+                                        </label>
+                                    )}
                                 </div>
                             )}
-                            <div className="form-group d-flex align-items-center" style={{ flexWrap: 'nowrap', gap: '8px' }}>
-                                <label className="mb-0" style={{
-                                    whiteSpace: 'nowrap',
-                                    fontWeight: '400',
-                                    fontSize: '16px'
-                                }}>
-                                    Причина звонка: <span style={{ color: 'red' }}>*</span>
-                                </label>
-                                <select
-                                    className="form-control"
-                                    value={callReason}
-                                    onChange={e => setCallReason(e.target.value)}
-                                    // disabled={hasActiveCall && !postActive}
-                                >
-                                    <option value="">Выберите причину</option>
-                                    {callReasons.map(r => (
-                                        <option key={r.id} value={r.id}>
-                                            {r.name}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div className="form-group d-flex align-items-center" style={{ flexWrap: 'nowrap', gap: '8px' }}>
-                                <label className="mb-0" style={{
-                                    whiteSpace: 'nowrap',
-                                    fontWeight: '400',
-                                    fontSize: '16px'
-                                }}>
-                                    Результат звонка: <span style={{ color: 'red' }}>*</span>
-                                </label>
-                                <select
-                                    className="form-control"
-                                    value={callResult}
-                                    onChange={e => setCallResult(e.target.value)}
-                                    // disabled={hasActiveCall && !postActive}
-                                >
-                                    <option value="">Выберите результат</option>
-                                    {callResults.map(r => (
-                                        <option key={r.id} value={r.id}>
-                                            {r.name}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
+                            {((hasActiveCall || postActive) || !hideReportFields) && (
+                                <div className="form-group d-flex align-items-center" style={{ flexWrap: 'nowrap', gap: '8px' }}>
+                                    <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
+                                        Причина звонка: <span style={{ color: 'red' }}>*</span>
+                                    </label>
+                                    <select
+                                        className="form-control"
+                                        value={callReason}
+                                        onChange={e => setCallReason(e.target.value)}
+                                    >
+                                        <option value="">Выберите причину</option>
+                                        {callReasons.map(r => (
+                                            <option key={r.id} value={r.id}>
+                                                {r.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+                            {((hasActiveCall || postActive) || !hideReportFields) && (
+                                <div className="form-group d-flex align-items-center" style={{ flexWrap: 'nowrap', gap: '8px' }}>
+                                    <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
+                                        Результат звонка: <span style={{ color: 'red' }}>*</span>
+                                    </label>
+                                    <select
+                                        className="form-control"
+                                        value={callResult}
+                                        onChange={e => setCallResult(e.target.value)}
+                                    >
+                                        <option value="">Выберите результат</option>
+                                        {callResults.map(r => (
+                                            <option key={r.id} value={r.id}>
+                                                {r.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
                             <EditableFields
                                 params={params}
                                 initialValues={baseFieldValues}
                                 onChange={setBaseFieldValues}
                             />
-                            <div className="form-group d-flex align-items-center" style={{ flexWrap: 'nowrap', gap: '8px' }}>
-                                <textarea
-                                    className="form-control"
-                                    placeholder="Введите комментарий"
-                                    value={comment}
-                                    onChange={e => setComment(e.target.value)}
-                                    // disabled={hasActiveCall && !postActive}
-                                />
-                            </div>
-                            {!hasActiveCall && !postActive && (
+                            {((hasActiveCall || postActive) || !hideReportFields) && (
+                                <div className="form-group d-flex align-items-center" style={{ flexWrap: 'nowrap', gap: '8px' }}>
+                                    <textarea
+                                        className="form-control"
+                                        placeholder="Введите комментарий"
+                                        value={comment}
+                                        onChange={e => setComment(e.target.value)}
+                                    />
+                                </div>
+                            )}
+                            {!hasActiveCall && !postActive && !hideReportFields &&  (
                                 <div className="card-footer d-flex justify-content-end">
                                     <button className="btn btn-outline-success" onClick={handleSave}>
                                         Сохранить
@@ -922,7 +915,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
                     {postActive && (
                         <div>
                             <p>Постобработка: осталось {postSeconds} сек.</p>
-                            <button className="btn btn-outline-success" onClick={handlePostSave}>
+                            <button className="btn btn-outline-success" onClick={handlePostSave} disabled={isLoading}>
                                 Сохранить и вернуться на линию
                             </button>
                         </div>

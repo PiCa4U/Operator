@@ -22,22 +22,21 @@ const App: React.FC = () => {
     const [outActivePhone, setOutActivePhone] = useState<OutActivePhone | null>(null);
     const [outActiveProjectName, setOutActiveProjectName] = useState('');
     const [assignedKey, setAssignedKey] = useState('');
-    useEffect(()=> console.log("assignedKey: ", assignedKey))
+    const [isLoading,    setIsLoading]    = useState(false);
+
+
     const sessionKey = getCookies('session_key') || '';
     const sipLogin = getCookies('sip_login') || '';
     const fsServer = getCookies('fs_server') || '';
     const worker = getCookies('worker') || '';
 
-    // useEffect(()=> console.log())
     const dispatch = useDispatch();
     const roomId = useMemo(() => makeId(40), []);
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
     const activeCalls: any[] = useMemo(() => {
         return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
     }, [rawActiveCalls]);
-    useEffect(() => {
-        console.log("activeCalls123: ", activeCalls);
-    }, [activeCalls]);
+
     useEffect(()=> {
         if (!activeCall && postActive) {
             socket.emit('get_fs_report', {
@@ -53,16 +52,13 @@ const App: React.FC = () => {
     useEffect(() => {
         const first = activeCalls[0];
         if (activeCalls.length > 0 && !activeCall && first?.application) {
-            console.log("activeCall change");
             setActiveCall(true);
         } else if (activeCalls.length > 0 && Object.keys(first || {}).length === 0 && activeCall) {
-            console.log("POSTSTSTSTS drop");
             setActiveCall(false);
             setOutboundCall(false);
             setPostActive(true);
         }
     }, [activeCalls]);
-    useEffect(()=> console.log("activeProjectName: ", activeProjectName),[activeProjectName])
 
     useEffect(()=> {
         const getOuboundProject = (msg:any) => {
@@ -91,7 +87,6 @@ const App: React.FC = () => {
 
     useEffect(() => {
         const handleFsDiaDes = (msg: any) => {
-            console.log("fs_dia_des msg: ", msg);
             if (!outboundCall) {
                 setActiveProjectName(msg.project_name);
             }
@@ -113,9 +108,7 @@ const App: React.FC = () => {
         };
 
         const handleFsCalls = (msg: any) => {
-            console.log("fs_calls msg: ", msg);
             const callsArray: any[] = Object.values(msg);
-            console.log("callsArray: ", callsArray);
             dispatch(setActiveCalls(callsArray));
         };
 
@@ -148,12 +141,10 @@ const App: React.FC = () => {
                 cid_name:activeCalls[0].cid_name,
                 call_section: 1,
             };
-            console.log("Отправляем get_fs_dia_dest с параметрами:", requestParams);
             socket.emit('get_fs_dia_dest', requestParams);
 
         }
     }, [activeCall, activeCalls]);
-    useEffect(()=> console.log("selectedCall: ", selectedCall),[selectedCall])
     return (
         <div className="container-fluid">
             {/* Шапка с панелью управления (HeaderPanel) */}
@@ -171,6 +162,7 @@ const App: React.FC = () => {
                 setOutActiveProjectName={setOutActiveProjectName}
                 assignedKey={assignedKey}
                 setAssignedKey={setAssignedKey}
+                setIsLoading={setIsLoading}
             />
 
             {/* Основной контент */}
@@ -189,6 +181,8 @@ const App: React.FC = () => {
                             selectedCall={selectedCall}
                             currentPage={currentPage}
                             setCurrentPage={setCurrentPage}
+                            isLoading={isLoading}
+                            setIsLoading={setIsLoading}
                         />
                     )}
                 </div>
@@ -206,6 +200,8 @@ const App: React.FC = () => {
                             outActivePhone={outActivePhone}
                             outActiveProjectName={outActiveProjectName}
                             assignedKey={assignedKey}
+                            isLoading={isLoading}
+                            setIsLoading={setIsLoading}
                         />
                     )}
                 </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, {useState, useEffect, useMemo} from 'react';
 import { useSelector } from 'react-redux';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
@@ -7,6 +7,7 @@ import { RootState } from '../../redux/store';
 import { socket } from '../../socket';
 import { getCookies } from '../../utils';
 import {CallData} from "../callControlPanel";
+import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
 
 function getDisplayNumber(call: any): string {
     if (call.total_direction === 'outbound') {
@@ -33,8 +34,10 @@ type CallsDashboardProps = {
     selectedCall: CallData | null
     currentPage: number
     setCurrentPage: (currentPage: number) => void
+    isLoading: boolean
+    setIsLoading: (isLoading: boolean) => void
 }
-const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelectedCall, currentPage, setCurrentPage}) => {
+const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading, setSelectedCall, currentPage, setCurrentPage}) => {
     const sessionKey = getCookies('session_key') || '';
     const sipLogin   = getCookies('sip_login')   || '';
     const fsServer   = getCookies('fs_server')   || '';
@@ -43,11 +46,13 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelecte
     const roomId   = useSelector((state: RootState) => state.room.roomId) || 'default_room';
     const [fsReport, setFsReport] = useState<any[]>([])
     // const fsReport = useSelector((state: RootState) => state.operator.fsReport);
-    useEffect(()=> console.log("fsReport: ", fsReport),[fsReport])
     // Значения для инпутов
     const [startDate, setStartDate] = useState<Date | null >(null);
     const [endDate,   setEndDate]   = useState<Date | null>(null);
     const [phoneSearch, setPhoneSearch] = useState('');
+
+    const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
+    const projectPool = useSelector(selectFullProjectPool) || [];
 
     // Пагинация
     // const [currentPage, setCurrentPage] = useState(1);
@@ -55,7 +60,6 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelecte
 
     const [callsToFill,  setCallsToFill]  = useState<any[]>([]);
     const [callsFilled,  setCallsFilled]  = useState<any[]>([]);
-    const [isLoading,    setIsLoading]    = useState(false);
 
     const [searchParams, setSearchParams] = useState({
         start: startDate,
@@ -103,7 +107,6 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelecte
                 dateRangeString = startStr;
             }
         }
-
         setIsLoading(true);
         socket.emit('get_fs_report', {
             worker,
@@ -155,10 +158,21 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelecte
 
     const showCallEdit = (callId: number, isFilled: boolean) => {
         const allCalls: CallData[] = [...callsToFill, ...callsFilled];
-        const selected = allCalls.find(call => call.id === callId);
-        if (selected) {
-            setSelectedCall(selected);
+        const call = allCalls.find(c => c.id === callId);
+        if (!call) return;
+
+        let adjustedCall = { ...call };
+
+        if (adjustedCall.total_direction === 'outbound' && typeof adjustedCall.project_name === 'string') {
+            const baseName = adjustedCall.project_name.replace(/\s*\(.*\)$/, '');
+            const fullName = `${baseName}@default`;
+            const proj = projectPool.find(p => p.project_name === fullName);
+            if (proj) {
+                adjustedCall.project_name = proj.project_name;
+            }
         }
+
+        setSelectedCall(adjustedCall);
     };
 
     const handleDateChange = (dates: [Date | null, Date | null]) => {
@@ -218,7 +232,7 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelecte
                     <button
                         className="btn btn-light mr-3"
                         onClick={() => handlePageChange(currentPage - 1)}
-                        disabled={currentPage <= 1}
+                        disabled={isLoading || currentPage <= 1}
                     >
                         &lt;
                     </button>
@@ -228,7 +242,7 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelecte
                     <button
                         className="btn btn-light ml-3"
                         onClick={() => handlePageChange(currentPage + 1)}
-                        disabled={currentPage >= totalPages}
+                        disabled={isLoading || currentPage >= totalPages}
                     >
                         &gt;
                     </button>

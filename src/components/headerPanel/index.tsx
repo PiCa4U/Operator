@@ -52,6 +52,7 @@ interface HeaderPanelProps {
     setOutActiveProjectName: (outActiveProjectName: string) => void
     assignedKey: string
     setAssignedKey: (assignedKey: string) => void
+    setIsLoading: (isLoading: boolean) => void
 }
 
 export interface OutActivePhone {
@@ -62,7 +63,7 @@ export interface OutActivePhone {
 }
 
 const HeaderPanel: React.FC<HeaderPanelProps> = ({
-                                                     // setActiveProjectName,
+                                                     setIsLoading,
                                                      outActivePhone,
                                                      assignedKey,
                                                      setAssignedKey,
@@ -89,18 +90,15 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         (state: RootState) => state.operator.fsStatus,
         isEqual
     );
-    useEffect(()=> console.log("fsStatus: ", fsStatus),[fsStatus] )
     const post = fsStatus.status === "Available (On Demand)" && fsStatus.state === "Idle";
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     // Вызываем useSelector для получения «полных» проектов
     const projectPool = useSelector(selectFullProjectPool) || [];
-    console.log("projectPool: ", projectPool)
     const projectPoolForCall = useMemo(() => {
         return projectPool.filter(project => (project.out_active && project.active)).map(project => project.project_name);
     }, [projectPool]);
     const projectGateawayPrefix = projectPool.length && projectPool.filter(project => (project.out_active && project.active))[0].out_gateways[2].prefix
-    useEffect(()=> console.log("projectPoolForCall: ", projectPoolForCall)
-    ,[projectPoolForCall])
+
     // --- Преобразуем activeCalls к массиву, чтобы .some() не вызывал ошибку ---
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
     const activeCalls = useMemo(() => {
@@ -108,7 +106,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             ? rawActiveCalls
             : Object.values(rawActiveCalls || {});
     }, [rawActiveCalls]);
-    useEffect(()=> console.log("activeCalls: ", activeCalls),[activeCalls])
     const myCallCenter = monitorCallcenter[sipLogin]?.[0];
 
     // Локальные стейты
@@ -116,9 +113,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const [phone, setPhone] = useState('');
     const [outExtension, setOutExtension] = useState('');
     const [outBaseFields, setOutBaseFieldValues] = useState<any>({});
-    const [callActive, setCallActive] = useState<boolean>(false);
     const [callType, setCallType] = useState<'call' | 'redirect'>('call');
-    const [activeCallUuid, setActiveCallUuid] = useState<string>('');
 
     // Стейты для исходящих/автодозвона
     const [handleOutboundCall, setHandleOutboundCall] = useState<boolean>(false)
@@ -150,9 +145,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
         const first = activeCalls[0];
         const hasAppField = first !== undefined && 'application' in first;
-        console.log("hasAppField: ", hasAppField)
         const hasApp      = Boolean(first?.application);
-        console.log("hasApp: ", hasApp)
 
 
         if (hasAppField && hasApp) {
@@ -160,7 +153,14 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         }
 
         if (!hasActiveCall && !hasAppField && postCallData?.application) {
-            console.log("hasAppFINISHED")
+            socket.emit('get_fs_report', {
+                worker,
+                session_key: sessionKey,
+                sip_login: sipLogin,
+                room_id: roomId,
+                fs_server: fsServer,
+                level: 0,
+            });
             if (fsStatus.status === "On Break") {
                 socket.emit('change_stat_fs', {
                     fs_server: fsServer,
@@ -172,6 +172,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     page: 'online',
                 });
             }
+            setIsLoading(true)
             socket.emit('outbound_calls', {
                 worker,
                 sip_login: sipLogin,
@@ -191,7 +192,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     }, [activeCalls, postCallData, hasActiveCall]);
 
 
-    useEffect(()=> console.log("postCall12: ", postCallData),[postCallData])
     const getRegisteredSofia = (status: string) => {
         return status.includes('Registered')
     };
@@ -404,14 +404,12 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     }, [hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, fsServer, projectPoolForCall, fsStatus.state, fsStatus.status]);
     useEffect(() => {
         const handleGetOutStart = (msg: any) => {
-            console.log("Получено get_out_start:", msg);
             setOutboundCall(true)
             // setOutActivePhone(msg.phone);
             setOutActiveProjectName(msg.project_name);
             // setAssignedKey(msg.assigned_key);
             setOutPreparation(false);
              if (!hasActiveCall && !handleOutboundCall) {
-                  console.log("handleOutboundCall poxx")
                   socket.emit('click_to_call', {
                       worker,
                       sip_login: sipLogin,
@@ -480,18 +478,30 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             uuid: activeCalls[0].uuid,
             action: 'hold_toggle'
         });
-
-        socket.emit('click_to_call', {
-            worker,
-            sip_login: sipLogin,
-            session_key: sessionKey,
-            room_id: roomId,
-            fs_server: fsServer,
-            phone,
-            out_extension: selectedExtension,
-            call_type: 'call',
-        });
-
+        if (callType === 'redirect') {
+            socket.emit('click_to_call', {
+                worker,
+                    sip_login: sipLogin,
+                    session_key: sessionKey,
+                    room_id: roomId,
+                    fs_server: fsServer,
+                    phone,
+                    out_extension: selectedExtension,
+                    call_type: 'redirect',
+                    uuid: activeCalls[0].uuid,
+            });
+        } else {
+            socket.emit('click_to_call', {
+                worker,
+                sip_login: sipLogin,
+                session_key: sessionKey,
+                room_id: roomId,
+                fs_server: fsServer,
+                phone,
+                out_extension: selectedExtension,
+                call_type: 'call',
+            });
+        }
     };
 
     // Кнопки управления статусом (как в старом)

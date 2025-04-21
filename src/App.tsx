@@ -22,7 +22,7 @@ const App: React.FC = () => {
     const [outActivePhone, setOutActivePhone] = useState<OutActivePhone | null>(null);
     const [outActiveProjectName, setOutActiveProjectName] = useState('');
     const [assignedKey, setAssignedKey] = useState('');
-
+    useEffect(()=> console.log("assignedKey: ", assignedKey))
     const sessionKey = getCookies('session_key') || '';
     const sipLogin = getCookies('sip_login') || '';
     const fsServer = getCookies('fs_server') || '';

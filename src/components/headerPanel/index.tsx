@@ -61,7 +61,19 @@ export interface OutActivePhone {
     // другие поля, если нужно
 }
 
-const HeaderPanel: React.FC<HeaderPanelProps> = ({setActiveProjectName,outActivePhone, assignedKey, setAssignedKey, setOutActivePhone, outActiveProjectName, setOutActiveProjectName, setOutboundCall, setShowScriptPanel, setPostActive, showScriptPanel, selectedProject, setSelectedProject }) => {
+const HeaderPanel: React.FC<HeaderPanelProps> = ({
+                                                     // setActiveProjectName,
+                                                     outActivePhone,
+                                                     assignedKey,
+                                                     setAssignedKey,
+                                                     setOutActivePhone,
+                                                     outActiveProjectName,
+                                                     setOutActiveProjectName,
+                                                     setOutboundCall,
+                                                     setShowScriptPanel,
+                                                     setPostActive,
+                                                     showScriptPanel,
+                                                 }) => {
     const sessionKey = getCookies('session_key') || '';
     const sipLogin = getCookies('sip_login') || '';
     const fsServer = getCookies('fs_server') || '';
@@ -87,7 +99,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({setActiveProjectName,outActive
         return projectPool.filter(project => (project.out_active && project.active)).map(project => project.project_name);
     }, [projectPool]);
     const projectGateawayPrefix = projectPool.length && projectPool.filter(project => (project.out_active && project.active))[0].out_gateways[2].prefix
-    useEffect(()=>     console.log("projectPoolForCall: ", projectPoolForCall)
+    useEffect(()=> console.log("projectPoolForCall: ", projectPoolForCall)
     ,[projectPoolForCall])
     // --- Преобразуем activeCalls к массиву, чтобы .some() не вызывал ошибку ---
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
@@ -119,10 +131,12 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({setActiveProjectName,outActive
     // const [assignedKey, setAssignedKey] = useState('');
     const [outPreparation, setOutPreparation] = useState(false);
     const [hasActiveCall, setHasActiveCall] = useState<boolean>(false)
+    const [postCallData, setPostCallData] = useState<any>({})
     // Список операторов
     const [searchTerm, setSearchTerm] = useState('');
     const [typeFilter, setTypeFilter] = useState<'all' | 'operators' | 'robots'>('all');
     const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
+
     useEffect(() => {
         if (activeCalls.length > 0 && Object.keys(activeCalls[0]).length > 0) {
             setHasActiveCall(true);
@@ -131,9 +145,22 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({setActiveProjectName,outActive
       }
     }, [activeCalls]);
 
-    useEffect(()=>{
-        setHandleOutboundCall(false)
-        if(!hasActiveCall && handleOutboundCall){
+    useEffect(() => {
+        setHandleOutboundCall(false);
+
+        const first = activeCalls[0];
+        const hasAppField = first !== undefined && 'application' in first;
+        console.log("hasAppField: ", hasAppField)
+        const hasApp      = Boolean(first?.application);
+        console.log("hasApp: ", hasApp)
+
+
+        if (hasAppField && hasApp) {
+            setPostCallData(first);
+        }
+
+        if (!hasActiveCall && !hasAppField && postCallData?.application) {
+            console.log("hasAppFINISHED")
             socket.emit('outbound_calls', {
                 worker,
                 sip_login: sipLogin,
@@ -148,9 +175,12 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({setActiveProjectName,outActive
                 special_key: outActivePhone?.special_key,
                 project_name: outActiveProjectName,
             });
+            setPostCallData({});
         }
-    },[hasActiveCall])
+    }, [activeCalls, postCallData, hasActiveCall]);
 
+
+    useEffect(()=> console.log("postCall12: ", postCallData),[postCallData])
     const getRegisteredSofia = (status: string) => {
         return status.includes('Registered')
     };
@@ -358,17 +388,16 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({setActiveProjectName,outActive
                     action: 'get_phone_to_call'
                 });
             }
-        }, 30000);
+        }, 10000);
         return () => clearInterval(interval);
     }, [hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, fsServer, projectPoolForCall, fsStatus.state, fsStatus.status]);
-    useEffect(()=> console.log("handleOutboundCall: ", handleOutboundCall))
     useEffect(() => {
         const handleGetOutStart = (msg: any) => {
             console.log("Получено get_out_start:", msg);
             setOutboundCall(true)
-            setOutActivePhone(msg.phone);
+            // setOutActivePhone(msg.phone);
             setOutActiveProjectName(msg.project_name);
-            setAssignedKey(msg.assigned_key);
+            // setAssignedKey(msg.assigned_key);
             setOutPreparation(false);
              if (!hasActiveCall && !handleOutboundCall) {
                   console.log("handleOutboundCall poxx")
@@ -393,6 +422,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({setActiveProjectName,outActive
     }, [sipLogin, sessionKey, roomId, fsServer, worker, hasActiveCall]);
     // --- (B) Обработчик «Вызов по номеру» ---
     const handleCallByNumber = () => {
+        if (!activeCalls[0].application) return
         setOutExtension('');
         setOutBaseFieldValues({});
         if (!activeCalls[0].application) {
@@ -407,10 +437,10 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({setActiveProjectName,outActive
         if (projectGateawayPrefix) {
             selectedExtension = projectGateawayPrefix;
             setOutExtension(projectGateawayPrefix);
-            const project = projectPool.find(proj => proj.out_gateways[2].prefix === projectGateawayPrefix)
-            if (!activeCalls[0].application) {
-                setActiveProjectName(project.project_name)
-            }
+            // const project = projectPool.find(proj => proj.out_gateways[2].prefix === projectGateawayPrefix)
+            // if (!activeCalls[0].application) {
+            //     setActiveProjectName(project.project_name)
+            // }
         }
 
         // Далее — проверка: если activeCall есть, значит callType='redirect', иначе 'call'

@@ -35,6 +35,8 @@ export interface FieldDefinition {
 }
 
 export interface CallData {
+    destination_id: string
+    caller_id: string ;
     id: number;
     a_line_num: string;
     b_line_num: string;
@@ -166,6 +168,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
     const [modules, setModules] = useState<ModuleData[]>([]);
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
+    const projectPoolForCall = useMemo(() => {
+        return projectPool.filter(project => (project.out_active && project.active)).map(project => project.project_name);
+    }, [projectPool]);
     // Активные звонки (из redux)
     const activeCalls: ActiveCall[] = useSelector((state: RootState) => state.operator.activeCalls);
 
@@ -486,8 +491,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
 
     const handleRedirect = () => {
         if (activeCalls.length < 2) return;
-        // const uuid1 = activeCalls[0]?.uuid;
-        const uuid1 = activeCalls[0]?.b_uuid;
+        const uuid1 = activeCalls[0].direction === "outbound" ? activeCalls[0]?.b_uuid : activeCalls[0]?.uuid;
         const uuid2 = activeCalls[1]?.b_uuid;
         if (!uuid1 || !uuid2) return;
         socket.emit('sofia_operations', {
@@ -564,12 +568,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
             'session_key':sessionKey,
             'room_id':roomId,
             'fs_server':fsServer,
-            'project_pool':projectPool,
+            'project_pool':projectPoolForCall,
             'action':'update_phone_to_call',
             'assigned_key': assignedKey,
             'base_fields':baseFieldValues,
             'log_status':'saved',
-            'phone_status':callResult,
+            'phone_status': resultText,
             'special_key':outActivePhone?.special_key,
             'project_name':outActiveProjectName
         })
@@ -647,7 +651,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
 
         const isHeld = (activeCall.callstate === 'HELD' || activeCall.b_callstate === 'HELD');
         const iconName = isHeld ? 'play_arrow' : 'pause';
-        const iconColor = activeCall.direction === 'outbound' ?  '#f26666':'#7cd420';
+        const iconColor = activeCall.direction === 'outbound' ?  '#f26666' : '#7cd420';
         return (
             <div className="mb-3">
                 <div className="d-flex">
@@ -667,16 +671,22 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
                   <span className="material-icons" style={{ color: iconColor }}>
                     {activeCall.direction === 'outbound' ? 'logout' : 'login'}
                   </span>
-                    <strong className="ml-2">
+                    <strong className="ml-2" style={{ fontSize: 16, fontWeight: 600}}>
                         {activeCall.direction === 'outbound' ? activeCall.callee_num : activeCall.cid_num}
                         {' | '}
                         {new Date(activeCall.b_created).toLocaleString()}
                     </strong>
                 </div>
                 <div className="mt-2 mb-2">
-                    <strong style={{ fontSize: 16, fontWeight: 400}}>{isHeld ? 'На удержании' : 'Вызов активен'}:</strong> {formatDuration(callDuration)}
+                    <strong style={{
+                        fontSize: 16,
+                        fontWeight: 600,
+                        color: isHeld ? "#cba200" : "#0BB918"
+                    }}
+                    >
+                        {isHeld ? 'На удержании' : 'Вызов активен'}:</strong> {formatDuration(callDuration)}
                 </div>
-                <strong style={{ fontSize: 16, fontWeight: 400}}>
+                <strong style={{ whiteSpace: 'nowrap', marginTop: "4px", fontWeight: 600, fontSize: 16 }}>
                     {`Проект: ${findNameProject(activeProject)}`}
                 </strong>
             </div>
@@ -731,7 +741,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
                                 >
                                     <span className="material-icons">call_end</span>
                                 </button>
-                                {/** Если требуется кнопка для объединения звонков, можно её добавить */}
                             </div>
                             <div className="d-flex align-items-center mt-2">
                               <span
@@ -740,7 +749,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
                               >
                                 {sc.direction === 'outbound' ? 'logout' : 'login'}
                               </span>
-                                <strong className="ml-2">
+                                <strong className="ml-2" style={{ fontSize: 16, fontWeight: 600}}>
                                     {sc.direction === 'outbound' ? sc.callee_num : sc.cid_num}
                                     {' | '}
                                     {new Date(sc.b_created).toLocaleString()}
@@ -752,9 +761,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
                                 </strong>{' '}
                                 {formatDuration(secondCallDuration)}
                             </div>
-                            <strong style={{ fontSize: 16, fontWeight: 400 }}>
-                                {`Проект: ${findNameProject(activeProject)}`}
-                            </strong>
                         </div>
                     </div>
                 </div>
@@ -817,8 +823,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
                                     <span className="material-icons" style={{ color: iconCol }}>
                                       {call?.total_direction === 'outbound' ? 'logout' : 'login'}
                                     </span>
-                                        <strong className="ml-2">
-                                            {call?.total_direction === 'outbound' ? call?.b_line_num : call?.a_line_num}
+                                        <strong className="ml-2" style={{ fontSize: 16, fontWeight: 600}}>
+                                            {call?.total_direction === 'outbound' ? call?.b_line_num || call.caller_id || '—' : call?.a_line_num || call?.destination_id || call?.caller_id || '—'}
                                             {' | '}
                                             {new Date(call?.datetime_start || "0").toLocaleString()}
                                         </strong>
@@ -836,12 +842,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({assignedKey, outActi
                                     )}
                                     <label
                                         className="mb-2"
-                                        style={{
-                                            whiteSpace: 'nowrap',
-                                            fontWeight: '400',
-                                            fontSize: '16px',
-                                            marginTop: "4px"
-                                        }}
+                                        style={{ whiteSpace: 'nowrap', marginTop: "4px", fontWeight: 600, fontSize: 16 }}
                                     >
                                         Проект:&nbsp;
                                         <span >

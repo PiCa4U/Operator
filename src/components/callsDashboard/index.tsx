@@ -12,7 +12,7 @@ function getDisplayNumber(call: any): string {
     if (call.total_direction === 'outbound') {
         return call.b_line_num || call.caller_id || '—';
     } else {
-        return call.a_line_num || call.destination_id || '—';
+        return call.a_line_num || call.destination_id || call.caller_id || '—';
     }
 }
 
@@ -43,7 +43,7 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({selectedCall, setSelecte
     const roomId   = useSelector((state: RootState) => state.room.roomId) || 'default_room';
     const [fsReport, setFsReport] = useState<any[]>([])
     // const fsReport = useSelector((state: RootState) => state.operator.fsReport);
-    useEffect(()=>     console.log("fsReport: ", fsReport),[fsReport])
+    useEffect(()=> console.log("fsReport: ", fsReport),[fsReport])
     // Значения для инпутов
     const [startDate, setStartDate] = useState<Date | null >(null);
     const [endDate,   setEndDate]   = useState<Date | null>(null);

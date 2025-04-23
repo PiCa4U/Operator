@@ -1,7 +1,7 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import Swal from 'sweetalert2';
-import { RootState } from '../../redux/store';
+import {RootState, store} from '../../redux/store';
 import { socket } from '../../socket';
 import { getCookies, parseMonitorData } from '../../utils';
 import {makeSelectFullProjectPool, selectProjectPool, setMonitorData} from "../../redux/operatorSlice";
@@ -75,7 +75,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      setPostActive,
                                                      showScriptPanel,
                                                  }) => {
-    const sessionKey = getCookies('session_key') || '';
+    // const sessionKey = getCookies('session_key') || '';
     const sipLogin = getCookies('sip_login') || '';
     const fsServer = getCookies('fs_server') || '';
     const worker = getCookies('worker') || '';
@@ -131,6 +131,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const [searchTerm, setSearchTerm] = useState('');
     const [typeFilter, setTypeFilter] = useState<'all' | 'operators' | 'robots'>('all');
     const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
+
+    const { sessionKey } = store.getState().operator
 
     useEffect(() => {
         if (activeCalls.length > 0 && Object.keys(activeCalls[0]).length > 0) {
@@ -201,15 +203,18 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     useEffect(() => {
         const s_dot = worker.indexOf('.');
         const s_login = worker.slice(s_dot + 1);
+        if(sessionKey){
+            socket.emit('monitor_fs_projects', {
+                worker: "fs@akc24.ru",
+                session_key: sessionKey
+            });
+            socket.emit('monitor_fs_statuses', {
+                worker: "fs@akc24.ru",
+                session_key: sessionKey
+            });
+        }
 
-        socket.emit('monitor_fs', {
-            login: s_login,
-            room_id: roomId,
-            fs_server: fsServer,
-            action: 'get_projects'
-        });
-
-    }, [worker, roomId, fsServer]);
+    }, [worker, sessionKey]);
 
 
     const changeStateFs = (newState: string, reason: string) => {

@@ -1,22 +1,31 @@
 import  io  from 'socket.io-client';
 import { store } from '../redux/store';
-import {setFsReport, setFsStatus, setActiveCalls, setMonitorData, setFsReasons} from '../redux/operatorSlice';
+import {
+    setFsReport,
+    setFsStatus,
+    setActiveCalls,
+    setMonitorData,
+    setFsReasons,
+    setSessionKey
+} from '../redux/operatorSlice';
 import {getCookies, parseMonitorData} from "../utils";
 
-export const socket = io("wss://operator.glagol.ai", {
+export const socket = io("http://45.145.66.28:8000/", {
     transports: ['websocket']
 });
 
 socket.on('connect', () => {
     console.log('Socket connected:', socket.id);
-
+    socket.emit("login", {
+        worker: 'fs@akc24.ru',
+        // worker: getCookies('worker'),
+    })
     const emitStatus = () => {
+        const { sessionKey } = store.getState().operator
         socket.emit('get_fs_status_once', {
-            worker: getCookies('worker'),
+            worker: 'fs@akc24.ru',
             sip_login: getCookies('sip_login') || '1012',
-            session_key: getCookies('session_key'),
-            room_id: store.getState().room.roomId || 'default_room',
-            fs_server: getCookies('fs_server'),
+            session_key: sessionKey,
         });
     };
 
@@ -41,6 +50,10 @@ socket.on('fs_report', (data: any) => {
     store.dispatch(setFsReport(data));
 });
 
+socket.on('login', (data: { session_key: string }) => {
+    console.log('Received session_key:', data.session_key);
+    store.dispatch(setSessionKey(data.session_key));
+});
 // Подписка на fs_status
 socket.on('fs_status', (data: any) => {
     store.dispatch(setFsStatus(data));

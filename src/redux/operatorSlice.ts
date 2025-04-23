@@ -40,6 +40,7 @@ export interface OperatorState {
     fsStatus: any;
     activeCalls: any;
     roomId: string;
+    sessionKey: string;          // <-- добавили
     name: string;
     monitorData: MonitorData;
     fsReasons: {
@@ -54,6 +55,7 @@ const initialState: OperatorState = {
     fsStatus: {},
     activeCalls: {},
     roomId: '',
+    sessionKey: '',
     name: 'Имя по умолчанию',
     monitorData: {
         monitorUsers: {},
@@ -135,6 +137,11 @@ const operatorSlice = createSlice({
                 state.fsReasons = action.payload;
             }
         },
+        setSessionKey(state, action: PayloadAction<string>) {
+            if (state.sessionKey !== action.payload) {
+                state.sessionKey = action.payload;
+            }
+        },
     },
 });
 
@@ -146,6 +153,7 @@ export const {
     setName,
     setMonitorData,
     setFsReasons,
+    setSessionKey,
 } = operatorSlice.actions;
 
 export default operatorSlice.reducer;

@@ -8,7 +8,7 @@ import ScriptPanel from './components/scriptPanel';
 import { socket } from "./socket";
 import { getCookies, makeId } from "./utils";
 import { setActiveCalls, setFsStatus } from './redux/operatorSlice';
-import { RootState } from './redux/store';
+import {RootState, store} from './redux/store';
 
 const App: React.FC = () => {
     const [selectedCall, setSelectedCall] = useState<CallData | null>(null);
@@ -25,7 +25,7 @@ const App: React.FC = () => {
     const [isLoading,    setIsLoading]    = useState(false);
 
 
-    const sessionKey = getCookies('session_key') || '';
+    // const sessionKey = getCookies('session_key') || '';
     const sipLogin = getCookies('sip_login') || '';
     const fsServer = getCookies('fs_server') || '';
     const worker = getCookies('worker') || '';
@@ -36,6 +36,8 @@ const App: React.FC = () => {
     const activeCalls: any[] = useMemo(() => {
         return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
     }, [rawActiveCalls]);
+
+    const { sessionKey } = store.getState().operator
 
     useEffect(()=> {
         if (!activeCall && postActive) {

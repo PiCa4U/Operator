@@ -7,7 +7,6 @@ export const socket = io("wss://operator.glagol.ai", {
     transports: ['websocket']
 });
 
-// Событие успешного подключения
 socket.on('connect', () => {
     console.log('Socket connected:', socket.id);
 

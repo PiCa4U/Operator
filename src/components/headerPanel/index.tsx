@@ -399,7 +399,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     action: 'get_phone_to_call'
                 });
             }
-        }, 10000);
+        }, 30000);
         return () => clearInterval(interval);
     }, [hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, fsServer, projectPoolForCall, fsStatus.state, fsStatus.status]);
     useEffect(() => {

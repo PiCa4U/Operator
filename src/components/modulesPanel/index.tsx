@@ -22,7 +22,6 @@ const ModulesPanel: React.FC = () => {
     }, []);
 
     const handleModuleClick = (module: ModuleItem) => {
-        console.log('Нажат модуль:', module.name);
         // Здесь можно вызвать socket.emit('module_operations', { ... })
     };
 

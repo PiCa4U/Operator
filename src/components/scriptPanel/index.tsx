@@ -68,8 +68,6 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     const sipLogin   = getCookies('sip_login')   || '';
     const fsServer   = getCookies('fs_server')   || '';
     const worker     = getCookies('worker')      || '';
-    console.log("projectNameSCRIPT: ", projectName)
-    console.log("direction: ", direction)
 
     // Текущая «комната» (room_id)
     const roomId     = useSelector((state: RootState) => state.room.roomId) || 'default_room';
@@ -85,7 +83,6 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     const [blockText, setBlockText] = useState<any>(null);
     const [instructions, setInstructions] = useState<any>(null);
     const [blockButtons, setBlockButtons] = useState<ScriptButton[]>([]);
-    // useEffect(()=> console.log("projectName: ", projectName),[projectName])
     // FAQ
     const [questions, setQuestions] = useState<ScriptQuestion[]>([]);
     const [searchText, setSearchText] = useState('');
@@ -302,7 +299,6 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
             <div className="d-flex flex-wrap mb-3">
                 {blockButtons.map((btn, idx) => {
                     const variant = getBtnVariant(btn.Keynote);
-                    console.log("variant: ", variant)
                     return (
                         <button
                             key={idx}

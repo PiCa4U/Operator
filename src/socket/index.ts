@@ -28,39 +28,27 @@ socket.on('connect', () => {
 });
 
 socket.on("monitor_projects", (data: any) => {
-    console.log('Получены данные monitor_projects:', data);
-
     const parsedData = parseMonitorData(data);
-    console.log("parsedData: ", parsedData);
 
     // Нужно вызвать store.dispatch, чтобы изменить Redux-состояние
     store.dispatch(setMonitorData(parsedData));
 });
 // Логирование ответа на тестовое событие
 socket.on('test_event_response', (data: any) => {
-    console.log('Получили ответ на тестовое событие:', data);
 });
 
 // Подписка на fs_report
 socket.on('fs_report', (data: any) => {
-    console.log('Получили fs_report:', data);
     store.dispatch(setFsReport(data));
 });
 
 // Подписка на fs_status
 socket.on('fs_status', (data: any) => {
-    console.log('Получили fs_status:', data);
     store.dispatch(setFsStatus(data));
 });
 
 socket.on('fs_reasons', (data: any) => {
-    console.log('Получили fs_reasons:', data);
     store.dispatch(setFsReasons(data));
 });
 
-// Если нужны другие события:
-// socket.on('some_calls_event', (data: any) => {
-//     console.log('Получили some_calls_event:', data);
-//     store.dispatch(setActiveCalls(data));
-// });
 

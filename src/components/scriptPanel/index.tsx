@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Swal from 'sweetalert2';
 import { socket } from '../../socket';
 import { useSelector } from "react-redux";
-import { RootState } from "../../redux/store";
+import {RootState, store} from "../../redux/store";
 import { getCookies } from "../../utils";
 import {CallData} from "../callControlPanel";
 import {Project} from "../headerPanel";
@@ -64,7 +64,6 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
                                                      bUuid = '',
                                                      onClose,
                                                  }) => {
-    const sessionKey = getCookies('session_key') || '';
     const sipLogin   = getCookies('sip_login')   || '';
     const fsServer   = getCookies('fs_server')   || '';
     const worker     = getCookies('worker')      || '';
@@ -87,6 +86,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     const [questions, setQuestions] = useState<ScriptQuestion[]>([]);
     const [searchText, setSearchText] = useState('');
     const [openAnswers, setOpenAnswers] = useState<{ [id: string]: boolean }>({});
+    const { sessionKey } = store.getState().operator
 
     // Комментарий (если commentMode === 'true')
     const [comment, setComment] = useState('');

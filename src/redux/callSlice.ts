@@ -2,7 +2,7 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { socket } from '../socket';
 import { getCookies } from '../utils';
-import { RootState } from './store';
+import {RootState, store} from './store';
 
 // Определяем тип состояния вызова
 interface CallState {
@@ -36,7 +36,8 @@ export const initiateCall = createAsyncThunk<
     'call/initiateCall',
     async (params, { getState, rejectWithValue }) => {
         // Получаем нужные данные из куков и Redux‑state
-        const sessionKey = getCookies('session_key');
+        const { sessionKey } = store.getState().operator
+
         const sipLogin = getCookies('sip_login');
         const fsServer = getCookies('fs_server');
         const roomId = getState().room.roomId || 'default_room';

@@ -154,21 +154,17 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             setPostCallData(first);
         }
 
-        if (!hasActiveCall && !hasAppField && postCallData?.application) {
+        if (!hasActiveCall && !hasAppField && postCallData?.application && sessionKey) {
             socket.emit('get_fs_report', {
                 worker,
                 session_key: sessionKey,
                 sip_login: sipLogin,
-                room_id: roomId,
-                fs_server: fsServer,
                 level: 0,
             });
             if (fsStatus.status === "On Break") {
-                socket.emit('change_stat_fs', {
-                    fs_server: fsServer,
+                socket.emit('change_status_fs', {
                     sip_login: sipLogin,
-                    room_id: roomId,
-                    worker: sipLogin,
+                    worker,
                     session_key: sessionKey,
                     action: 'available',
                     page: 'online',
@@ -205,11 +201,11 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         const s_login = worker.slice(s_dot + 1);
         if(sessionKey){
             socket.emit('monitor_fs_projects', {
-                worker: "fs@akc24.ru",
+                worker,
                 session_key: sessionKey
             });
             socket.emit('monitor_fs_statuses', {
-                worker: "fs@akc24.ru",
+                worker,
                 session_key: sessionKey
             });
         }
@@ -219,9 +215,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     const changeStateFs = (newState: string, reason: string) => {
         socket.emit('change_state_fs', {
-            fs_server: fsServer,
             sip_login: sipLogin,
-            room_id: roomId,
             worker,
             session_key: sessionKey,
             state: newState,
@@ -369,14 +363,14 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             Swal.fire({ title: "Вызовы объединены", icon: "success", timer: 1000 });
         };
 
-        socket.on('get_phone_to_call', handleGetPhoneToCall);
+        socket.on('outbound_call_get', handleGetPhoneToCall);
         socket.on('click_to_call_start', handleClickToCallStart);
         socket.on('hold_toggle', handleHoldToggle);
         socket.on('uuid_break', handleUuidBreak);
         socket.on('uuid_bridge', handleUuidBridge);
 
         return () => {
-            socket.off('get_phone_to_call', handleGetPhoneToCall);
+            socket.off('outbound_call_get', handleGetPhoneToCall);
             socket.off('click_to_call_start', handleClickToCallStart);
             socket.off('hold_toggle', handleHoldToggle);
             socket.off('uuid_break', handleUuidBreak);
@@ -394,14 +388,16 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 fsStatus.state === "Waiting" &&
                 (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
             ) {
-                socket.emit('outbound_calls', {
+                socket.emit('outbound_call_get', {
+                    assign: true,
+                    batch: 1,
+                    break: true,
                     worker,
+                    interface: "glagol",
                     sip_login: sipLogin,
                     session_key: sessionKey,
-                    room_id: roomId,
-                    fs_server: fsServer,
-                    project_pool: projectPoolForCall,
-                    action: 'get_phone_to_call'
+                    projects_pool: projectPoolForCall,
+                    start_type: "auto"
                 });
             }
         }, 30000);
@@ -512,9 +508,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     // Кнопки управления статусом (как в старом)
     const handlePostStop = () => {
         socket.emit('change_state_fs', {
-            fs_server: fsServer,
             sip_login: sipLogin,
-            room_id: roomId,
             worker,
             session_key: sessionKey,
             action: 'available',
@@ -526,10 +520,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     };
 
     const handleStartFs = (reason?: string, idle_set?: boolean) => {
-        socket.emit('change_stat_fs', {
-            fs_server: fsServer,
+        socket.emit('change_status_fs', {
             sip_login: sipLogin,
-            room_id: roomId,
             worker,
             session_key: sessionKey,
             action: 'available',
@@ -538,9 +530,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             page: 'online',
         });
         socket.emit('change_state_fs', {
-            fs_server: fsServer,
             sip_login: sipLogin,
-            room_id: roomId,
             worker,
             session_key: sessionKey,
             action: 'available',
@@ -553,11 +543,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     const handlePauseFs = async () => {
         if (fsStatus.status === "On Break") {
-            socket.emit('change_stat_fs', {
-                fs_server: fsServer,
+            socket.emit('change_status_fs', {
                 sip_login: sipLogin,
-                room_id: roomId,
-                worker: sipLogin,
+                worker,
                 session_key: sessionKey,
                 action: 'available',
                 page: 'online',
@@ -576,11 +564,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 showCancelButton: true,
             });
             if (!reason) return;
-            socket.emit('change_stat_fs', {
-                fs_server: fsServer,
+            socket.emit('change_status_fs', {
                 sip_login: sipLogin,
-                room_id: roomId,
-                worker: sipLogin,
+                worker,
                 session_key: sessionKey,
                 action: 'pause',
                 reason,
@@ -590,11 +576,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     };
 
     const handleLogoutFs = () => {
-        socket.emit('change_stat_fs', {
-            fs_server: fsServer,
+        socket.emit('change_status_fs', {
             sip_login: sipLogin,
-            room_id: roomId,
-            worker: sipLogin,
+            worker,
             session_key: sessionKey,
             action: 'logout',
             page: 'online',
@@ -631,8 +615,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         }
     };
 
-
-    // Маппинги статусов для отображения
     const statusMapping: { [key: string]: { text: string; color: string } } = {
         'Available': { text: 'На линии', color: '#0BB918' },
         'Available (On Demand)': { text: 'На линии', color: '#0BB918' },

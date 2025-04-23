@@ -29,7 +29,7 @@ const App: React.FC = () => {
     const sipLogin = getCookies('sip_login') || '';
     const fsServer = getCookies('fs_server') || '';
     const worker = getCookies('worker') || '';
-
+    console.log("worker: ", worker)
     const dispatch = useDispatch();
     const roomId = useMemo(() => makeId(40), []);
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
@@ -40,17 +40,15 @@ const App: React.FC = () => {
     const { sessionKey } = store.getState().operator
 
     useEffect(()=> {
-        if (!activeCall && postActive) {
+        if (!activeCall && postActive && sessionKey) {
             socket.emit('get_fs_report', {
                 worker,
                 session_key: sessionKey,
                 sip_login: sipLogin,
-                room_id: roomId,
-                fs_server: fsServer,
                 level: 0,
             });
         }
-    },[activeCall, postActive, activeCalls])
+    },[activeCall, postActive, activeCalls, sessionKey])
     useEffect(() => {
         const first = activeCalls[0];
         if (activeCalls.length > 0 && !activeCall && first?.application) {
@@ -72,20 +70,17 @@ const App: React.FC = () => {
         };
     },[])
     useEffect(()=> {
-        if (postActive) {
+        if (postActive && sessionKey) {
             socket.emit('get_fs_report', {
-                worker,
                 session_key: sessionKey,
                 sip_login: sipLogin,
-                room_id: roomId,
-                fs_server: fsServer,
                 level: 0,
                 date_range: "",
                 phone_search: "",
             });
             setCurrentPage(1)
         }
-    },[showScriptPanel, postActive])
+    },[showScriptPanel, postActive, sessionKey])
 
     useEffect(() => {
         const handleFsDiaDes = (msg: any) => {
@@ -130,10 +125,7 @@ const App: React.FC = () => {
     useEffect(() => {
         if (activeCall && activeCalls[0].application_data) {
             const requestParams = {
-                fs_server: getCookies("fs_server"),
-                room_id: roomId,
-                worker: getCookies("worker"),
-                session_key: getCookies("session_key"),
+                session_key: sessionKey,
                 uuid: activeCalls[0].uuid,
                 b_uuid: activeCalls[0].b_uuid,
                 phone: activeCalls[0].cid_num,

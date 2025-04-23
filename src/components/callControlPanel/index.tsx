@@ -2,7 +2,7 @@ import React, {useState, useEffect, useRef, useMemo} from 'react';
 import { socket } from '../../socket';
 import { getCookies } from '../../utils';
 import { useSelector } from "react-redux";
-import { RootState } from "../../redux/store";
+import {RootState, store} from "../../redux/store";
 import Swal from "sweetalert2";
 import EditableFields from "./components";
 import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
@@ -146,7 +146,8 @@ interface CallControlPanelProps {
 
 const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoading, assignedKey, outActiveProjectName, outActivePhone,call, hasActiveCall, onClose, activeProject, setPostActive, postActive,currentPage   }) => {
     // Из cookies
-    const sessionKey = getCookies('session_key') || '';
+    const { sessionKey } = store.getState().operator
+
     const sipLogin   = getCookies('sip_login') || '';
     const fsServer   = getCookies('fs_server') || '';
     const worker     = getCookies('worker') || '';
@@ -420,9 +421,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
             timer: 1500,
         });
         socket.emit('change_state_fs', {
-            fs_server: fsServer,
             sip_login: sipLogin,
-            room_id: roomId,
             worker,
             session_key: sessionKey,
             state: 'waiting',
@@ -470,8 +469,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
             worker,
             session_key: sessionKey,
             sip_login: sipLogin,
-            room_id: roomId,
-            fs_server: fsServer,
             level: 0,
         });
         if (callSection === 1) {
@@ -522,8 +519,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
             worker,
             session_key: sessionKey,
             sip_login: sipLogin,
-            room_id: roomId,
-            fs_server: fsServer,
             level: (currentPage - 1) * 10,
         });
         onClose();
@@ -584,9 +579,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
         });
 
         socket.emit("change_state_fs", {
-            fs_server: fsServer,
             sip_login: sipLogin,
-            room_id: roomId,
             worker,
             session_key: sessionKey,
             state: "waiting",
@@ -598,8 +591,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
             worker,
             session_key: sessionKey,
             sip_login: sipLogin,
-            room_id: roomId,
-            fs_server: fsServer,
             level: 0,
         });
 

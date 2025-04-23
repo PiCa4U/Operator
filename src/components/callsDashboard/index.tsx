@@ -3,7 +3,7 @@ import { useSelector } from 'react-redux';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
 import "./picker.css"
-import { RootState } from '../../redux/store';
+import {RootState, store} from '../../redux/store';
 import { socket } from '../../socket';
 import { getCookies } from '../../utils';
 import {CallData} from "../callControlPanel";
@@ -38,7 +38,8 @@ type CallsDashboardProps = {
     setIsLoading: (isLoading: boolean) => void
 }
 const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading, setSelectedCall, currentPage, setCurrentPage}) => {
-    const sessionKey = getCookies('session_key') || '';
+    const { sessionKey } = store.getState().operator
+
     const sipLogin   = getCookies('sip_login')   || '';
     const fsServer   = getCookies('fs_server')   || '';
     const worker     = getCookies('worker')      || '';
@@ -112,8 +113,6 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
             worker,
             session_key: sessionKey,
             sip_login: sipLogin,
-            room_id: roomId,
-            fs_server: fsServer,
             level: (currentPage - 1) * 10,
             date_range: dateRangeString,
             phone_search: searchParams.phone,

@@ -315,9 +315,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             const sourceKey: string = spec.source;
 
             let value = '';
-            if (sourceKey === 'reason') {
+            if (sourceKey === 'call_reason') {
                 value = callReason?.toString() || '';
-            } else if (sourceKey === 'result') {
+            } else if (sourceKey === 'call_result') {
                 value = callResult?.toString() || '';
             } else if (sourceKey === 'comment') {
                 value = comment;
@@ -359,12 +359,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 const v = value == null ? '' : String(value);
 
                 switch (fieldKey) {
-                    case 'reason':
+                    case 'call_reason':
                         // если сервер присылает новый reason
                         setCallReason(v);
                         break;
 
-                    case 'result':
+                    case 'call_result':
                         // если сервер присылает новый result
                         setCallResult(v);
                         break;

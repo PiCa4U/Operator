@@ -11,7 +11,7 @@ const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
 );
 
-document.cookie = "sip_login=1012; path=/; expires=Fri, 31 Dec 9999 23:59:59 GMT";
+document.cookie = "sip_login=1000; path=/; expires=Fri, 31 Dec 9999 23:59:59 GMT";
 document.cookie = "worker=1.fs@akc24.ru; path=/; expires=Fri, 31 Dec 9999 23:59:59 GMT";
 
 root.render(

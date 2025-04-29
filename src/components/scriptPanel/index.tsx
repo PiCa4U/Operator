@@ -195,13 +195,13 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
             session_key: sessionKey,
             // room_id: roomId,
             // fs_server: fsServer,
-            // script_id: Number(scriptId),
-            script_id: 1,
+            script_id: Number(scriptId),
+            // script_id: 1,
 
             // source,
             // action: 'move_script',
-            // next_number: Number(btn.NextNumber),
-            next_number: 433,
+            next_number: Number(btn.NextNumber),
+            // next_number: 433,
 
             comment: (commentMode === 'true') ? comment : '',
             direction: direction || "",

@@ -138,19 +138,19 @@ const App: React.FC = () => {
 
         }
     }, [activeCall, activeCalls]);
-
-    socket.on('data_saved', () => {
-        const sessionKey = store.getState().operator.sessionKey;
-        const sipLogin   = getCookies('sip_login') || '';
-
-        socket.emit('get_fs_report', {
-            session_key:  sessionKey,
-            sip_login:    sipLogin,
-            level:        0,
-            date_range:   '',
-            phone_search: '',
-        });
-    });
+    //TODO fix
+    // socket.on('data_saved', () => {
+    //     const sessionKey = store.getState().operator.sessionKey;
+    //     const sipLogin   = getCookies('sip_login') || '';
+    //
+    //     socket.emit('get_fs_report', {
+    //         session_key:  sessionKey,
+    //         sip_login:    sipLogin,
+    //         level:        0,
+    //         date_range:   '',
+    //         phone_search: '',
+    //     });
+    // });
 
     return (
         <div className="container-fluid">

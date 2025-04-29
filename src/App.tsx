@@ -23,11 +23,10 @@ const App: React.FC = () => {
     const [outActiveProjectName, setOutActiveProjectName] = useState('');
     const [assignedKey, setAssignedKey] = useState('');
     const [isLoading,    setIsLoading]    = useState(false);
-
+    const [specialKey, setSpecialKey] = useState<string>('')
 
     // const sessionKey = getCookies('session_key') || '';
     const sipLogin = getCookies('sip_login') || '';
-    const fsServer = getCookies('fs_server') || '';
     const worker = getCookies('worker') || '';
     console.log("worker: ", worker)
     const dispatch = useDispatch();
@@ -36,7 +35,7 @@ const App: React.FC = () => {
     const activeCalls: any[] = useMemo(() => {
         return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
     }, [rawActiveCalls]);
-
+    useEffect(()=> console.log("activeCall: ", activeCall),[activeCall])
     const { sessionKey } = store.getState().operator
 
     useEffect(()=> {
@@ -50,10 +49,11 @@ const App: React.FC = () => {
         }
     },[activeCall, postActive, activeCalls, sessionKey])
     useEffect(() => {
+        console.log("activeCalls: ", activeCalls)
         const first = activeCalls[0];
         if (activeCalls.length > 0 && !activeCall && first?.application) {
             setActiveCall(true);
-        } else if (activeCalls.length > 0 && Object.keys(first || {}).length === 0 && activeCall) {
+        } else if (!activeCalls.length && activeCall) {
             setActiveCall(false);
             setOutboundCall(false);
             setPostActive(true);
@@ -86,12 +86,17 @@ const App: React.FC = () => {
         const handleFsDiaDes = (msg: any) => {
             if (!outboundCall) {
                 setActiveProjectName(msg.project_name);
+                socket.emit('get_fs_reasons', {
+                    project_name: msg.project_name,
+                    session_key: sessionKey,
+                    worker
+                })
             }
         };
 
-        socket.on('fs_dia_des', handleFsDiaDes);
+        socket.on('get_callcenter_queues', handleFsDiaDes);
         return () => {
-            socket.off('fs_dia_des', handleFsDiaDes);
+            socket.off('get_callcenter_queues', handleFsDiaDes);
         };
     }, [outboundCall]);
     useEffect(() => {
@@ -123,22 +128,30 @@ const App: React.FC = () => {
     }, [dispatch, roomId]);
 
     useEffect(() => {
-        if (activeCall && activeCalls[0].application_data) {
+        if (activeCall && activeCalls.length && activeCalls[0].application) {
             const requestParams = {
                 session_key: sessionKey,
-                uuid: activeCalls[0].uuid,
-                b_uuid: activeCalls[0].b_uuid,
+                worker,
                 phone: activeCalls[0].cid_num,
-                direction: activeCalls[0].direction,
-                caller_id:activeCalls[0].dest,
-                destination_number:activeCalls[0].dest,
-                cid_name:activeCalls[0].cid_name,
-                call_section: 1,
             };
-            socket.emit('get_fs_dia_dest', requestParams);
+            socket.emit('get_callcenter_queues', requestParams);
 
         }
     }, [activeCall, activeCalls]);
+
+    socket.on('data_saved', () => {
+        const sessionKey = store.getState().operator.sessionKey;
+        const sipLogin   = getCookies('sip_login') || '';
+
+        socket.emit('get_fs_report', {
+            session_key:  sessionKey,
+            sip_login:    sipLogin,
+            level:        0,
+            date_range:   '',
+            phone_search: '',
+        });
+    });
+
     return (
         <div className="container-fluid">
             {/* Шапка с панелью управления (HeaderPanel) */}
@@ -157,6 +170,9 @@ const App: React.FC = () => {
                 assignedKey={assignedKey}
                 setAssignedKey={setAssignedKey}
                 setIsLoading={setIsLoading}
+                specialKey={specialKey}
+                setSpecialKey={setSpecialKey}
+                activeProjectName={activeProjectName}
             />
 
             {/* Основной контент */}
@@ -196,6 +212,7 @@ const App: React.FC = () => {
                             assignedKey={assignedKey}
                             isLoading={isLoading}
                             setIsLoading={setIsLoading}
+                            specialKey={specialKey}
                         />
                     )}
                 </div>

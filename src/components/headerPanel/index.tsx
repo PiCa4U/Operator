@@ -53,6 +53,9 @@ interface HeaderPanelProps {
     assignedKey: string
     setAssignedKey: (assignedKey: string) => void
     setIsLoading: (isLoading: boolean) => void
+    specialKey: string
+    setSpecialKey: (specialKey: string) => void
+    activeProjectName: string
 }
 
 export interface OutActivePhone {
@@ -74,6 +77,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      setShowScriptPanel,
                                                      setPostActive,
                                                      showScriptPanel,
+                                                     specialKey,
+                                                     setSpecialKey,
+                                                     activeProjectName
                                                  }) => {
     // const sessionKey = getCookies('session_key') || '';
     const sipLogin = getCookies('sip_login') || '';
@@ -117,6 +123,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     // Стейты для исходящих/автодозвона
     const [handleOutboundCall, setHandleOutboundCall] = useState<boolean>(false)
+    // const [specialKey, setSpecialKey] = useState<string>('')
     // const [outActivePhone, setOutActivePhone] = useState<OutActivePhone | null>(null);
     // const [outActiveProjectName, setOutActiveProjectName] = useState('');
     const [outActiveStartType, setOutActiveStartType] = useState('');
@@ -134,6 +141,12 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     const { sessionKey } = store.getState().operator
 
+    const getPrefix = (projectName: string) => {
+        const projectGateawayPrefix =
+            projectPool.length &&
+            projectPool.find(p => p.project_name === projectName).out_gateways[2].prefix
+        return projectGateawayPrefix
+    }
     useEffect(() => {
         if (activeCalls.length > 0 && Object.keys(activeCalls[0]).length > 0) {
             setHasActiveCall(true);
@@ -146,6 +159,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         setHandleOutboundCall(false);
 
         const first = activeCalls[0];
+        console.log("first: ", first)
         const hasAppField = first !== undefined && 'application' in first;
         const hasApp      = Boolean(first?.application);
 
@@ -170,19 +184,23 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     page: 'online',
                 });
             }
-            setIsLoading(true)
-            socket.emit('outbound_calls', {
-                worker,
+            socket.emit('change_state_fs', {
                 sip_login: sipLogin,
+                worker,
                 session_key: sessionKey,
-                room_id: roomId,
-                fs_server: fsServer,
-                project_pool: projectPoolForCall,
-                action: 'update_phone_to_call',
+                action: 'available',
+                state: "idle",
+                reason: "postobrabotka",
+                page: 'online',
+            });
+            setIsLoading(true)
+            socket.emit('outbound_call_update', {
+                worker,
+                session_key: sessionKey,
                 assigned_key: assignedKey,
                 log_status: 'finished',
                 phone_status: 'finished',
-                special_key: outActivePhone?.special_key,
+                special_key: specialKey,
                 project_name: outActiveProjectName,
             });
             setPostCallData({});
@@ -224,35 +242,41 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         });
     };
 
-    const outProjectClickToCall = (out_extension: string, phone: string, project_name: string ) => {
-        socket.emit('get_out_start', {
-            fs_server: fsServer,
-            room_id: roomId,
+    const outProjectClickToCall = ( phone: string, project_name: string ) => {
+        socket.emit('get_phone_line', {
+            // fs_server: fsServer,
+            // room_id: roomId,
             worker,
             session_key: sessionKey,
-            call_section: 1,
+            // call_section: 1,
             project_name: project_name,
             phone: phone,
-            out_extension: out_extension,
-            special_key: outActivePhone?.special_key
+            // out_extension: out_extension,
+            special_key: specialKey
         });
     };
 
     useEffect(() => {
         const handleGetPhoneToCall = (msg: any) => {
-            setOutActivePhone(msg.phone);
-            setOutActiveProjectName(msg.project_name);
-            setOutActiveStartType(msg.start_type);
-            setOutActiveStart(msg.start);
-            setOutActiveTakenReason(msg.taken_reason);
-            setOutExtensions(msg.out_extensions);
-            setAssignedKey(msg.assigned_key);
+            console.log("msg: ", msg)
+            if (!msg.length) return
+            setSpecialKey(msg[0].special_key)
+            setOutActivePhone(msg[0].phone);
+            setOutActiveProjectName(msg[0].project);
+            const startType = projectPool.find(p => p.project_name === msg[0].project).start_type || ""
+            console.log("startType: ", startType)
+            setOutActiveStartType(startType);
+            // setOutActiveStart(msg[0].start);
+            // setOutActiveTakenReason(msg[0].taken_reason);
+            // setOutExtensions(msg[0].out_extensions);
+            const outExtensions = projectPool.find(p => p.project_name === msg[0].project).out_gateways[2].prefix
+            setAssignedKey(msg[0].contact_key);
             setOutPreparation(true);
 
-            if (msg.start_type === 'manual') {
+            if (startType === 'manual') {
                 Swal.fire({
-                    title: `Исходящий вызов - ${allProjects[msg.project_name]?.glagol_name || msg.project_name}`,
-                    text: `На номер ${msg.phone?.phone || msg.phone}`,
+                    title: `Исходящий вызов - ${allProjects[msg[0].project]?.glagol_name || msg[0].project}`,
+                    text: `На номер ${msg[0].phone?.phone || msg[0].phone}`,
                     showCancelButton: true,
                     confirmButtonText: 'Совершить',
                     cancelButtonText: 'Отказаться',
@@ -261,68 +285,84 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     timerProgressBar: true,
                 }).then((result) => {
                     if (result.isConfirmed) {
-                        outProjectClickToCall(msg.out_extensions[0].prefix, msg.phone.phone, msg.project_name);
+                        outProjectClickToCall( msg[0].phone, msg[0].project);
                         if (projectPoolForCall.length > 0) {
-                            socket.emit('outbound_calls', {
+                            socket.emit('outbound_call_update', {
                                 worker,
-                                sip_login: sipLogin,
+                                // sip_login: sipLogin,
                                 session_key: sessionKey,
-                                room_id: roomId,
-                                fs_server: fsServer,
-                                project_pool: projectPoolForCall,
-                                action: 'update_phone_to_call',
-                                assigned_key: msg.assigned_key,
+                                // project_pool: projectPoolForCall,
+                                assigned_key: msg[0].contact_key,
                                 log_status: 'taken',
                                 phone_status: 'taken',
-                                special_key: msg.phone?.special_key,
-                                project_name: msg.project_name,
+                                special_key: msg[0].special_key,
                             });
                         }
                     } else {
                         changeStateFs('waiting', 'outbound_reject');
                         setOutPreparation(false);
                         if (projectPoolForCall.length > 0) {
-                            socket.emit('outbound_calls', {
+                            // socket.emit('outbound_calls', {
+                            //     worker,
+                            //     sip_login: sipLogin,
+                            //     session_key: sessionKey,
+                            //     room_id: roomId,
+                            //     fs_server: fsServer,
+                            //     project_pool: projectPoolForCall,
+                            //     action: 'update_phone_to_call',
+                            //     assigned_key: msg.assigned_key,
+                            //     log_status: 'reject',
+                            //     phone_status: msg.phone?.status,
+                            //     special_key: msg.phone?.special_key,
+                            //     project_name: msg.project_name,
+                            // });
+                            socket.emit('outbound_call_update', {
                                 worker,
-                                sip_login: sipLogin,
+                                // sip_login: sipLogin,
                                 session_key: sessionKey,
-                                room_id: roomId,
-                                fs_server: fsServer,
-                                project_pool: projectPoolForCall,
-                                action: 'update_phone_to_call',
-                                assigned_key: msg.assigned_key,
+                                // project_pool: projectPoolForCall,
+                                assigned_key: msg[0].contact_key,
                                 log_status: 'reject',
-                                phone_status: msg.phone?.status,
-                                special_key: msg.phone?.special_key,
-                                project_name: msg.project_name,
+                                phone_status: msg[0].phone?.status,
+                                special_key: msg[0].phone?.special_key,
                             });
                         }
                     }
                 });
-            } else if (msg.start_type === 'auto') {
+            } else if (startType === 'auto') {
                 Swal.fire({
-                    title: `Исходящий вызов - ${allProjects[msg.project_name]?.glagol_name || msg.project_name}`,
-                    text: `На номер ${msg.phone?.phone || msg.phone}`,
+                    title: `Исходящий вызов - ${allProjects[msg[0].project]?.glagol_name || msg[0].project}`,
+                    text: `На номер ${msg[0].phone || msg[0].phone}`,
                     showConfirmButton: false,
                     icon: "warning",
                     timer: 3000,
                     timerProgressBar: true,
                 }).then(() => {
-                    outProjectClickToCall(msg.out_extensions[0].prefix, msg.phone.phone, msg.project_name);
+                    outProjectClickToCall(msg[0].phone, msg[0].project);
                     if (projectPoolForCall.length > 0) {
-                        socket.emit('outbound_calls', {
+                        // socket.emit('outbound_calls', {
+                        //     worker,
+                        //     sip_login: sipLogin,
+                        //     session_key: sessionKey,
+                        //     room_id: roomId,
+                        //     fs_server: fsServer,
+                        //     project_pool: projectPoolForCall,
+                        //     action: 'update_phone_to_call',
+                        //     assigned_key: msg.assigned_key,
+                        //     log_status: 'taken',
+                        //     phone_status: 'taken',
+                        //     special_key: msg.phone?.special_key,
+                        //     project_name: msg.project_name,
+                        // });
+                        socket.emit('outbound_call_update', {
                             worker,
-                            sip_login: sipLogin,
+                            // sip_login: sipLogin,
                             session_key: sessionKey,
-                            room_id: roomId,
-                            fs_server: fsServer,
-                            project_pool: projectPoolForCall,
-                            action: 'update_phone_to_call',
-                            assigned_key: msg.assigned_key,
+                            // project_pool: projectPoolForCall,
+                            assigned_key: msg[0].contact_key,
                             log_status: 'taken',
                             phone_status: 'taken',
-                            special_key: msg.phone?.special_key,
-                            project_name: msg.project_name,
+                            special_key: msg[0].special_key,
                         });
                     }
                 });
@@ -330,22 +370,33 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         };
 
         const handleClickToCallStart = (msg: any) => {
-            if (msg.result === 'ok') {
+            if (msg.status === 'OK') {
                 Swal.fire({ title: "Звонок запускается", icon: "success", timer: 1000 });
-                socket.emit('outbound_calls', {
+                // socket.emit('outbound_calls', {
+                //     worker,
+                //     sip_login: sipLogin,
+                //     session_key: sessionKey,
+                //     room_id: roomId,
+                //     fs_server: fsServer,
+                //     project_pool: projectPoolForCall,
+                //     action: 'update_phone_to_call',
+                //     assigned_key: assignedKey,
+                //     log_status: 'ringing',
+                //     phone_status: 'ringing',
+                //     special_key: outActivePhone?.special_key,
+                //     project_name: outActiveProjectName,
+                // });
+                socket.emit('outbound_call_update', {
                     worker,
-                    sip_login: sipLogin,
+                    // sip_login: sipLogin,
                     session_key: sessionKey,
-                    room_id: roomId,
-                    fs_server: fsServer,
-                    project_pool: projectPoolForCall,
-                    action: 'update_phone_to_call',
+                    // project_pool: projectPoolForCall,
                     assigned_key: assignedKey,
                     log_status: 'ringing',
                     phone_status: 'ringing',
-                    special_key: outActivePhone?.special_key,
-                    project_name: outActiveProjectName,
+                    special_key: specialKey,
                 });
+
             } else {
                 Swal.fire({ title: "Ошибка при старте звонка", icon: "error" });
             }
@@ -364,14 +415,14 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         };
 
         socket.on('outbound_call_get', handleGetPhoneToCall);
-        socket.on('click_to_call_start', handleClickToCallStart);
+        socket.on('call', handleClickToCallStart);
         socket.on('hold_toggle', handleHoldToggle);
         socket.on('uuid_break', handleUuidBreak);
         socket.on('uuid_bridge', handleUuidBridge);
 
         return () => {
             socket.off('outbound_call_get', handleGetPhoneToCall);
-            socket.off('click_to_call_start', handleClickToCallStart);
+            socket.off('call', handleClickToCallStart);
             socket.off('hold_toggle', handleHoldToggle);
             socket.off('uuid_break', handleUuidBreak);
             socket.off('uuid_bridge', handleUuidBridge);
@@ -388,6 +439,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 fsStatus.state === "Waiting" &&
                 (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
             ) {
+                console.log("OOOOHHHH")
                 socket.emit('outbound_call_get', {
                     assign: true,
                     batch: 1,
@@ -400,7 +452,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     start_type: "auto"
                 });
             }
-        }, 30000);
+        }, 10000);
         return () => clearInterval(interval);
     }, [hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, fsServer, projectPoolForCall, fsStatus.state, fsStatus.status]);
     useEffect(() => {
@@ -411,15 +463,12 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             // setAssignedKey(msg.assigned_key);
             setOutPreparation(false);
              if (!hasActiveCall && !handleOutboundCall) {
-                  socket.emit('click_to_call', {
+                  socket.emit('call', {
                       worker,
                       sip_login: sipLogin,
                       session_key: sessionKey,
-                      room_id: roomId,
-                      fs_server: fsServer,
-                      phone: msg.phone?.phone || msg.phone,
-                      out_extension: msg.out_extension,
-                      call_type: 'call',
+                      phone: msg.phone_line[0].phone,
+                      prefix: msg.out_extension,
                       project_name: msg.project_name
                 });
             }
@@ -432,7 +481,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     }, [sipLogin, sessionKey, roomId, fsServer, worker, hasActiveCall]);
     // --- (B) Обработчик «Вызов по номеру» ---
     const handleCallByNumber = () => {
-        if (!activeCalls[0].application) return
+        console.log("123")
+        // if (!activeCalls[0].application) return
+        console.log("12345")
         setOutExtension('');
         setOutBaseFieldValues({});
         if (!activeCalls[0].application) {
@@ -454,7 +505,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         }
 
         // Далее — проверка: если activeCall есть, значит callType='redirect', иначе 'call'
-        if (hasActiveCall && activeCalls[0].direction === "outbound") {
+        if (hasActiveCall) {
             setCallType('redirect');
         } else {
             setCallType('call');
@@ -469,40 +520,35 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             });
             return;
         }
+        const projName = activeCalls[0].direction === "outbound" ? outActiveProjectName : activeProjectName
 
-        socket.emit('sofia_operations', {
-            worker,
-            sip_login: sipLogin,
-            session_key: sessionKey,
-            room_id: roomId,
-            fs_server: fsServer,
-            uuid: activeCalls[0].uuid,
-            action: 'hold_toggle'
-        });
-        if (callType === 'redirect') {
-            socket.emit('click_to_call', {
-                worker,
-                    sip_login: sipLogin,
-                    session_key: sessionKey,
-                    room_id: roomId,
-                    fs_server: fsServer,
-                    phone,
-                    out_extension: selectedExtension,
-                    call_type: 'redirect',
-                    uuid: activeCalls[0].uuid,
-            });
-        } else {
-            socket.emit('click_to_call', {
+        // socket.emit('sofia_operations', {
+        //     worker,
+        //     session_key: sessionKey,
+        //     uuid: activeCalls[0].uuid,
+        //     action: 'hold_toggle'
+        // });
+        // if (callType === 'redirect') {
+        //     socket.emit('redirect', {
+        //         worker,
+        //         sip_login: sipLogin,
+        //         session_key: sessionKey,
+        //         phone,
+        //         project_name: projName,
+        //         // prefix: getPrefix(projName),
+        //         // call_type: 'redirect',
+        //         // uuid: activeCalls[0].uuid,
+        //     });
+        // } else {
+            socket.emit('call', {
                 worker,
                 sip_login: sipLogin,
                 session_key: sessionKey,
-                room_id: roomId,
-                fs_server: fsServer,
                 phone,
-                out_extension: selectedExtension,
-                call_type: 'call',
+                // prefix: "0069",
+                project_name: activeCalls[0].direction === "outbound" ? outActiveProjectName : activeProjectName,
             });
-        }
+        // }
     };
 
     // Кнопки управления статусом (как в старом)
@@ -598,17 +644,14 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             });
 
             if (scriptName) {
-                // Эмитим событие "start_script" с дополнительными параметрами, чтобы сервер понял, что это тестовый запуск
-                socket.emit('script_operations', {
+                socket.emit('start_script', {
                     worker,
                     sip_login: sipLogin,
                     session_key: sessionKey,
-                    room_id: roomId,
-                    fs_server: fsServer,
-                    action: 'start_script',
                     init_mode: 'find',
-                    direction: 'look',
-                    project_name: scriptName,
+                    direction: '123',
+                    project_name: "asd",
+                    cyrillic_name: scriptName
                 });
                 setShowScriptPanel(true)
             }

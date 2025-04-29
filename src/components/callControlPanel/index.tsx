@@ -49,6 +49,8 @@ export interface CallData {
     user_comment?: string;
     project_name?: string;
     total_direction?: string;    // 'inbound' | 'outbound'
+    special_key_call: string;
+    special_key_conn: string;
     // ... и т. д.
 }
 export interface ActiveCall {
@@ -120,11 +122,10 @@ export interface ActiveCall {
 }
 
 interface ModuleData {
-    name: string;
-    id: number | string;
-    start_modes: { [projectName: string]: string };
-    inputs: { [inputKey: string]: { [project: string]: any } };
-    outputs: { [inputKey: string]: { [project: string]: any } };
+    filename: string;
+    id: number;
+    kwargs: any;
+    return_structure: any;
 }
 
 interface CallControlPanelProps {
@@ -140,11 +141,26 @@ interface CallControlPanelProps {
     assignedKey: string
     isLoading: boolean
     setIsLoading: (isLoading: boolean) => void
+    specialKey: string
 
 }
 
 
-const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoading, assignedKey, outActiveProjectName, outActivePhone,call, hasActiveCall, onClose, activeProject, setPostActive, postActive,currentPage   }) => {
+const CallControlPanel: React.FC<CallControlPanelProps> = ({
+                                                               specialKey,
+                                                               isLoading,
+                                                               setIsLoading,
+                                                               assignedKey,
+                                                               outActiveProjectName,
+                                                               outActivePhone,
+                                                               call,
+                                                               hasActiveCall,
+                                                               onClose,
+                                                               activeProject,
+                                                               setPostActive,
+                                                               postActive,
+                                                               currentPage
+}) => {
     // Из cookies
     const { sessionKey } = store.getState().operator
 
@@ -155,6 +171,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
 
     // Состояния для формы
     const fsReasons = useSelector((state: RootState) => state.operator.fsReasons);
+    console.log("fsReasons: ", fsReasons)
     const [callReason, setCallReason] = useState(call?.call_reason || '');
     const [callResult, setCallResult] = useState(call?.call_result || '');
     const [comment,   setComment]     = useState(call?.user_comment || '');
@@ -170,6 +187,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
     const [modules, setModules] = useState<ModuleData[]>([]);
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
+    console.log("projectPool: ", projectPool)
     const projectPoolForCall = useMemo(() => {
         return projectPool.filter(project => (project.out_active && project.active)).map(project => project.project_name);
     }, [projectPool]);
@@ -179,7 +197,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
     // const hasActiveCall = Array.isArray(activeCalls) ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
 
     // Логика «постобработки»
-    const POST_LIMIT = worker.includes('fs.at.akc24.ru') ? 120 : 15;
+    const POST_LIMIT = worker.includes('fs@akc24.ru') ? 120 : 15;
     const [postSeconds, setPostSeconds] = useState(POST_LIMIT);
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
 
@@ -202,23 +220,25 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
 
         }
     },[hasActiveCall])
+
+
     useEffect(() => {
 
-        if (hasActiveCall && !postActive && activeCalls[0].application){
+        if (hasActiveCall && activeCalls.length && !postActive && activeCalls[0].application){
             setPostCallData(activeCalls[0] as ActiveCall);
         }
 
-        if (hasActiveCall && !postActive && activeCalls[0].application) {
-            const startModules = modules.filter(
-                (mod) => mod.start_modes && mod.start_modes[activeProject] === "start"
-            );
-            if (activeCalls.length === 1) {
-                startModules.forEach((mod) => {
-                    handleModuleRun(mod);
-                });
-
-            }
-        }
+        // if (hasActiveCall  && !postActive && activeCalls[0].application) {
+        //     const startModules = modules.filter(
+        //         (mod) => mod.start_modes && mod.start_modes[activeProject] === "start"
+        //     );
+        //     if (activeCalls.length === 1) {
+        //         startModules.forEach((mod) => {
+        //             handleModuleRun(mod);
+        //         });
+        //
+        //     }
+        // }
     }, [activeCalls, activeProject, hasActiveCall, modules, postActive]);
 
     const findNameProject = (projectName: string)=> {
@@ -245,13 +265,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
             as_is_dict:    FieldDefinition[];
         } | null) => {
             if (data && !hasActiveCall && !postActive) {
-                setCallReasons(data.call_reasons.filter(r => r.project_name === call?.project_name));
-                setCallResults(data.call_results.filter(r => r.project_name === call?.project_name));
-                setParams(data.as_is_dict.filter(p => p.project_name === call?.project_name));
+                setCallReasons(data.call_reasons.filter(r => r.project_name === call?.project_name || r.project_name === `${call?.project_name}@default`));
+                setCallResults(data.call_results.filter(r => r.project_name === call?.project_name || r.project_name === `${call?.project_name}@default`));
+                setParams(data.as_is_dict.filter(p => p.project_name === call?.project_name || p.project_name === `${call?.project_name}@default`));
             } else if ((data && hasActiveCall) || (data && postActive)){
-                setCallReasons(data.call_reasons.filter(r => r.project_name === activeProject));
-                setCallResults(data.call_results.filter(r => r.project_name === activeProject));
-                setParams(data.as_is_dict.filter(p => p.project_name === activeProject));
+                setCallReasons(data.call_reasons.filter(r => r.project_name === activeProject || r.project_name === `${activeProject}@default`));
+                setCallResults(data.call_results.filter(r => r.project_name === activeProject || r.project_name === `${activeProject}@default`));
+                setParams(data.as_is_dict.filter(p => p.project_name === activeProject || p.project_name === `${activeProject}@default`));
             } else {
                 setCallReasons([]);
                 setCallResults([]);
@@ -266,13 +286,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
     // При открытии панели вызова (если вызов не активен) запрашиваем список модулей
     useEffect(() => {
         if (hasActiveCall && activeProject) {
-            socket.emit('module_operations', {
+            socket.emit('get_modules', {
                 worker,
-                sip_login: sipLogin,
                 session_key: sessionKey,
-                room_id: roomId,
-                fs_server: fsServer,
-                action: 'get_modules',
                 project_name: activeProject,
             });
         }
@@ -281,7 +297,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
     // Обработка ответа сервера для "get_modules"
     useEffect(() => {
         const handleModules = (data: any) => {
-            setModules(data.modules || []);
+            setModules(data);
         };
         socket.on('get_modules', handleModules);
         return () => {
@@ -290,108 +306,105 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
     }, []);
 
     // Функция для запуска модуля (аналог module_run)
-    const handleModuleRun = (mod: any) => {
-        // Базовые поля, аналогичные старому коду.
-        const payload: any = {
-            worker,
-            sip_login: sipLogin,
-            session_key: sessionKey,
-            room_id: roomId,
-            fs_server: fsServer,
-            action: 'run_module',
-            name___n: mod.name,
-            project_name: activeProject,
-            uuid: activeCalls[0]?.uuid || '',
-            b_uuid: activeCalls[0]?.b_uuid || '',
-            run_mode: 'manual',
-            ma_id: mod.id,
-            c_s: 1,
-        };
+    const handleModuleRun = (mod: ModuleData) => {
+        // Подготовим объект аргументов
+        const kwargsPayload: Record<string, string> = {};
 
-        let to_parse = '';
+        // mod.kwargs — это спецификация: { inp_1: { source: 'AS_17542_2' }, ... }
+        Object.entries(mod.kwargs || {}).forEach(([inputName, spec]: [string, any]) => {
+            const sourceKey: string = spec.source;
 
-        // Смотрим, какие inputs есть в модуле. Например:
-        // mod.inputs = {
-        //   inp_1: { "akc24@default": "AS_17542_6" },
-        //   inp_2: { "akc24@default": "AS_99999_1" },
-        //   ...
-        // }
-        const inputs = mod.inputs || {};
-
-        // Перебираем ключи inputs. Предположим, это inp_1, inp_2, ...
-        Object.keys(inputs).forEach((inputName) => {
-            // Для каждого инпута смотрим, какое поле он просит для activeProject.
-            const baseFieldKey = inputs[inputName][activeProject];
-            // Например, baseFieldKey = "AS_17542_6"
-
-            // Если у нас в baseFieldValues есть такое поле, берём его значение
-            // и кладём в payload[inputName].
-            if (baseFieldKey && baseFieldValues.hasOwnProperty(baseFieldKey)) {
-                // Значение, например "gorod"
-                payload[inputName] = baseFieldValues[baseFieldKey];
-            } else {
-                // Если вдруг поля нет или оно пустое, вы решаете, что отправить:
-                // можно ничего не делать, или прописать payload[inputName] = ''
-                payload[inputName] = '';
+            let value = '';
+            if (sourceKey === 'reason') {
+                value = callReason?.toString() || '';
+            } else if (sourceKey === 'result') {
+                value = callResult?.toString() || '';
+            } else if (sourceKey === 'comment') {
+                value = comment;
+            } else if (baseFieldValues.hasOwnProperty(sourceKey)) {
+                value = baseFieldValues[sourceKey];
             }
 
-            // Добавляем inputName в to_parse, чтобы сервер знал, что искать
-            if (to_parse) {
-                to_parse += ',' + inputName;
-            } else {
-                to_parse = inputName;
-            }
+            // запишем в объект под тем же именем, что ожидает сервер
+            kwargsPayload[sourceKey] = value;
         });
 
-        payload.to_parse = to_parse;
-
-        socket.emit("module_operations", payload);
-    };
-
-    //
-    // Обработка результата модуля (от сервера)
-    useEffect(() => {
-        // Подписываемся на событие 'run_module' от сокета
-        const handleModuleResult = (data: any) => {
-
-            if (data.result === "success") {
-                const mod = modules.find((m) => m.id === data.ma_id);
-                if (!mod) return;
-
-                const outputs = mod.outputs || {};
-
-                const returnedValues = data.module_return || {};
-
-                for (const outName in returnedValues) {
-                    if (outputs[outName]) {
-                        const fieldKey = outputs[outName][activeProject];
-                        if (fieldKey) {
-                            setBaseFieldValues((prev) => ({
-                                ...prev,
-                                [fieldKey]: returnedValues[outName]
-                            }));
-                        }
-                    }
-                }
-
-                Swal.fire({
-                    title: "Успех",
-                    text: "Результат работы модуля передан в систему",
-                    icon: "success"
-                });
-            }
+        // Собираем финальный payload
+        const payload = {
+            b_uuid:   activeCalls[0]?.b_uuid   || '',
+            filename: mod.filename,
+            project_name: activeProject,
+            session_key:  sessionKey,
+            uuid:      activeCalls[0]?.uuid    || '',
+            worker,
+            kwargs: kwargsPayload,
         };
 
-        socket.on("run_module", handleModuleResult);
+        socket.emit('run_module', payload);
+    };
+    //
+// Обработка результата модуля (от сервера)
+    useEffect(() => {
+        // принимаем любые аргументы, но нам нужен именно объект с полями
+        const handleModuleResult = (...args: any[]) => {
+            // Найдём в args первый непустой объект
+            const dataObj: Record<string, any> | undefined = args.find(
+                a => typeof a === 'object' && a !== null
+            );
 
-        // Отписка при размонтировании компонента
-    }, [modules, activeProject, activeCalls]);
+            if (!dataObj) return;
 
+            // Пройдём по каждому полю в ответе
+            Object.entries(dataObj).forEach(([fieldKey, value]) => {
+                const v = value == null ? '' : String(value);
+
+                switch (fieldKey) {
+                    case 'reason':
+                        // если сервер присылает новый reason
+                        setCallReason(v);
+                        break;
+
+                    case 'result':
+                        // если сервер присылает новый result
+                        setCallResult(v);
+                        break;
+
+                    case 'comment':
+                        // если сервер присылает новый comment
+                        setComment(v);
+                        break;
+
+                    default:
+                        // всё остальное считаем обычным baseField
+                        setBaseFieldValues(prev => ({
+                            ...prev,
+                            [fieldKey]: v,
+                        }));
+                }
+            });
+
+            Swal.fire({
+                title: 'Успех',
+                text: 'Результат работы модуля передан в систему',
+                icon: 'success'
+            });
+        };
+
+        socket.on('run_module', handleModuleResult);
+        return () => {
+            socket.off('run_module', handleModuleResult);
+        };
+    }, []);
     // Логика постобработки (если звонок завершён)
     useEffect(() => {
         const prevCall = prevCallRef.current;
         const thisCall = hasActiveCall ? activeCalls[0] : null;
-        if (prevCall && !postActive && !activeCalls[0].application ) {
+        if (prevCall && !postActive ) {
+            socket.emit('fs_post_started', {
+                session_key: sessionKey,
+                sip_login: sipLogin,
+                worker
+            })
             setPostActive(true);
             setPostSeconds(POST_LIMIT);
         }
@@ -442,10 +455,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
         if (!currentUUID) return;
         socket.emit('sofia_operations', {
             worker,
-            sip_login: sipLogin,
             session_key: sessionKey,
-            room_id: roomId,
-            fs_server: fsServer,
             uuid: currentUUID,
             action: 'hold_toggle'
         });
@@ -458,8 +468,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
             worker,
             sip_login: sipLogin,
             session_key: sessionKey,
-            room_id: roomId,
-            fs_server: fsServer,
             uuid: currentUUID,
             action: 'uuid_break',
             idle_set: true
@@ -472,6 +480,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
             level: 0,
         });
         if (callSection === 1) {
+            socket.emit('fs_post_started', {
+                session_key: sessionKey,
+                sip_login: sipLogin,
+                worker
+            })
             setPostActive(true)
             setPostSeconds(POST_LIMIT);
         }
@@ -484,17 +497,14 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
         if (!uuid1 || !uuid2) return;
         socket.emit('sofia_operations', {
             worker,
-            sip_login: sipLogin,
             session_key: sessionKey,
-            room_id: roomId,
-            fs_server: fsServer,
             uuid: uuid1,
             uuid_2: uuid2,
             action: 'uuid_bridge'
         });
     };
 
-
+    useEffect(()=> console.log("selectedCall: ", call),[call])
     const handleSave = () => {
         if (!callReason || !callResult) {
             Swal.fire({ title: "Ошибка", text: "Проверьте заполнение обязательных полей", icon: "error" });
@@ -502,17 +512,22 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
         }
         const reasonText = callReasons.find(r => String(r.id) === callReason)?.name || '';
         const resultText = callResults.find(r => String(r.id) === callResult)?.name || '';
+        const reasonNumber = typeof callReason === "string" ? parseInt(callReason, 10) : callReason
+        const resultNumber = typeof callResult === "string" ? parseInt(callResult, 10) : callResult
+
         socket.emit('edit_call_fs', {
-            fs_server: fsServer,
-            call_id:   call?.id,
-            call_reason: callReason,
-            call_result: callResult,
+            b_uuid: call?.special_key_call ,
+            uuid: call?.special_key_conn ,
+            // call_id: call?.id,
+            project_name: call?.project_name,
+            call_reason: reasonNumber,
+            call_result: resultNumber,
             comment,
             session_key: sessionKey,
             worker,
             base_fields: baseFieldValues,
-            reason_text: reasonText,
-            result_text: resultText
+            // reason_text: reasonText,
+            // result_text: resultText
         });
         setIsLoading(true)
         socket.emit('get_fs_report', {
@@ -533,50 +548,63 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
             });
             return;
         }
-        const afterModules = modules.filter(
-            (mod) =>
-                mod.start_modes &&
-                mod.start_modes[activeProject] === "after"
-        );
-
-        afterModules.forEach((mod) => {
-            handleModuleRun(mod);
-        });
+        // const afterModules = modules.filter(
+        //     (mod) =>
+        //         mod.start_modes &&
+        //         mod.start_modes[activeProject] === "after"
+        // );
+        //
+        // afterModules.forEach((mod) => {
+        //     handleModuleRun(mod);
+        // });
 
         const reasonText =
             callReasons.find((r) => String(r.id) === callReason)?.name || "";
         const resultText =
             callResults.find((r) => String(r.id) === callResult)?.name || "";
 
-        socket.emit('outbound_calls', {
+        const reasonNumber = typeof callReason === "string" ? parseInt(callReason, 10) : callReason
+        const resultNumber = typeof callResult === "string" ? parseInt(callResult, 10) : callResult
+
+        socket.emit('outbound_call_update', {
             'worker': worker,
-            'sip_login':sipLogin,
             'session_key':sessionKey,
-            'room_id':roomId,
-            'fs_server':fsServer,
-            'project_pool':projectPoolForCall,
-            'action':'update_phone_to_call',
             'assigned_key': assignedKey,
             'base_fields':baseFieldValues,
             'log_status':'saved',
             'phone_status': resultText,
-            'special_key':outActivePhone?.special_key,
+            'special_key':specialKey,
             'project_name':outActiveProjectName
         })
-
+        const uuid = postCallData?.direction === "outbound" ? postCallData?.call_uuid : postCallData?.b_uuid
+        const b_uuid = postCallData?.direction === "outbound" ? postCallData?.call_uuid : postCallData?.uuid
         socket.emit("edit_call_fs", {
-            fs_server: fsServer,
-            call_id: fsReport.find((c: any) => c.special_key_call === postCallData?.call_uuid)
-                .id,
-            call_reason: callReason,
-            call_result: callResult,
+            b_uuid,
+            uuid,
+            project_name: activeProject,
+            call_reason: reasonNumber,
+            call_result: resultNumber,
             comment,
             session_key: sessionKey,
             worker,
             base_fields: baseFieldValues,
-            reason_text: reasonText,
-            result_text: resultText,
+            // reason_text: reasonText,
+            // result_text: resultText,
         });
+        // socket.emit('edit_call_fs', {
+        //     b_uuid: call?.special_key_call ,
+        //     uuid: call?.special_key_conn ,
+        //     // call_id: call?.id,
+        //     project_name: call?.project_name,
+        //     call_reason: reasonNumber,
+        //     call_result: resultNumber,
+        //     comment,
+        //     session_key: sessionKey,
+        //     worker,
+        //     base_fields: baseFieldValues,
+        //     // reason_text: reasonText,
+        //     // result_text: resultText
+        // });
 
         socket.emit("change_state_fs", {
             sip_login: sipLogin,
@@ -630,17 +658,17 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
     const iconCol = call?.total_direction === 'outbound' ? '#f26666' : '#7cd420';
 
     const renderActiveCallHeader = (activeCall: ActiveCall) => {
-
-        const isHeld = (activeCall.callstate === 'HELD' || activeCall.b_callstate === 'HELD');
+        const mainActiveCall = activeCall || postCallData
+        const isHeld = (mainActiveCall.callstate === 'HELD' || mainActiveCall.b_callstate === 'HELD');
         const iconName = isHeld ? 'play_arrow' : 'pause';
-        const iconColor = activeCall.direction === 'outbound' ?  '#f26666' : '#7cd420';
+        const iconColor = mainActiveCall.direction === 'outbound' ?  '#f26666' : '#7cd420';
         return (
             <div className="mb-3">
                 <div className="d-flex">
-                    <button className="btn btn-outline-warning mr-2" onClick={() => handleHold(activeCall)}>
+                    <button className="btn btn-outline-warning mr-2" onClick={() => handleHold(mainActiveCall)}>
                         <span className="material-icons">{iconName}</span>
                     </button>
-                    <button className="btn btn-outline-danger mr-2" onClick={() => handleStop(activeCall, 1)}>
+                    <button className="btn btn-outline-danger mr-2" onClick={() => handleStop(mainActiveCall, 1)}>
                         <span className="material-icons">call_end</span>
                     </button>
                     {activeCalls.length > 1 &&
@@ -651,12 +679,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
                 </div>
                 <div className="d-flex align-items-center mt-2">
                   <span className="material-icons" style={{ color: iconColor }}>
-                    {activeCall.direction === 'outbound' ? 'logout' : 'login'}
+                    {mainActiveCall.direction === 'outbound' ? 'logout' : 'login'}
                   </span>
                     <strong className="ml-2" style={{ fontSize: 16, fontWeight: 600}}>
-                        {activeCall.direction === 'outbound' ? activeCall.callee_num : activeCall.cid_num}
+                        {mainActiveCall.direction === 'outbound' ? mainActiveCall.callee_num : mainActiveCall.cid_num}
                         {' | '}
-                        {new Date(activeCall.b_created).toLocaleString()}
+                        {new Date(mainActiveCall.b_created).toLocaleString()}
                     </strong>
                 </div>
                 <div className="mt-2 mb-2">
@@ -770,20 +798,18 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({isLoading, setIsLoad
     const renderModules = () => {
         if (!hasActiveCall && !postActive) return null;
 
-        const manualModules = modules.filter(mod => mod.start_modes[activeProject] === "manual")
-
-        if (manualModules.length === 0) return null;
+        if (modules.length === 0) return null;
 
         return (
             <div style={{display: "flex", flexDirection: "row", gap: 8, alignItems: "center", marginLeft:20, marginBottom: 10}}>
                 <div style={{fontWeight: 600, fontSize: 16}}>Модули: </div>
-                {manualModules.map((mod, idx) => (
+                {modules.map((mod, idx) => (
                     <button
                         key={idx}
                         onClick={() => handleModuleRun(mod)}
                         className="btn btn-outline-success"
                     >
-                        {mod.name}
+                        {mod.filename}
                     </button>
                 ))}
             </div>

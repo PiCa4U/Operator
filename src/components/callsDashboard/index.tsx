@@ -164,7 +164,7 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
 
         if (adjustedCall.total_direction === 'outbound' && typeof adjustedCall.project_name === 'string') {
             const baseName = adjustedCall.project_name.replace(/\s*\(.*\)$/, '');
-            const fullName = `${baseName}@default`;
+            const fullName = `${baseName}`;
             const proj = projectPool.find(p => p.project_name === fullName);
             if (proj) {
                 adjustedCall.project_name = proj.project_name;

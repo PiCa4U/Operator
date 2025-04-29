@@ -68,6 +68,10 @@ socket.on('fs_reasons', (data: any) => {
     store.dispatch(setFsReasons(data));
 });
 
+socket.on('cc_fs_reasons', (data: any) => {
+    store.dispatch(setFsReasons(data));
+})
+
 // по желанию можно чистить таймер при дисконнекте
 socket.on('disconnect', () => {
     console.log('Socket disconnected');

@@ -107,13 +107,11 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
             const currentUuid  = firstCall.uuid  || uuid;
             const currentBUuid = firstCall.b_uuid|| bUuid;
 
-            socket.emit('script_operations', {
+            socket.emit('start_script', {
                 worker,
                 sip_login: sipLogin,
                 session_key: sessionKey,
-                room_id: roomId,
-                fs_server: fsServer,
-                action: 'start_script',
+                // action: 'start_script',
                 direction,
                 uuid: currentUuid || "",
                 b_uuid: currentBUuid || "",
@@ -195,21 +193,25 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
             worker,
             sip_login: sipLogin,
             session_key: sessionKey,
-            room_id: roomId,
-            fs_server: fsServer,
-            script_id: scriptId,
-            source,
-            action: 'move_script',
-            NextNumber: btn.NextNumber,
+            // room_id: roomId,
+            // fs_server: fsServer,
+            // script_id: Number(scriptId),
+            script_id: 1,
+
+            // source,
+            // action: 'move_script',
+            // next_number: Number(btn.NextNumber),
+            next_number: 433,
+
             comment: (commentMode === 'true') ? comment : '',
             direction: direction || "",
-            uuid: activeCalls[0]?.uuid ?? "",
-            b_uuid: activeCalls[0]?.b_uuid ?? "",
-            project_name: projectName,
+            uuid: activeCalls[0]?.uuid,
+            b_uuid: activeCalls[0]?.b_uuid,
+            project_name: projectName || "",
             result_text: btn.Text,
             result_id: btn.BlockResultId || 0
         };
-        socket.emit('script_operations', payload);
+        socket.emit('move_script', payload);
         setComment('');
     };
 

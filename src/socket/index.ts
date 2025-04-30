@@ -10,14 +10,20 @@ export const socket = io("wss://operator.glagol.ai", {
 // Событие успешного подключения
 socket.on('connect', () => {
     console.log('Socket connected:', socket.id);
+    const {
+        sessionKey = '',
+        sipLogin   = '',
+        fsServer   = '',
+        worker     = '',
+    } = store.getState().credentials;
 
     const emitStatus = () => {
         socket.emit('get_fs_status_once', {
-            worker: getCookies('worker'),
-            sip_login: getCookies('sip_login') || '1012',
-            session_key: getCookies('session_key'),
+            worker: worker,
+            sip_login: sipLogin,
+            session_key: sessionKey,
             room_id: store.getState().room.roomId || 'default_room',
-            fs_server: getCookies('fs_server'),
+            fs_server: fsServer,
         });
     };
 

@@ -3,7 +3,7 @@ import { useSelector } from 'react-redux';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
 import "./picker.css"
-import { RootState } from '../../redux/store';
+import {RootState, store} from '../../redux/store';
 import { socket } from '../../socket';
 import { getCookies } from '../../utils';
 import {CallData} from "../callControlPanel";
@@ -38,10 +38,12 @@ type CallsDashboardProps = {
     setIsLoading: (isLoading: boolean) => void
 }
 const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading, setSelectedCall, currentPage, setCurrentPage}) => {
-    const sessionKey = getCookies('session_key') || '';
-    const sipLogin   = getCookies('sip_login')   || '';
-    const fsServer   = getCookies('fs_server')   || '';
-    const worker     = getCookies('worker')      || '';
+    const {
+        sessionKey = '',
+        sipLogin   = '',
+        fsServer   = '',
+        worker     = '',
+    } = store.getState().credentials;
 
     const roomId   = useSelector((state: RootState) => state.room.roomId) || 'default_room';
     const [fsReport, setFsReport] = useState<any[]>([])

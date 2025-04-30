@@ -8,7 +8,7 @@ import ScriptPanel from './components/scriptPanel';
 import { socket } from "./socket";
 import { getCookies, makeId } from "./utils";
 import { setActiveCalls, setFsStatus } from './redux/operatorSlice';
-import { RootState } from './redux/store';
+import {RootState, store} from './redux/store';
 
 const App: React.FC = () => {
     const [selectedCall, setSelectedCall] = useState<CallData | null>(null);
@@ -24,11 +24,12 @@ const App: React.FC = () => {
     const [assignedKey, setAssignedKey] = useState('');
     const [isLoading,    setIsLoading]    = useState(false);
 
-
-    const sessionKey = getCookies('session_key') || '';
-    const sipLogin = getCookies('sip_login') || '';
-    const fsServer = getCookies('fs_server') || '';
-    const worker = getCookies('worker') || '';
+    const {
+        sessionKey = '',
+        sipLogin   = '',
+        fsServer   = '',
+        worker     = '',
+    } = store.getState().credentials;
 
     const dispatch = useDispatch();
     const roomId = useMemo(() => makeId(40), []);
@@ -51,7 +52,7 @@ const App: React.FC = () => {
     },[activeCall, postActive, activeCalls])
     useEffect(() => {
         const first = activeCalls[0];
-        if (activeCalls.length > 0 && !activeCall && first?.application) {
+        if (activeCalls.length > 0 && !activeCall && (first?.application )) {
             setActiveCall(true);
         } else if (activeCalls.length > 0 && Object.keys(first || {}).length === 0 && activeCall) {
             setActiveCall(false);
@@ -128,10 +129,10 @@ const App: React.FC = () => {
     useEffect(() => {
         if (activeCall && activeCalls[0].application_data) {
             const requestParams = {
-                fs_server: getCookies("fs_server"),
+                fs_server: fsServer,
                 room_id: roomId,
-                worker: getCookies("worker"),
-                session_key: getCookies("session_key"),
+                worker: worker,
+                session_key: sessionKey,
                 uuid: activeCalls[0].uuid,
                 b_uuid: activeCalls[0].b_uuid,
                 phone: activeCalls[0].cid_num,

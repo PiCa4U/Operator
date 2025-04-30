@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Swal from 'sweetalert2';
 import { socket } from '../../socket';
 import { useSelector } from "react-redux";
-import { RootState } from "../../redux/store";
+import {RootState, store} from "../../redux/store";
 import { getCookies } from "../../utils";
 import {CallData} from "../callControlPanel";
 import {Project} from "../headerPanel";
@@ -64,10 +64,12 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
                                                      bUuid = '',
                                                      onClose,
                                                  }) => {
-    const sessionKey = getCookies('session_key') || '';
-    const sipLogin   = getCookies('sip_login')   || '';
-    const fsServer   = getCookies('fs_server')   || '';
-    const worker     = getCookies('worker')      || '';
+    const {
+        sessionKey = '',
+        sipLogin   = '',
+        fsServer   = '',
+        worker     = '',
+    } = store.getState().credentials;
 
     // Текущая «комната» (room_id)
     const roomId     = useSelector((state: RootState) => state.room.roomId) || 'default_room';

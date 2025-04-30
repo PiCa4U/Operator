@@ -1,7 +1,7 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import Swal from 'sweetalert2';
-import { RootState } from '../../redux/store';
+import {RootState, store} from '../../redux/store';
 import { socket } from '../../socket';
 import { getCookies, parseMonitorData } from '../../utils';
 import {makeSelectFullProjectPool, selectProjectPool, setMonitorData} from "../../redux/operatorSlice";
@@ -75,10 +75,13 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      setPostActive,
                                                      showScriptPanel,
                                                  }) => {
-    const sessionKey = getCookies('session_key') || '';
-    const sipLogin = getCookies('sip_login') || '';
-    const fsServer = getCookies('fs_server') || '';
-    const worker = getCookies('worker') || '';
+    const {
+        sessionKey = '',
+        sipLogin   = '',
+        fsServer   = '',
+        worker     = '',
+    } = store.getState().credentials;
+
     const roomId = useSelector((state: RootState) => state.room.roomId) || 'default_room';
 
     const dispatch = useDispatch();
@@ -92,14 +95,15 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     );
     const post = fsStatus.status === "Available (On Demand)" && fsStatus.state === "Idle";
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
-    // Вызываем useSelector для получения «полных» проектов
+
     const projectPool = useSelector(selectFullProjectPool) || [];
+    // console.log("projectPool: ", projectPool)
     const projectPoolForCall = useMemo(() => {
         return projectPool.filter(project => (project.out_active && project.active)).map(project => project.project_name);
     }, [projectPool]);
     const projectGateawayPrefix = projectPool.length && projectPool.filter(project => (project.out_active && project.active))[0].out_gateways[2].prefix
 
-    // --- Преобразуем activeCalls к массиву, чтобы .some() не вызывал ошибку ---
+
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
     const activeCalls = useMemo(() => {
         return Array.isArray(rawActiveCalls)
@@ -349,6 +353,29 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 });
             } else {
                 Swal.fire({ title: "Ошибка при старте звонка", icon: "error" });
+                socket.emit('outbound_calls', {
+                    worker,
+                    sip_login: sipLogin,
+                    session_key: sessionKey,
+                    room_id: roomId,
+                    fs_server: fsServer,
+                    project_pool: projectPoolForCall,
+                    action: 'update_phone_to_call',
+                    assigned_key: assignedKey,
+                    log_status: 'error',
+                    phone_status: 'error',
+                    special_key: outActivePhone?.special_key,
+                    project_name: outActiveProjectName,
+                });
+                socket.emit('change_stat_fs', {
+                    fs_server: fsServer,
+                    sip_login: sipLogin,
+                    room_id: roomId,
+                    worker: sipLogin,
+                    session_key: sessionKey,
+                    action: 'available',
+                    page: 'online',
+                });
             }
         };
 
@@ -431,7 +458,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     }, [sipLogin, sessionKey, roomId, fsServer, worker, hasActiveCall]);
     // --- (B) Обработчик «Вызов по номеру» ---
     const handleCallByNumber = () => {
-        if (!activeCalls[0].application) return
         setOutExtension('');
         setOutBaseFieldValues({});
         if (!activeCalls[0].application) {
@@ -452,8 +478,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             // }
         }
 
-        // Далее — проверка: если activeCall есть, значит callType='redirect', иначе 'call'
-        if (hasActiveCall && activeCalls[0].direction === "outbound") {
+        if (hasActiveCall) {
             setCallType('redirect');
         } else {
             setCallType('call');
@@ -478,19 +503,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             uuid: activeCalls[0].uuid,
             action: 'hold_toggle'
         });
-        if (callType === 'redirect') {
-            socket.emit('click_to_call', {
-                worker,
-                    sip_login: sipLogin,
-                    session_key: sessionKey,
-                    room_id: roomId,
-                    fs_server: fsServer,
-                    phone,
-                    out_extension: selectedExtension,
-                    call_type: 'redirect',
-                    uuid: activeCalls[0].uuid,
-            });
-        } else {
+        // if (callType === 'redirect') {
             socket.emit('click_to_call', {
                 worker,
                 sip_login: sipLogin,
@@ -499,9 +512,21 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 fs_server: fsServer,
                 phone,
                 out_extension: selectedExtension,
-                call_type: 'call',
+                call_type: 'redirect',
+                uuid: activeCalls[0].uuid,
             });
-        }
+        // } else {
+        //     socket.emit('click_to_call', {
+        //         worker,
+        //         sip_login: sipLogin,
+        //         session_key: sessionKey,
+        //         room_id: roomId,
+        //         fs_server: fsServer,
+        //         phone,
+        //         out_extension: selectedExtension,
+        //         call_type: 'call',
+        //     });
+        // }
     };
 
     // Кнопки управления статусом (как в старом)

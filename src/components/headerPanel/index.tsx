@@ -2,7 +2,7 @@ import React, {useEffect, useMemo, useState} from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import Swal from 'sweetalert2';
 import {RootState, store} from '../../redux/store';
-import { socket } from '../../socket';
+import {initSocket} from '../../socket';
 import { getCookies, parseMonitorData } from '../../utils';
 import {makeSelectFullProjectPool, selectProjectPool, setMonitorData} from "../../redux/operatorSlice";
 import isEqual from "lodash/isEqual";
@@ -25,7 +25,7 @@ export interface Project {
     is_deleted: boolean;
     modified_date: string | null;
     out_active: boolean;
-    out_gateways: {extension_name: string, prefix: string}; // уточните тип, если есть подробности
+    out_gateways: {extension_name: string, prefix: string};
     out_priority: number | null;
     out_script: {
         comment_mode: string;
@@ -136,6 +136,11 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const [typeFilter, setTypeFilter] = useState<'all' | 'operators' | 'robots'>('all');
     const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
 
+    const [callStartTime, setCallStartTime] = useState<Date | null>(null);
+    const [callTimer, setCallTimer] = useState<string>('00:00');
+
+    const socket = initSocket();
+
     useEffect(() => {
         if (activeCalls.length > 0 && Object.keys(activeCalls[0]).length > 0) {
             setHasActiveCall(true);
@@ -200,7 +205,44 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         return status.includes('Registered')
     };
 
-    const gateway: any = useSelector((state: RootState) => state.operator.monitorData.allProjects)
+    useEffect(() => {
+        let intervalId: NodeJS.Timeout;
+
+        if (hasActiveCall) {
+            // получаем первый звонок
+            const first = activeCalls[0];
+            // пытаемся взять время из epoch-поля, иначе текущее время
+            const epoch = first.b_created_epoch || first.created_epoch;
+            const start = epoch
+                ? new Date(Number(epoch) * 1000)
+                : first.b_created
+                    ? new Date(first.b_created)
+                    : new Date();
+
+            setCallStartTime(start);
+
+            intervalId = setInterval(() => {
+                const diffMs = Date.now() - start.getTime();
+                const totalSec = Math.floor(diffMs / 1000);
+                const mins = Math.floor(totalSec / 60);
+                const secs = totalSec % 60;
+                setCallTimer(
+                    `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+                );
+            }, 1000);
+
+        } else {
+            // звонок закончен — сбрасываем
+            setCallStartTime(null);
+            setCallTimer('00:00');
+        }
+
+        return () => {
+            if (intervalId) clearInterval(intervalId);
+        };
+    }, [hasActiveCall, activeCalls]);
+
+
 
     useEffect(() => {
         const s_dot = worker.indexOf('.');
@@ -494,27 +536,27 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             return;
         }
 
-        socket.emit('sofia_operations', {
+        // socket.emit('sofia_operations', {
+        //     worker,
+        //     sip_login: sipLogin,
+        //     session_key: sessionKey,
+        //     room_id: roomId,
+        //     fs_server: fsServer,
+        //     uuid: activeCalls[0].uuid,
+        //     action: 'hold_toggle'
+        // });
+        // if (callType === 'redirect') {
+        socket.emit('click_to_call', {
             worker,
             sip_login: sipLogin,
             session_key: sessionKey,
             room_id: roomId,
             fs_server: fsServer,
+            phone,
+            out_extension: selectedExtension,
+            call_type: 'redirect',
             uuid: activeCalls[0].uuid,
-            action: 'hold_toggle'
         });
-        // if (callType === 'redirect') {
-            socket.emit('click_to_call', {
-                worker,
-                sip_login: sipLogin,
-                session_key: sessionKey,
-                room_id: roomId,
-                fs_server: fsServer,
-                phone,
-                out_extension: selectedExtension,
-                call_type: 'redirect',
-                uuid: activeCalls[0].uuid,
-            });
         // } else {
         //     socket.emit('click_to_call', {
         //         worker,
@@ -671,8 +713,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             : sofiaMapping['Registered'];
     };
 
-
-
     const currentSofia =
         fsStatus && fsStatus.sofia_status
             ? getSofiaStatus(fsStatus.sofia_status)
@@ -684,6 +724,20 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 ? statusMapping["Post"]
                 : statusMapping[fsStatus.status] || { text: fsStatus.status, color: '#cba200' }
             : { text: 'Обновляется', color: '#cba200' };
+
+    const postColor = statusMapping['Post'].color;
+
+// вычисляем, что показывать и каким цветом
+    const displayStatusText = hasActiveCall
+        ? `Активный вызов (${callTimer})`
+        : (post
+                ? statusMapping['Post'].text
+                : callStatusMapped.text
+        );
+
+    const displayStatusColor = hasActiveCall
+        ? postColor
+        : callStatusMapped.color;
 
 
     // В renderColleagueCards изменим разметку карточек, чтобы они выводились в виде сетки:
@@ -863,9 +917,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                 <p
                                     id="status"
                                     className="font-weight-bold mb-1 text"
-                                    style={{ color: callStatusMapped.color }}
+                                    style={{ color: displayStatusColor  }}
                                 >
-                                    {callStatusMapped.text}
+                                    {displayStatusText}
                                 </p>
                             </div>
                             <p

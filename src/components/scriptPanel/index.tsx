@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Swal from 'sweetalert2';
-import { socket } from '../../socket';
+import {initSocket} from '../../socket';
 import { useSelector } from "react-redux";
 import {RootState, store} from "../../redux/store";
 import { getCookies } from "../../utils";
@@ -22,7 +22,45 @@ function renderEditorJsData(data: any) {
                 const { type, data: blockData } = block;
                 switch (type) {
                     case 'paragraph':
-                        return <p key={idx} className="text text-dark">{blockData.text}</p>;
+                        return (
+                            <p key={idx} className="text text-dark">
+                                {blockData.text}
+                            </p>
+                        );
+
+                    case 'table': {
+                        const content: string[][] = blockData.content || [];
+                        if (content.length === 0) {
+                            return null;
+                        }
+                        const [headerRow, ...bodyRows] = content;
+                        const clean = (cell: any) =>
+                            String(cell)
+                                .replace(/&nbsp;/g, ' ')
+                                .trim();
+
+                        return (
+                            <table key={idx} className="table table-sm table-bordered mb-3">
+                                <thead>
+                                <tr>
+                                    {headerRow.map((cell, cIdx) => (
+                                        <th key={cIdx}>{clean(cell)}</th>
+                                    ))}
+                                </tr>
+                                </thead>
+                                <tbody>
+                                {bodyRows.map((row, rIdx) => (
+                                    <tr key={rIdx}>
+                                        {row.map((cell, cIdx) => (
+                                            <td key={cIdx}>{clean(cell)}</td>
+                                        ))}
+                                    </tr>
+                                ))}
+                                </tbody>
+                            </table>
+                        );
+                    }
+
                     default:
                         return (
                             <div key={idx} className="text text-danger my-2">
@@ -73,6 +111,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
 
     // Текущая «комната» (room_id)
     const roomId     = useSelector((state: RootState) => state.room.roomId) || 'default_room';
+    const socket = initSocket();
 
     // Состояния, аналогичные старому коду
     const [scriptId, setScriptId] = useState('');
@@ -332,43 +371,64 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
                         <p className="text-muted">Нет вопросов по вашему запросу.</p>
                     )}
 
-                    {/* Контейнер с кнопками (вопросами) */}
-                    <div className="d-flex flex-wrap" style={{ gap: '8px' }}>
-                        {filteredQuestions.map((q) => (
-                            <button
+                    {/*/!* Контейнер с кнопками (вопросами) *!/*/}
+                    {/*<div className="d-flex flex-wrap" style={{ gap: '8px' }}>*/}
+                    {/*    {filteredQuestions.map((q) => (*/}
+                    {/*        <button*/}
+                    {/*            key={q.id}*/}
+                    {/*            className="btn btn-outline-light text text-dark"*/}
+                    {/*            style={{ border: '1px solid #ccc' }}*/}
+                    {/*            onClick={() => handleQuestionClick(q)}*/}
+                    {/*        >*/}
+                    {/*            {q.text}*/}
+                    {/*            {q.category ? <span className="ml-2 text-secondary">({q.category})</span> : null}*/}
+                    {/*        </button>*/}
+                    {/*    ))}*/}
+                    {/*</div>*/}
+                    <div
+                        className="d-flex flex-wrap"
+                        style={{
+                            gap: '8px',
+                            alignItems: "flex-start",
+                        }}
+                    >
+                        {filteredQuestions.map(q => (
+                            <div
                                 key={q.id}
-                                className="btn btn-outline-light text text-dark"
-                                style={{ border: '1px solid #ccc' }}
-                                onClick={() => handleQuestionClick(q)}
+                                style={{
+                                    display: "inline-flex",
+                                    flex: "0 0 auto",
+                                    alignItems: "center",
+                                    flexDirection: "column",
+                                    fontSize: "0.9rem",
+                                    cursor: "pointer",
+                                    whiteSpace: "normal",
+                                    wordBreak: "break-word",
+                                    maxWidth: "100%",
+                                }}
                             >
-                                {q.text}
-                                {q.category ? <span className="ml-2 text-secondary">({q.category})</span> : null}
-                            </button>
+                                <button
+                                    className="btn btn-outline-light text-dark"
+                                    style={{ border: '1px solid #ccc', whiteSpace: 'normal' }}
+                                    onClick={() => handleQuestionClick(q)}
+                                >
+                                    {q.text}
+                                    {q.category && <span className="ml-2 text-secondary">({q.category})</span>}
+                                </button>
+
+                                {selectedQuestion?.id === q.id && (
+                                    <div
+                                        className="mt-1 p-2 bg-white border"
+                                        style={{ borderRadius: 4 }}
+                                    >
+                                        <h6 className="font-weight-bold mb-2">{q.text}</h6>
+                                        {renderEditorJsData(q.answer)}
+                                    </div>
+                                )}
+                            </div>
                         ))}
                     </div>
-                    <div className="mt-3">
-                        <div
-                            style={{
-                                display: "flex",
-                                width: "100%",
-                                borderRadius: 4,
-                                borderWidth: 2,
-                                borderColor: "#A9A9A9",
-                                height: 1,
-                                borderStyle: "solid"
-                            }}
-                        />
-                        {selectedQuestion ? (
-                            <div className="p-3">
-                                <h5 className="font-weight-bold text-dark">{selectedQuestion.text}</h5>
-                                <div className="mt-2">
-                                    {renderEditorJsData(selectedQuestion.answer)}
-                                </div>
-                            </div>
-                        ) : (
-                            <p className="text-muted">Выберите вопрос, чтобы увидеть ответ.</p>
-                        )}
-                    </div>
+
                 </div>
 
             </div>

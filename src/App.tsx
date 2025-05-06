@@ -5,8 +5,8 @@ import HeaderPanel, {OutActivePhone, Project} from './components/headerPanel';
 import CallControlPanel, { CallData } from './components/callControlPanel';
 import CallsDashboard from './components/callsDashboard';
 import ScriptPanel from './components/scriptPanel';
-import { socket } from "./socket";
-import { getCookies, makeId } from "./utils";
+import {initSocket} from "./socket";
+import { makeId } from "./utils";
 import { setActiveCalls, setFsStatus } from './redux/operatorSlice';
 import {RootState, store} from './redux/store';
 
@@ -23,7 +23,7 @@ const App: React.FC = () => {
     const [outActiveProjectName, setOutActiveProjectName] = useState('');
     const [assignedKey, setAssignedKey] = useState('');
     const [isLoading,    setIsLoading]    = useState(false);
-
+    const socket = initSocket();
     const {
         sessionKey = '',
         sipLogin   = '',
@@ -31,6 +31,7 @@ const App: React.FC = () => {
         worker     = '',
     } = store.getState().credentials;
 
+    useEffect(()=> console.log("activeCall: ", activeCall),[activeCall])
     const dispatch = useDispatch();
     const roomId = useMemo(() => makeId(40), []);
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
@@ -52,7 +53,7 @@ const App: React.FC = () => {
     },[activeCall, postActive, activeCalls])
     useEffect(() => {
         const first = activeCalls[0];
-        if (activeCalls.length > 0 && !activeCall && (first?.application )) {
+        if (activeCalls.length > 0 && !activeCall && (first?.application || first?.b_callstate === "ACTIVE")) {
             setActiveCall(true);
         } else if (activeCalls.length > 0 && Object.keys(first || {}).length === 0 && activeCall) {
             setActiveCall(false);

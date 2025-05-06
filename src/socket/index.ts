@@ -1,60 +1,100 @@
-import  io  from 'socket.io-client';
+// src/socket.ts
+import io from 'socket.io-client';
 import { store } from '../redux/store';
-import {setFsReport, setFsStatus, setActiveCalls, setMonitorData, setFsReasons} from '../redux/operatorSlice';
-import {getCookies, parseMonitorData} from "../utils";
+import {
+    setFsReport,
+    setFsStatus,
+    setActiveCalls,
+    setMonitorData,
+    setFsReasons
+} from '../redux/operatorSlice';
+import { getCookies, parseMonitorData } from '../utils';
 
-export const socket = io("wss://operator.glagol.ai", {
-    transports: ['websocket']
-});
+let socket: SocketIOClient.Socket | null = null;
+let statusInterval: number | null = null;
 
-// Событие успешного подключения
-socket.on('connect', () => {
-    console.log('Socket connected:', socket.id);
-    const {
-        sessionKey = '',
-        sipLogin   = '',
-        fsServer   = '',
-        worker     = '',
-    } = store.getState().credentials;
+export function initSocket(): SocketIOClient.Socket {
+    if (socket) {
+        return socket;
+    }
 
-    const emitStatus = () => {
-        socket.emit('get_fs_status_once', {
-            worker: worker,
-            sip_login: sipLogin,
-            session_key: sessionKey,
-            room_id: store.getState().room.roomId || 'default_room',
-            fs_server: fsServer,
-        });
-    };
+    socket = io('wss://operator.glagol.ai', {
+        transports: ['websocket']
+    });
 
-    emitStatus();
+    socket.on('connect', () => {
+        console.log('Socket connected:', socket!.id);
 
-    setInterval(emitStatus, 3000);
+        const {
+            sessionKey = '',
+            sipLogin   = '',
+            fsServer   = '',
+            worker     = ''
+        } = store.getState().credentials;
 
-});
+        const emitStatus = () => {
+            socket!.emit('get_fs_status_once', {
+                worker,
+                sip_login:   sipLogin,
+                session_key: sessionKey,
+                room_id:     store.getState().room.roomId || 'default_room',
+                fs_server:   fsServer
+            });
+        };
 
-socket.on("monitor_projects", (data: any) => {
-    const parsedData = parseMonitorData(data);
+        emitStatus();
+        statusInterval = window.setInterval(emitStatus, 3000);
+    });
 
-    // Нужно вызвать store.dispatch, чтобы изменить Redux-состояние
-    store.dispatch(setMonitorData(parsedData));
-});
-// Логирование ответа на тестовое событие
-socket.on('test_event_response', (data: any) => {
-});
+    socket.on('disconnect', (reason: string) => {
+        console.log('Socket disconnected:', reason);
+        // при разрыве сокета можно очистить интервал
+        if (statusInterval !== null) {
+            clearInterval(statusInterval);
+            statusInterval = null;
+        }
+    });
 
-// Подписка на fs_report
-socket.on('fs_report', (data: any) => {
-    store.dispatch(setFsReport(data));
-});
+    // Подписки на все нужные эвенты
+    socket.on('monitor_projects', (data: any) => {
+        const parsed = parseMonitorData(data);
+        store.dispatch(setMonitorData(parsed));
+    });
 
-// Подписка на fs_status
-socket.on('fs_status', (data: any) => {
-    store.dispatch(setFsStatus(data));
-});
+    socket.on('test_event_response', (data: any) => {
+        // console.log('test_event_response', data);
+    });
 
-socket.on('fs_reasons', (data: any) => {
-    store.dispatch(setFsReasons(data));
-});
+    socket.on('fs_report', (data: any) => {
+        store.dispatch(setFsReport(data));
+    });
 
+    socket.on('fs_status', (data: any) => {
+        store.dispatch(setFsStatus(data));
+    });
 
+    socket.on('fs_reasons', (data: any) => {
+        store.dispatch(setFsReasons(data));
+    });
+
+    // Если сервер отдаёт «active_calls» отдельным эвентом
+    socket.on('active_calls', (data: any) => {
+        store.dispatch(setActiveCalls(data));
+    });
+
+    return socket;
+}
+
+/**
+ * При необходимости можно вручную разорвать соединение:
+ */
+export function destroySocket() {
+    if (socket) {
+        socket.disconnect();
+        socket = null;
+    }
+    if (statusInterval !== null) {
+        clearInterval(statusInterval);
+        statusInterval = null;
+    }
+}

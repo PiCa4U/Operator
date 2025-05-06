@@ -53,6 +53,8 @@ interface HeaderPanelProps {
     assignedKey: string
     setAssignedKey: (assignedKey: string) => void
     setIsLoading: (isLoading: boolean) => void
+    prefix: string
+    setPrefix: (prefix: string) => void
 }
 
 export interface OutActivePhone {
@@ -74,6 +76,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      setShowScriptPanel,
                                                      setPostActive,
                                                      showScriptPanel,
+                                                     prefix,
+                                                     setPrefix,
                                                  }) => {
     const {
         sessionKey = '',
@@ -102,7 +106,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         return projectPool.filter(project => (project.out_active && project.active)).map(project => project.project_name);
     }, [projectPool]);
     const projectGateawayPrefix = projectPool.length && projectPool.filter(project => (project.out_active && project.active))[0].out_gateways[2].prefix
-
 
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
     const activeCalls = useMemo(() => {
@@ -292,6 +295,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             setOutActiveStartType(msg.start_type);
             setOutActiveStart(msg.start);
             setOutActiveTakenReason(msg.taken_reason);
+            setPrefix(msg.out_extensions[0]?.prefix || '')
             setOutExtensions(msg.out_extensions);
             setAssignedKey(msg.assigned_key);
             setOutPreparation(true);
@@ -471,6 +475,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         }, 30000);
         return () => clearInterval(interval);
     }, [hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, fsServer, projectPoolForCall, fsStatus.state, fsStatus.status]);
+
     useEffect(() => {
         const handleGetOutStart = (msg: any) => {
             setOutboundCall(true)
@@ -510,14 +515,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
         let selectedExtension = '';
 
-        // 1) Проверяем, есть ли массив outExtensions, пришедший от сервера
-        if (projectGateawayPrefix) {
-            selectedExtension = projectGateawayPrefix;
-            setOutExtension(projectGateawayPrefix);
-            // const project = projectPool.find(proj => proj.out_gateways[2].prefix === projectGateawayPrefix)
-            // if (!activeCalls[0].application) {
-            //     setActiveProjectName(project.project_name)
-            // }
+        if (prefix) {
+            selectedExtension = prefix;
         }
 
         if (hasActiveCall) {
@@ -571,7 +570,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         // }
     };
 
-    // Кнопки управления статусом (как в старом)
     const handlePostStop = () => {
         socket.emit('change_state_fs', {
             fs_server: fsServer,

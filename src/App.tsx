@@ -10,6 +10,14 @@ import { makeId } from "./utils";
 import { setActiveCalls, setFsStatus } from './redux/operatorSlice';
 import {RootState, store} from './redux/store';
 
+
+export interface ModuleData {
+    name: string;
+    id: number | string;
+    start_modes: { [projectName: string]: string };
+    inputs: { [inputKey: string]: { [project: string]: any } };
+    outputs: { [inputKey: string]: { [project: string]: any } };
+}
 const App: React.FC = () => {
     const [selectedCall, setSelectedCall] = useState<CallData | null>(null);
     const [showScriptPanel, setShowScriptPanel] = useState<boolean>(false);
@@ -23,6 +31,8 @@ const App: React.FC = () => {
     const [outActiveProjectName, setOutActiveProjectName] = useState('');
     const [assignedKey, setAssignedKey] = useState('');
     const [isLoading,    setIsLoading]    = useState(false);
+    const [modules, setModules] = useState<ModuleData[]>([]);
+    const [prefix, setPrefix] = useState<string>('')
     const socket = initSocket();
     const {
         sessionKey = '',
@@ -31,13 +41,31 @@ const App: React.FC = () => {
         worker     = '',
     } = store.getState().credentials;
 
-    useEffect(()=> console.log("activeCall: ", activeCall),[activeCall])
+    // useEffect(()=> console.log("activeCall: ", activeCall),[activeCall])
     const dispatch = useDispatch();
     const roomId = useMemo(() => makeId(40), []);
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
     const activeCalls: any[] = useMemo(() => {
         return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
     }, [rawActiveCalls]);
+
+    // useEffect(()=> console.log("prefix: ", prefix),[prefix])
+    useEffect(()=> {
+        if (!activeCall && !postActive) {
+            setModules([])
+        }
+    },[activeCall, postActive])
+
+    useEffect(() => {
+        if (!activeCall && !postActive) {
+            setActiveProjectName('');
+            setSelectedCall(null);
+            setOutboundCall(false);
+            setOutActivePhone(null);
+            setOutActiveProjectName('');
+            setAssignedKey('');
+        }
+    }, [activeCall, postActive]);
 
     useEffect(()=> {
         if (!activeCall && postActive) {
@@ -89,7 +117,11 @@ const App: React.FC = () => {
 
     useEffect(() => {
         const handleFsDiaDes = (msg: any) => {
+            // console.log("desdede: ", msg)
             if (!outboundCall) {
+                if (msg.out_extensions[0]?.prefix) {
+                    setPrefix(msg.out_extensions[0]?.prefix || '')
+                }
                 setActiveProjectName(msg.project_name);
             }
         };
@@ -129,6 +161,7 @@ const App: React.FC = () => {
 
     useEffect(() => {
         if (activeCall && activeCalls[0].application_data) {
+            // console.log("diadest: ", activeCalls)
             const requestParams = {
                 fs_server: fsServer,
                 room_id: roomId,
@@ -165,6 +198,8 @@ const App: React.FC = () => {
                 assignedKey={assignedKey}
                 setAssignedKey={setAssignedKey}
                 setIsLoading={setIsLoading}
+                prefix={prefix}
+                setPrefix={setPrefix}
             />
 
             {/* Основной контент */}
@@ -204,6 +239,9 @@ const App: React.FC = () => {
                             assignedKey={assignedKey}
                             isLoading={isLoading}
                             setIsLoading={setIsLoading}
+                            setModules={setModules}
+                            modules={modules}
+                            prefix={prefix}
                         />
                     )}
                 </div>

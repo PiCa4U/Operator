@@ -23,9 +23,7 @@ function renderEditorJsData(data: any) {
                 switch (type) {
                     case 'paragraph':
                         return (
-                            <p key={idx} className="text text-dark">
-                                {blockData.text}
-                            </p>
+                            <p key={idx} className="text text-dark" dangerouslySetInnerHTML={{ __html: blockData.text }}/>
                         );
 
                     case 'table': {

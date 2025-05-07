@@ -163,7 +163,6 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     }, [projectName, direction, activeCalls]);
 
     useEffect(() => {
-        /** Событие "start_script" */
         function handleStartScript(msg: any) {
             setScriptId(msg.script_id || '');
             setScriptMode(msg.script_mode || '');

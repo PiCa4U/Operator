@@ -136,6 +136,7 @@ interface CallControlPanelProps {
     modules: ModuleData[]
     setModules: (modules: ModuleData[]) => void
     prefix: string
+    outboundCall: boolean
 }
 
 
@@ -154,7 +155,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                currentPage,
                                                                modules,
                                                                setModules,
-                                                               prefix
+                                                               prefix,
+                                                               outboundCall,
 }) => {
     // Из cookies
     const {
@@ -324,7 +326,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // }, [hasActiveCall, postActive]);
 
     useEffect(() => {
-        setModules([]);
+        // setModules([]);
         startModulesRanRef.current = false;
 
         if (!hasActiveCall || !activeProject) return;
@@ -347,7 +349,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         return () => {
             socket.off('get_modules', handleModules);
-            setModules([]);
+            // setModules([]);
             startModulesRanRef.current = false;
         };
 
@@ -364,8 +366,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             action: 'run_module',
             name___n: mod.name,
             project_name: activeProject,
-            uuid: activeCalls[0]?.uuid || '',
-            b_uuid: activeCalls[0]?.b_uuid || '',
+            uuid: activeCalls[0]?.uuid || postCallData?.uuid || '',
+            b_uuid: activeCalls[0]?.b_uuid || postCallData?.uuid || '',
             run_mode: mod.start_modes[activeProject],
             ma_id: mod.id,
             c_s: 1,
@@ -413,9 +415,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     case 'datetime_start':
                         value = call?.created || '';
                         break;
-                    // case 'datetime_end':
-                    //     value = (call.datetime_end || call.datetime_end) || '';
-                    //     break;
                     case 'dest':
                         value = call?.dest || '';
                         break;
@@ -461,7 +460,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
                 setBaseFieldValues(prev => ({
                     ...prev,
-                    [key]: rawValue
+                    [key]:
+                        typeof rawValue === 'string'
+                            ? rawValue
+                            : JSON.stringify(rawValue)
                 }));
             });
 
@@ -624,6 +626,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         onClose();
     };
 
+    // useEffect(()=> console.log("outboundCall: ", outboundCall),[outboundCall])
     const handlePostSave = () => {
         if (!callReason || !callResult) {
             Swal.fire({
@@ -647,22 +650,24 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             callReasons.find((r) => String(r.id) === callReason)?.name || "";
         const resultText =
             callResults.find((r) => String(r.id) === callResult)?.name || "";
+        if (outboundCall) {
+            socket.emit('outbound_calls', {
+                'worker': worker,
+                'sip_login':sipLogin,
+                'session_key':sessionKey,
+                'room_id':roomId,
+                'fs_server':fsServer,
+                'project_pool':projectPoolForCall,
+                'action':'update_phone_to_call',
+                'assigned_key': assignedKey,
+                'base_fields':baseFieldValues,
+                'log_status':'saved',
+                'phone_status': resultText,
+                'special_key':outActivePhone?.special_key,
+                'project_name':outActiveProjectName
+            })
 
-        socket.emit('outbound_calls', {
-            'worker': worker,
-            'sip_login':sipLogin,
-            'session_key':sessionKey,
-            'room_id':roomId,
-            'fs_server':fsServer,
-            'project_pool':projectPoolForCall,
-            'action':'update_phone_to_call',
-            'assigned_key': assignedKey,
-            'base_fields':baseFieldValues,
-            'log_status':'saved',
-            'phone_status': resultText,
-            'special_key':outActivePhone?.special_key,
-            'project_name':outActiveProjectName
-        })
+        }
 
         socket.emit("edit_call_fs", {
             fs_server: fsServer,
@@ -879,12 +884,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             </div>
         );
     };
-
+    useEffect(()=> console.log("1234modules: ", modules),[modules])
     const renderModules = () => {
-        if (!hasActiveCall && !postActive) return null;
-
+        if (!hasActiveCall && !postActive) {
+            console.log("123ffff")
+            return null
+        };
+        console.log("123activeProject: ", activeProject)
         const manualModules = modules.filter(mod => mod.start_modes[activeProject] === "manual")
-
+        console.log("123manualModules: ", manualModules)
         if (manualModules.length === 0) return null;
 
         return (

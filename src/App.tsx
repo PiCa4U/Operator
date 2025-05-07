@@ -9,6 +9,7 @@ import {initSocket} from "./socket";
 import { makeId } from "./utils";
 import { setActiveCalls, setFsStatus } from './redux/operatorSlice';
 import {RootState, store} from './redux/store';
+import {first} from "lodash";
 
 
 export interface ModuleData {
@@ -33,6 +34,9 @@ const App: React.FC = () => {
     const [isLoading,    setIsLoading]    = useState(false);
     const [modules, setModules] = useState<ModuleData[]>([]);
     const [prefix, setPrefix] = useState<string>('')
+    const [get_callcenter, setGet_callcenter] = useState<boolean>(false)
+    const [scriptDir, setScriptDir] = useState<"inbound" | "outbound" >("inbound")
+
     const socket = initSocket();
     const {
         sessionKey = '',
@@ -41,17 +45,36 @@ const App: React.FC = () => {
         worker     = '',
     } = store.getState().credentials;
 
-    // useEffect(()=> console.log("activeCall: ", activeCall),[activeCall])
+
+    useEffect(()=> console.log("activeProjectName: ", activeProjectName),[activeProjectName])
     const dispatch = useDispatch();
     const roomId = useMemo(() => makeId(40), []);
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
     const activeCalls: any[] = useMemo(() => {
         return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
     }, [rawActiveCalls]);
-
-    // useEffect(()=> console.log("prefix: ", prefix),[prefix])
+    useEffect(()=> console.log("activeCalls: ", activeCalls),[activeCalls])
+    useEffect(()=> {
+        if (!(activeCalls[0] && Object.keys(activeCalls[0]).length > 0)) return
+        const first = activeCalls[0]
+        console.log("first: ", first)
+        if (first.uuid !== "" && first.cid_num !== "" && !get_callcenter && !outboundCall){
+            setGet_callcenter(true)
+            setScriptDir("inbound")
+            socket.emit('get_callcenter_queues', {
+                'fs_server':fsServer,
+                'room_id':roomId,
+                'worker':worker,
+                'session_key':sessionKey,
+                'uuid':first.uuid,
+                'b_uuid':first.b_uuid,
+                'phone':first.cid_num
+            })
+        }
+    },[activeCalls, get_callcenter])
     useEffect(()=> {
         if (!activeCall && !postActive) {
+            console.log("1234delete")
             setModules([])
         }
     },[activeCall, postActive])
@@ -62,6 +85,7 @@ const App: React.FC = () => {
             setSelectedCall(null);
             setOutboundCall(false);
             setOutActivePhone(null);
+            setGet_callcenter(false)
             setOutActiveProjectName('');
             setAssignedKey('');
         }
@@ -85,7 +109,7 @@ const App: React.FC = () => {
             setActiveCall(true);
         } else if (activeCalls.length > 0 && Object.keys(first || {}).length === 0 && activeCall) {
             setActiveCall(false);
-            setOutboundCall(false);
+            // setOutboundCall(false);
             setPostActive(true);
         }
     }, [activeCalls]);
@@ -93,6 +117,7 @@ const App: React.FC = () => {
     useEffect(()=> {
         const getOuboundProject = (msg:any) => {
             setActiveProjectName(msg.project_name)
+            setScriptDir("outbound")
         }
         socket.on('get_out_start', getOuboundProject);
         return () => {
@@ -131,6 +156,17 @@ const App: React.FC = () => {
             socket.off('fs_dia_des', handleFsDiaDes);
         };
     }, [outboundCall]);
+
+    useEffect(() => {
+        const handleProject = (msg: any) => {
+            setActiveProjectName(msg.project_name)
+        }
+        socket.on('get_callcenter_queues', handleProject);
+        return () => {
+            socket.off('get_callcenter_queues', handleProject);
+        };
+
+    },[socket])
     useEffect(() => {
         const handleFsStatus = (msg: any) => {
             dispatch(setFsStatus(msg));
@@ -143,6 +179,7 @@ const App: React.FC = () => {
 
         const handleFsCalls = (msg: any) => {
             const callsArray: any[] = Object.values(msg);
+            console.log("callsArray:L ", callsArray)
             dispatch(setActiveCalls(callsArray));
         };
 
@@ -202,13 +239,11 @@ const App: React.FC = () => {
                 setPrefix={setPrefix}
             />
 
-            {/* Основной контент */}
             <div className="row my-3">
-                {/* Левая колонка: Дашборд звонков или панель скриптов */}
                 <div className="col-12 col-md-7">
-                    {showScriptPanel || activeCall  ? (
+                    {showScriptPanel || (activeCalls[0] && Object.keys(activeCalls[0]).length > 0 && activeCalls[0].uuid && activeProjectName)  ? (
                         <ScriptPanel
-                            direction={activeCalls[0]?.direction}
+                            direction={scriptDir}
                             projectName={activeProjectName}
                             onClose={() => setShowScriptPanel(false)}
                         />
@@ -236,6 +271,7 @@ const App: React.FC = () => {
                             currentPage={currentPage}
                             outActivePhone={outActivePhone}
                             outActiveProjectName={outActiveProjectName}
+                            outboundCall={outboundCall}
                             assignedKey={assignedKey}
                             isLoading={isLoading}
                             setIsLoading={setIsLoading}

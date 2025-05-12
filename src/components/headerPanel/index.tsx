@@ -56,6 +56,8 @@ interface HeaderPanelProps {
     specialKey: string
     setSpecialKey: (specialKey: string) => void
     activeProjectName: string
+    showTasksDashboard: boolean;
+    setShowTasksDashboard: (show: boolean) => void;
 }
 
 export interface OutActivePhone {
@@ -66,6 +68,8 @@ export interface OutActivePhone {
 }
 
 const HeaderPanel: React.FC<HeaderPanelProps> = ({
+                                                     showTasksDashboard,
+                                                     setShowTasksDashboard,
                                                      setIsLoading,
                                                      outActivePhone,
                                                      assignedKey,
@@ -853,6 +857,16 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     onClick={handleScriptLook}
                 >
                     Скрипты
+                </button>
+                <button
+                    key="tasks"
+                    className={`btn btn-outline-${showTasksDashboard ? 'primary' : 'light'} mx-1`}
+                    onClick={() => {
+                        setShowTasksDashboard(!showTasksDashboard);
+                        setShowScriptPanel(false);
+                    }}
+                >
+                    Задачи
                 </button>
             </>
         );

@@ -9,6 +9,7 @@ import { socket } from "./socket";
 import { getCookies, makeId } from "./utils";
 import { setActiveCalls, setFsStatus } from './redux/operatorSlice';
 import {RootState, store} from './redux/store';
+import TasksDashboard from "./components/taskDashboard";
 
 const App: React.FC = () => {
     const [selectedCall, setSelectedCall] = useState<CallData | null>(null);
@@ -24,6 +25,7 @@ const App: React.FC = () => {
     const [assignedKey, setAssignedKey] = useState('');
     const [isLoading,    setIsLoading]    = useState(false);
     const [specialKey, setSpecialKey] = useState<string>('')
+    const [showTasksDashboard, setShowTasksDashboard] = useState<boolean>(false);
 
     // const sessionKey = getCookies('session_key') || '';
     const sipLogin = getCookies('sip_login') || '';
@@ -173,13 +175,17 @@ const App: React.FC = () => {
                 specialKey={specialKey}
                 setSpecialKey={setSpecialKey}
                 activeProjectName={activeProjectName}
+                showTasksDashboard={showTasksDashboard}
+                setShowTasksDashboard={setShowTasksDashboard}
             />
 
             {/* Основной контент */}
             <div className="row my-3">
                 {/* Левая колонка: Дашборд звонков или панель скриптов */}
                 <div className="col-12 col-md-7">
-                    {showScriptPanel || activeCall  ? (
+                    {showTasksDashboard ? (
+                        <TasksDashboard />
+                    ) : showScriptPanel || activeCall ? (
                         <ScriptPanel
                             direction={activeCalls[0]?.direction}
                             projectName={activeProjectName}
@@ -196,7 +202,6 @@ const App: React.FC = () => {
                         />
                     )}
                 </div>
-
                 <div className="col-12 col-md-5">
                     {(selectedCall || activeCall || postActive) && (
                         <CallControlPanel

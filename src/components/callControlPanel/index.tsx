@@ -220,6 +220,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
     },[hasActiveCall])
 
+    const sanitize = (v: any) =>
+        typeof v === 'string' && v.includes('|_|_|') ? '' : v;
+
     useEffect(() => {
         if (!hasActiveCall) {
             startModulesRanRef.current = false;
@@ -357,6 +360,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     // Функция для запуска модуля
     const handleModuleRun = (mod: any) => {
+        // Базовый payload
         const payload: any = {
             worker,
             sip_login: sipLogin,
@@ -376,56 +380,58 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         let to_parse = '';
         const inputs = mod.inputs || {};
 
-        Object.keys(inputs).forEach((inputName) => {
-            // first try any base‐field
+        Object.keys(inputs).forEach(inputName => {
             const baseKey = inputs[inputName][activeProject];
-            let value: any = '';
+            let rawValue: any = '';
 
+            // 1) сначала пробуем взять из baseFieldValues
             if (baseKey && baseFieldValues.hasOwnProperty(baseKey)) {
-                value = baseFieldValues[baseKey];
+                rawValue = baseFieldValues[baseKey];
             } else {
-
+                // 2) иначе собираем из call / пост-колл данных
                 const call = hasActiveCall ? activeCalls[0] : postCallData;
-                switch (inputName) {
+                switch (baseKey) {
                     case 'operator_id':
-                        value = sipLogin;
+                        rawValue = sipLogin;
                         break;
                     case 'reason': {
-                        const reasonItem = callReasons.find(r => String(r.id) === String(callReason));
-                        value = reasonItem?.name || '';
+                        const ri = callReasons.find(r => String(r.id) === String(callReason));
+                        rawValue = ri?.name || '';
                         break;
                     }
                     case 'result': {
-                        const resultItem = callResults.find(r => String(r.id) === String(callResult));
-                        value = resultItem?.name || '';
+                        const ri = callResults.find(r => String(r.id) === String(callResult));
+                        rawValue = ri?.name || '';
                         break;
                     }
                     case 'phone':
-                        value = call?.direction === 'outbound' ? call?.b_dest : call?.cid_num;
+                        rawValue =
+                            call?.direction === 'outbound' ? call?.b_dest : call?.cid_num;
                         break;
                     case 'comment':
-                        value = comment;
+                        rawValue = comment;
                         break;
                     case 'uuid':
-                        value = call?.uuid || '';
+                        rawValue = call?.uuid || '';
                         break;
                     case 'b_uuid':
-                        value = call?.b_uuid || '';
+                        rawValue = call?.b_uuid || '';
                         break;
                     case 'datetime_start':
-                        value = call?.created || '';
+                        rawValue = call?.created || '';
                         break;
                     case 'dest':
-                        value = call?.dest || '';
+                        rawValue = call?.dest || '';
                         break;
                     case 'cid_num':
-                        value = call?.cid_num || '';
+                        rawValue = call?.cid_num || '';
                         break;
                     default:
-                        value = '';
+                        rawValue = '';
                 }
             }
 
+            const value = sanitize(rawValue);
             payload[inputName] = value;
             to_parse = to_parse ? `${to_parse},${inputName}` : inputName;
         });
@@ -433,37 +439,68 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         payload.to_parse = to_parse;
         socket.emit('module_operations', payload);
     };
-
     useEffect(() => {
         const handleModuleResult = (data: any) => {
-            console.log("handleModuleResult: ", data)
-
             if (data.result !== "success") return;
 
             const mod = modules.find(m => m.id === data.ma_id);
             if (!mod) return;
 
             const outputs = mod.outputs || {};
-            const returnedValues: Record<string,string> = data.module_return || {};
+            const returnedValues: Record<string, string> = data.module_return || {};
 
+            setParams(prevParams =>
+                prevParams.map(p => {
+                    // нашли, какой field_id нужно обновить
+                    const outName = Object.keys(outputs).find(
+                        name => outputs[name]?.[activeProject] === p.field_id
+                    );
+                    if (!outName) return p;
+
+                    // “сырое” значение из модуля
+                    const rawValue = returnedValues[outName];
+                    if (typeof rawValue !== 'string') return p;
+
+                    // нормализуем маркером
+                    const normalized = rawValue.includes('|_|_|')
+                        ? rawValue
+                        : `${rawValue}|_|_|`;
+
+                    // Парсим новые и старые опции
+                    const newOpts = normalized
+                        .split('|_|_|')
+                        .map(s => s.trim())
+                        .filter(Boolean);
+
+                    const oldRaw = p.field_vals || '';
+                    const oldOpts = oldRaw
+                        .split('|_|_|')
+                        .map(s => s.trim())
+                        .filter(Boolean);
+
+                    // Если все новые опции уже есть среди старых — не меняем
+                    const allExist = newOpts.every(opt => oldOpts.includes(opt));
+                    if (allExist) {
+                        return p;
+                    }
+
+                    // Иначе — обновляем field_vals
+                    return {
+                        ...p,
+                        field_vals: normalized
+                    };
+                })
+            );
+
+            // baseFieldValues можно оставить без изменений
             Object.entries(returnedValues).forEach(([outName, rawValue]) => {
                 const key = outputs[outName]?.[activeProject];
-                if (!key) return;  // если нет – пропускаем
-
-                setParams(prevParams =>
-                    prevParams.map(p =>
-                        p.field_id === key
-                            ? { ...p, field_vals: rawValue }
-                            : p
-                    )
-                );
-
+                if (!key) return;
                 setBaseFieldValues(prev => ({
                     ...prev,
-                    [key]:
-                        typeof rawValue === 'string'
-                            ? rawValue
-                            : JSON.stringify(rawValue)
+                    [key]: typeof rawValue === 'string'
+                        ? rawValue
+                        : JSON.stringify(rawValue)
                 }));
             });
 
@@ -602,6 +639,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
         const reasonText = callReasons.find(r => String(r.id) === callReason)?.name || '';
         const resultText = callResults.find(r => String(r.id) === callResult)?.name || '';
+        const sanitizedBaseFields = Object.fromEntries(
+            Object.entries(baseFieldValues).map(([k, v]) => [k, sanitize(v)])
+        );
         socket.emit('edit_call_fs', {
             fs_server: fsServer,
             call_id:   call?.id,
@@ -610,7 +650,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             comment,
             session_key: sessionKey,
             worker,
-            base_fields: baseFieldValues,
+            base_fields: sanitizedBaseFields,
             reason_text: reasonText,
             result_text: resultText
         });
@@ -668,6 +708,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             })
 
         }
+        const sanitizedBaseFields = Object.fromEntries(
+            Object.entries(baseFieldValues).map(([k, v]) => [k, sanitize(v)])
+        );
 
         socket.emit("edit_call_fs", {
             fs_server: fsServer,
@@ -678,7 +721,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             comment,
             session_key: sessionKey,
             worker,
-            base_fields: baseFieldValues,
+            base_fields: sanitizedBaseFields,
             reason_text: reasonText,
             result_text: resultText,
         });

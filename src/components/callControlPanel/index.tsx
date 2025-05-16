@@ -199,7 +199,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const POST_LIMIT = worker.includes('fs.at.akc24.ru') ? 120 : 15;
     const [postSeconds, setPostSeconds] = useState(POST_LIMIT);
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
-
+    useEffect(() => {
+        console.log("postCallData: ", postCallData)
+    },[postCallData])
     const fsReport = useSelector((state: RootState) => state.operator.fsReport);
 
     const forbiddenProjects = ['outbound', 'api_call', 'no_project_out'];
@@ -267,6 +269,19 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return found ? found.glagol_name : projectName;
     }
 
+    useEffect(() => {
+        const handleReports = (msg: any) => {
+            const item = msg.find((c: any) => c.special_key_call === postCallData?.call_uuid)
+            if (item) {
+                setIsLoading(false)
+            }
+        }
+        socket.on('fs_report', handleReports);
+
+        return () => {
+            socket.off('fs_report', handleReports);
+        };
+    },[postCallData, setIsLoading, socket])
     useEffect(() => {
         if(!hasActiveCall && !postActive){
             setCallReason(call?.call_reason || '');

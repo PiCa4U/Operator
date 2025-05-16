@@ -52,6 +52,7 @@
   },
   "devDependencies": {
     "@types/lodash": "^4.17.16",
-    "@types/socket.io-client": "^1.4.33"
+    "@types/socket.io-client": "^1.4.33",
+    "reactotron-react-js": "^3.3.16"
   }
 }

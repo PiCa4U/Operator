@@ -2,7 +2,6 @@ import { createSlice, PayloadAction, createSelector } from '@reduxjs/toolkit';
 import isEqual from 'lodash/isEqual';
 import { RootState } from "./store";
 
-// Типы для данных
 export interface ReasonItem {
     id: string;
     name: string;
@@ -27,7 +26,13 @@ export interface FieldDefinition {
     project_name: string;
     [key: string]: any;
 }
-
+export interface UserStatus {
+    ping_status?: string;
+    sofia_status?: string;
+    state?: string;
+    status?: string;
+    [key: string]: any;
+}
 export interface MonitorData {
     monitorUsers: Record<string, any>;
     monitorProjects: Record<string, string>;
@@ -47,6 +52,7 @@ export interface OperatorState {
         call_results: ResultItem[];
         as_is_dict: FieldDefinition[];
     } | null;
+    userStatuses: Record<string, UserStatus>;
 }
 
 const initialState: OperatorState = {
@@ -62,24 +68,26 @@ const initialState: OperatorState = {
         monitorCallcenter: {},
     },
     fsReasons: null,
+    userStatuses: {},
 };
 
-// Мемоизированный селектор для полной коллекции проектов для оператора
 export const makeSelectFullProjectPool = (sipLogin: string) =>
     createSelector(
         (state: RootState) => state.operator.monitorData.allProjects,
         (state: RootState) => state.operator.monitorData.monitorCallcenter[sipLogin] || [],
         (allProjects, myProjects) => {
-            // Если проектов нет – вернём пустой массив.
             return myProjects
                 .map((pName: string) => allProjects[pName])
                 .filter(proj => proj && proj.out_active);
         }
     );
 
-// Другие селекторы, если нужно
+// Другие селекторы
 export const selectMyProjects = createSelector(
-    [(state: RootState) => state.operator.monitorData.monitorCallcenter, (_: RootState, sipLogin: string) => sipLogin],
+    [
+        (state: RootState) => state.operator.monitorData.monitorCallcenter,
+        (_: RootState, sipLogin: string) => sipLogin
+    ],
     (monitorCallcenter, sipLogin) => monitorCallcenter[sipLogin] || []
 );
 
@@ -91,6 +99,8 @@ export const selectProjectPool = createSelector(
     (allProjects, myProjects) =>
         myProjects.filter((pName: string) => allProjects[pName]?.out_active)
 );
+
+export const selectUserStatuses = (state: RootState) => state.operator.userStatuses;
 
 const operatorSlice = createSlice({
     name: 'operator',
@@ -135,6 +145,11 @@ const operatorSlice = createSlice({
                 state.fsReasons = action.payload;
             }
         },
+        setUserStatuses(state, action: PayloadAction<Record<string, UserStatus>>) {
+            if (!isEqual(state.userStatuses, action.payload)) {
+                state.userStatuses = action.payload;
+            }
+        },
     },
 });
 
@@ -146,6 +161,7 @@ export const {
     setName,
     setMonitorData,
     setFsReasons,
+    setUserStatuses,
 } = operatorSlice.actions;
 
 export default operatorSlice.reducer;

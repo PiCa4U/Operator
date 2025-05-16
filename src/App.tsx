@@ -7,7 +7,7 @@ import CallsDashboard from './components/callsDashboard';
 import ScriptPanel from './components/scriptPanel';
 import {initSocket} from "./socket";
 import { makeId } from "./utils";
-import { setActiveCalls, setFsStatus } from './redux/operatorSlice';
+import {setActiveCalls, setFsStatus, setUserStatuses} from './redux/operatorSlice';
 import {RootState, store} from './redux/store';
 import {first} from "lodash";
 
@@ -183,12 +183,18 @@ const App: React.FC = () => {
             dispatch(setActiveCalls(callsArray));
         };
 
+        const handleOtherUsers = (msg:any) => {
+            dispatch(setUserStatuses(msg))
+        }
+
         socket.on('fs_status', handleFsStatus);
         socket.on('fs_calls', handleFsCalls);
+        socket.on("other_users", handleOtherUsers)
 
         return () => {
             socket.off('fs_status', handleFsStatus);
             socket.off('fs_calls', handleFsCalls);
+            socket.off("other_users", handleOtherUsers)
         };
     }, [dispatch]);
 
@@ -241,7 +247,7 @@ const App: React.FC = () => {
 
             <div className="row my-3">
                 <div className="col-12 col-md-7">
-                    {showScriptPanel || (activeCalls[0] && Object.keys(activeCalls[0]).length > 0 && activeCalls[0].uuid && activeProjectName)  ? (
+                    {showScriptPanel || (activeCalls[0] && Object.keys(activeCalls[0]).length > 0 && activeCalls[0].uuid && activeProjectName) || (postActive && activeProjectName)  ? (
                         <ScriptPanel
                             direction={scriptDir}
                             projectName={activeProjectName}

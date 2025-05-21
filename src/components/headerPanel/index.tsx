@@ -58,6 +58,8 @@ interface HeaderPanelProps {
     activeProjectName: string
     showTasksDashboard: boolean;
     setShowTasksDashboard: (show: boolean) => void;
+    prefix: string
+    setPrefix: (prefix: string) => void
 }
 
 export interface OutActivePhone {
@@ -83,7 +85,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      showScriptPanel,
                                                      specialKey,
                                                      setSpecialKey,
-                                                     activeProjectName
+                                                     activeProjectName,
+                                                     prefix,
+                                                     setPrefix
                                                  }) => {
     const {
         sipLogin   = '',
@@ -142,6 +146,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const [searchTerm, setSearchTerm] = useState('');
     const [typeFilter, setTypeFilter] = useState<'all' | 'operators' | 'robots'>('all');
     const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
+
+    const [callStartTime, setCallStartTime] = useState<Date | null>(null);
+    const [callTimer, setCallTimer] = useState<string>('00:00');
 
     const { sessionKey } = store.getState().operator
 
@@ -216,7 +223,42 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         return status.includes('Registered')
     };
 
-    const gateway: any = useSelector((state: RootState) => state.operator.monitorData.allProjects)
+    useEffect(() => {
+        let intervalId: NodeJS.Timeout;
+
+        if (hasActiveCall) {
+            // получаем первый звонок
+            const first = activeCalls[0];
+            // пытаемся взять время из epoch-поля, иначе текущее время
+            const epoch = first.b_created_epoch || first.created_epoch;
+            const start = epoch
+                ? new Date(Number(epoch) * 1000)
+                : first.b_created
+                    ? new Date(first.b_created)
+                    : new Date();
+
+            setCallStartTime(start);
+
+            intervalId = setInterval(() => {
+                const diffMs = Date.now() - start.getTime();
+                const totalSec = Math.floor(diffMs / 1000);
+                const mins = Math.floor(totalSec / 60);
+                const secs = totalSec % 60;
+                setCallTimer(
+                    `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+                );
+            }, 1000);
+
+        } else {
+            // звонок закончен — сбрасываем
+            setCallStartTime(null);
+            setCallTimer('00:00');
+        }
+
+        return () => {
+            if (intervalId) clearInterval(intervalId);
+        };
+    }, [hasActiveCall, activeCalls]);
 
     useEffect(() => {
         const s_dot = worker.indexOf('.');
@@ -267,6 +309,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             setSpecialKey(msg[0].special_key)
             setOutActivePhone(msg[0].phone);
             setOutActiveProjectName(msg[0].project);
+            setPrefix(msg.out_extensions[0]?.prefix || '')
             const startType = projectPool.find(p => p.project_name === msg[0].project).start_type || ""
             console.log("startType: ", startType)
             setOutActiveStartType(startType);
@@ -473,9 +516,10 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     start_type: "auto"
                 });
             }
-        }, 10000);
+        }, 30000);
         return () => clearInterval(interval);
     }, [hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, projectPoolForCall, fsStatus.state, fsStatus.status]);
+
     useEffect(() => {
         const handleGetOutStart = (msg: any) => {
             setOutboundCall(true)
@@ -512,14 +556,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
         let selectedExtension = '';
 
-        // 1) Проверяем, есть ли массив outExtensions, пришедший от сервера
-        if (projectGateawayPrefix) {
-            selectedExtension = projectGateawayPrefix;
-            setOutExtension(projectGateawayPrefix);
-            // const project = projectPool.find(proj => proj.out_gateways[2].prefix === projectGateawayPrefix)
-            // if (!activeCalls[0].application) {
-            //     setActiveProjectName(project.project_name)
-            // }
+        if (prefix) {
+            selectedExtension = prefix;
         }
 
         if (hasActiveCall) {
@@ -697,6 +735,19 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 : statusMapping[fsStatus.status] || { text: fsStatus.status, color: '#cba200' }
             : { text: 'Обновляется', color: '#cba200' };
 
+    const postColor = statusMapping['Post'].color;
+
+    // вычисляем, что показывать и каким цветом
+    const displayStatusText = hasActiveCall
+        ? `Активный вызов (${callTimer})`
+        : (post
+                ? statusMapping['Post'].text
+                : callStatusMapped.text
+        );
+
+    const displayStatusColor = hasActiveCall
+        ? postColor
+        : callStatusMapped.color;
 
     // В renderColleagueCards изменим разметку карточек, чтобы они выводились в виде сетки:
     const renderColleagueCards = () => {
@@ -885,9 +936,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                 <p
                                     id="status"
                                     className="font-weight-bold mb-1 text"
-                                    style={{ color: callStatusMapped.color }}
+                                    style={{ color: displayStatusColor  }}
                                 >
-                                    {callStatusMapped.text}
+                                    {displayStatusText}
                                 </p>
                             </div>
                             <p

@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { FieldDefinition } from "../index";
+import SearchableSelect from './select';
 
 interface EditableFieldsProps {
     params: FieldDefinition[];
     initialValues?: { [fieldId: string]: string };
     onChange?: (values: { [fieldId: string]: string }) => void;
+    augmentSaved?: boolean
 }
 
 const EditableFields: React.FC<EditableFieldsProps> = ({
                                                            params,
                                                            initialValues = {},
-                                                           onChange
+                                                           onChange,
+                                                           augmentSaved = false
                                                        }) => {
     const [fieldValues, setFieldValues] = useState<{ [fieldId: string]: string }>(initialValues);
 
@@ -64,7 +67,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             {param.must_have && <span style={{ color: 'red' }}> *</span>}:
                         </label>
 
-                        {/* Рендеринг в зависимости от типа поля */}
                         {param.field_type === "regular" && (
                             <input type="text" {...commonProps} />
                         )}
@@ -85,16 +87,24 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             <textarea {...commonProps} />
                         )}
 
-                        {param.field_type === "select" && (
-                            <select {...commonProps}>
-                                <option value="">Выберите</option>
-                                {param.field_vals?.split(',').map((opt, idx) => (
-                                    <option key={idx} value={opt}>
-                                        {opt}
-                                    </option>
-                                ))}
-                            </select>
-                        )}
+                        {param.field_type === "select" && (() => {
+                            const raw = param.field_vals || "";
+                            const list = raw.includes("|_|_|")
+                                ? raw.split("|_|_|")
+                                : raw.split(",");
+
+                            const opts = list.map(s => s.trim()).filter(Boolean);
+
+                            return (
+                                <SearchableSelect
+                                    value={currentValue}
+                                    onChange={val => handleChange(param.field_id, val)}
+                                    options={opts.map(o => ({ id: o, name: o }))}
+                                    placeholder="Выберите..."
+                                    augmentSaved={augmentSaved}
+                                />
+                            );
+                        })()}
 
                         {param.field_type === "checkbox" && (
                             <div className="form-check" style={{ marginLeft: '8px' }}>
@@ -151,11 +161,11 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                     .split(',')
                                     .map(v => v.trim())
                                     .filter(Boolean);
-                                const options =
+                                const optionsList  =
                                     param.field_vals?.split(',').map(opt => opt.trim()) || [];
                                 return (
                                     <div style={{ marginLeft: '8px' }}>
-                                        {options.map((opt, idx) => {
+                                        {optionsList .map((opt, idx) => {
                                             const isChecked = selectedValues.includes(opt);
                                             return (
                                                 <div

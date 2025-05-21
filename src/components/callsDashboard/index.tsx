@@ -55,6 +55,7 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
 
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
+    const forbiddenProjects = ['outbound', 'api_call', 'no_project_out'];
 
     // Пагинация
     // const [currentPage, setCurrentPage] = useState(1);
@@ -261,9 +262,13 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
                     ) : callsToFill.length === 0 ? (
                         <p>У вас пока нет вызовов в незаполненном статусе.</p>
                     ) : (
-                        callsToFill.map((call) => {
+                        callsToFill.map(call => {
                             const phoneNumber = getDisplayNumber(call);
                             const callDuration = formatLenTime(call.len_time);
+
+                            const project = call.project_name || '';
+                            const hideReportFields = forbiddenProjects.includes(project);
+
                             return (
                                 <div
                                     key={call.id}
@@ -271,23 +276,28 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
                                     style={{ height: '55px', cursor: 'pointer' }}
                                     onClick={() => showCallEdit(call.id, false)}
                                 >
-                                    {call.total_direction === "outbound" ? (
-                                        <span className="material-icons" style={{color: "#f26666"}}>
-                                            logout
-                                        </span>
-                                    ) : (
-                                        <span className="material-icons" style={{color: "#7cd420"}}>
-                                            login
-                                        </span>
-                                    )}
-                                    <p
-                                        className="font-weight-bold mb-2 mt-2 ml-2 align-items-center"
-                                        style={{ fontSize: '13px' }}
-                                    >
-                                        {phoneNumber} | {call.datetime_start} | {callDuration}
-                                    </p>
-                                </div>
-                            );
+                            {call.total_direction === "outbound" ? (
+                                <span className="material-icons" style={{color: "#f26666"}}>
+                                                logout
+                                            </span>
+                            ) : (
+                                <span className="material-icons" style={{color: "#7cd420"}}>
+                                                login
+                                            </span>
+                            )}
+                            <p
+                                className="font-weight-bold mb-2 mt-2 ml-2 align-items-center"
+                                style={{ fontSize: '13px' }}
+                            >
+                                {phoneNumber} | {call.datetime_start} | {callDuration}
+                                {hideReportFields && (
+                                    <span className="text-warning font-weight-bold ml-2">
+                                                    Перевод вызова
+                                                </span>
+                                )}
+                            </p>
+                        </div>
+                        )
                         })
                     )}
                 </div>

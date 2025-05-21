@@ -10,7 +10,15 @@ import { getCookies, makeId } from "./utils";
 import { setActiveCalls, setFsStatus } from './redux/operatorSlice';
 import {RootState, store} from './redux/store';
 import TasksDashboard from "./components/taskDashboard";
+import {first} from "lodash";
 
+
+export interface ModuleData {
+    filename: string;
+    id: number;
+    kwargs: any;
+    return_structure: any;
+}
 const App: React.FC = () => {
     const [selectedCall, setSelectedCall] = useState<CallData | null>(null);
     const [showScriptPanel, setShowScriptPanel] = useState<boolean>(false);
@@ -26,13 +34,19 @@ const App: React.FC = () => {
     const [isLoading,    setIsLoading]    = useState(false);
     const [specialKey, setSpecialKey] = useState<string>('')
     const [showTasksDashboard, setShowTasksDashboard] = useState<boolean>(false);
+    const [modules, setModules] = useState<ModuleData[]>([]);
+    const [prefix, setPrefix] = useState<string>('')
+    const [get_callcenter, setGet_callcenter] = useState<boolean>(false)
+    const [scriptDir, setScriptDir] = useState<"inbound" | "outbound" >("inbound")
+
+    useEffect(()=> console.log("activeProjectName: ", activeProjectName),[activeProjectName])
 
     // const sessionKey = getCookies('session_key') || '';
     const {
         sipLogin   = '',
         worker     = '',
     } = store.getState().credentials;
-    console.log("worker: ", worker)
+
     const dispatch = useDispatch();
     const roomId = useMemo(() => makeId(40), []);
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
@@ -41,6 +55,25 @@ const App: React.FC = () => {
     }, [rawActiveCalls]);
     useEffect(()=> console.log("activeCall: ", activeCall),[activeCall])
     const { sessionKey } = store.getState().operator
+
+    useEffect(()=> {
+        if (!activeCall && !postActive) {
+            console.log("1234delete")
+            setModules([])
+        }
+    },[activeCall, postActive])
+
+    useEffect(() => {
+        if (!activeCall && !postActive) {
+            setActiveProjectName('');
+            setSelectedCall(null);
+            setOutboundCall(false);
+            setOutActivePhone(null);
+            setGet_callcenter(false);
+            setOutActiveProjectName('');
+            setAssignedKey('');
+        }
+    }, [activeCall, postActive]);
 
     useEffect(()=> {
         if (!activeCall && postActive && sessionKey) {
@@ -55,17 +88,18 @@ const App: React.FC = () => {
     useEffect(() => {
         console.log("activeCalls: ", activeCalls)
         const first = activeCalls[0];
-        if (activeCalls.length > 0 && !activeCall && first?.application) {
+        if (activeCalls.length > 0 && !activeCall && (first?.application || first?.b_callstate === "ACTIVE")) {
             setActiveCall(true);
         } else if (!activeCalls.length && activeCall) {
             setActiveCall(false);
-            setOutboundCall(false);
+            // setOutboundCall(false);
             setPostActive(true);
         }
     }, [activeCalls]);
 
     useEffect(()=> {
         const getOuboundProject = (msg:any) => {
+            setScriptDir("outbound")
             setActiveProjectName(msg.project_name)
         }
         socket.on('get_out_start', getOuboundProject);
@@ -88,14 +122,17 @@ const App: React.FC = () => {
 
     useEffect(() => {
         const handleFsDiaDes = (msg: any) => {
-            if (!outboundCall) {
+            // if (!outboundCall) {
+                if (msg.out_extensions[0]?.prefix) {
+                    setPrefix(msg.out_extensions[0]?.prefix || '')
+                }
                 setActiveProjectName(msg.project_name);
                 socket.emit('get_fs_reasons', {
                     project_name: msg.project_name,
                     session_key: sessionKey,
                     worker
                 })
-            }
+            // }
         };
 
         socket.on('get_callcenter_queues', handleFsDiaDes);
@@ -132,14 +169,18 @@ const App: React.FC = () => {
     }, [dispatch, roomId]);
 
     useEffect(() => {
-        if (activeCall && activeCalls.length && activeCalls[0].application) {
+        if (!(activeCalls[0] && Object.keys(activeCalls[0]).length > 0)) return
+        const first = activeCalls[0]
+        console.log("first: ", first)
+        if (first.uuid !== "" && first.cid_num !== "" && !get_callcenter && !outboundCall){
+            setGet_callcenter(true)
+            setScriptDir("inbound")
             const requestParams = {
                 session_key: sessionKey,
                 worker,
                 phone: activeCalls[0].cid_num,
             };
             socket.emit('get_callcenter_queues', requestParams);
-
         }
     }, [activeCall, activeCalls]);
     //TODO fix
@@ -179,6 +220,8 @@ const App: React.FC = () => {
                 activeProjectName={activeProjectName}
                 showTasksDashboard={showTasksDashboard}
                 setShowTasksDashboard={setShowTasksDashboard}
+                prefix={prefix}
+                setPrefix={setPrefix}
             />
 
             {/* Основной контент */}
@@ -187,9 +230,9 @@ const App: React.FC = () => {
                 ) : <div className="row my-3">
                 {/* Левая колонка: Дашборд звонков или панель скриптов */}
                 <div className="col-12 col-md-7">
-                    {showScriptPanel || activeCall ? (
+                    {showScriptPanel || (activeCalls[0] && Object.keys(activeCalls[0]).length > 0 && activeCalls[0].uuid && activeProjectName) ? (
                         <ScriptPanel
-                            direction={activeCalls[0]?.direction}
+                            direction={scriptDir}
                             projectName={activeProjectName}
                             onClose={() => setShowScriptPanel(false)}
                         />
@@ -220,6 +263,11 @@ const App: React.FC = () => {
                             isLoading={isLoading}
                             setIsLoading={setIsLoading}
                             specialKey={specialKey}
+                            setModules={setModules}
+                            modules={modules}
+                            prefix={prefix}
+                            outboundCall={outboundCall}
+
                         />
                     )}
                 </div>

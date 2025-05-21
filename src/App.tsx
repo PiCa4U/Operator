@@ -180,12 +180,12 @@ const App: React.FC = () => {
             />
 
             {/* Основной контент */}
-            <div className="row my-3">
+            {showTasksDashboard ? (
+                    <TasksDashboard />
+                ) : <div className="row my-3">
                 {/* Левая колонка: Дашборд звонков или панель скриптов */}
                 <div className="col-12 col-md-7">
-                    {showTasksDashboard ? (
-                        <TasksDashboard />
-                    ) : showScriptPanel || activeCall ? (
+                    {showScriptPanel || activeCall ? (
                         <ScriptPanel
                             direction={activeCalls[0]?.direction}
                             projectName={activeProjectName}
@@ -221,7 +221,7 @@ const App: React.FC = () => {
                         />
                     )}
                 </div>
-            </div>
+            </div>}
         </div>
     );
 };

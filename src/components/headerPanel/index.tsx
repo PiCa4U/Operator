@@ -85,10 +85,10 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      setSpecialKey,
                                                      activeProjectName
                                                  }) => {
-    // const sessionKey = getCookies('session_key') || '';
-    const sipLogin = getCookies('sip_login') || '';
-    const fsServer = getCookies('fs_server') || '';
-    const worker = getCookies('worker') || '';
+    const {
+        sipLogin   = '',
+        worker     = '',
+    } = store.getState().credentials;
     const roomId = useSelector((state: RootState) => state.room.roomId) || 'default_room';
 
     const dispatch = useDispatch();
@@ -403,6 +403,23 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
             } else {
                 Swal.fire({ title: "Ошибка при старте звонка", icon: "error" });
+                socket.emit('outbound_call_update', {
+                    worker,
+                    // sip_login: sipLogin,
+                    session_key: sessionKey,
+                    // project_pool: projectPoolForCall,
+                    assigned_key: assignedKey,
+                    log_status: 'error',
+                    phone_status: 'error',
+                    special_key: specialKey,
+                });
+                socket.emit('change_status_fs', {
+                    sip_login: sipLogin,
+                    worker: sipLogin,
+                    session_key: sessionKey,
+                    action: 'available',
+                    page: 'online',
+                });
             }
         };
 
@@ -431,7 +448,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             socket.off('uuid_break', handleUuidBreak);
             socket.off('uuid_bridge', handleUuidBridge);
         };
-    }, [allProjects, assignedKey, fsServer, outActivePhone?.special_key, outActiveProjectName, projectPoolForCall, roomId, sessionKey, sipLogin, worker]);
+    }, [allProjects, assignedKey, outActivePhone?.special_key, outActiveProjectName, projectPoolForCall, roomId, sessionKey, sipLogin, worker]);
 
     // Автодозвон (раз в 30 секунд)
     useEffect(() => {
@@ -458,7 +475,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             }
         }, 10000);
         return () => clearInterval(interval);
-    }, [hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, fsServer, projectPoolForCall, fsStatus.state, fsStatus.status]);
+    }, [hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, projectPoolForCall, fsStatus.state, fsStatus.status]);
     useEffect(() => {
         const handleGetOutStart = (msg: any) => {
             setOutboundCall(true)
@@ -482,12 +499,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         return () => {
             socket.off('get_out_start', handleGetOutStart);
         };
-    }, [sipLogin, sessionKey, roomId, fsServer, worker, hasActiveCall]);
+    }, [sipLogin, sessionKey, roomId, worker, hasActiveCall]);
     // --- (B) Обработчик «Вызов по номеру» ---
     const handleCallByNumber = () => {
-        console.log("123")
-        // if (!activeCalls[0].application) return
-        console.log("12345")
         setOutExtension('');
         setOutBaseFieldValues({});
         if (!activeCalls[0].application) {
@@ -508,7 +522,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             // }
         }
 
-        // Далее — проверка: если activeCall есть, значит callType='redirect', иначе 'call'
         if (hasActiveCall) {
             setCallType('redirect');
         } else {
@@ -525,33 +538,23 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             return;
         }
         const projName = activeCalls[0].direction === "outbound" ? outActiveProjectName : activeProjectName
-
-        // socket.emit('sofia_operations', {
-        //     worker,
-        //     session_key: sessionKey,
-        //     uuid: activeCalls[0].uuid,
-        //     action: 'hold_toggle'
-        // });
-        // if (callType === 'redirect') {
-        //     socket.emit('redirect', {
-        //         worker,
-        //         sip_login: sipLogin,
-        //         session_key: sessionKey,
-        //         phone,
-        //         project_name: projName,
-        //         // prefix: getPrefix(projName),
-        //         // call_type: 'redirect',
-        //         // uuid: activeCalls[0].uuid,
-        //     });
-        // } else {
-            socket.emit('call', {
+            socket.emit('redirect', {
                 worker,
                 sip_login: sipLogin,
                 session_key: sessionKey,
                 phone,
-                // prefix: "0069",
-                project_name: activeCalls[0].direction === "outbound" ? outActiveProjectName : activeProjectName,
+                prefix: selectedExtension,
+                // uuid: activeCalls[0].uuid,
             });
+        // } else {
+        //     socket.emit('call', {
+        //         worker,
+        //         sip_login: sipLogin,
+        //         session_key: sessionKey,
+        //         phone,
+        //         // prefix: "0069",
+        //         project_name: activeCalls[0].direction === "outbound" ? outActiveProjectName : activeProjectName,
+        //     });
         // }
     };
 

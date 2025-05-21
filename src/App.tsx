@@ -28,8 +28,10 @@ const App: React.FC = () => {
     const [showTasksDashboard, setShowTasksDashboard] = useState<boolean>(false);
 
     // const sessionKey = getCookies('session_key') || '';
-    const sipLogin = getCookies('sip_login') || '';
-    const worker = getCookies('worker') || '';
+    const {
+        sipLogin   = '',
+        worker     = '',
+    } = store.getState().credentials;
     console.log("worker: ", worker)
     const dispatch = useDispatch();
     const roomId = useMemo(() => makeId(40), []);

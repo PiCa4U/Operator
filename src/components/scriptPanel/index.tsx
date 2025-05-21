@@ -64,9 +64,10 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
                                                      bUuid = '',
                                                      onClose,
                                                  }) => {
-    const sipLogin   = getCookies('sip_login')   || '';
-    const fsServer   = getCookies('fs_server')   || '';
-    const worker     = getCookies('worker')      || '';
+    const {
+        sipLogin   = '',
+        worker     = '',
+    } = store.getState().credentials;
 
     // Текущая «комната» (room_id)
     const roomId     = useSelector((state: RootState) => state.room.roomId) || 'default_room';
@@ -180,7 +181,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
             socket.off('start_script', handleStartScript);
             socket.off('move_script', handleMoveScript);
         };
-    }, [direction, projectName, sipLogin, sessionKey, roomId, fsServer, worker]);
+    }, [direction, projectName, sipLogin, sessionKey, roomId, worker]);
 
     /** Клик по кнопке скрипта => move_script */
     const handleButtonClick = (btn: ScriptButton) => {

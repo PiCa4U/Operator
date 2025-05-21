@@ -1,13 +1,13 @@
 import { configureStore } from '@reduxjs/toolkit';
 import operatorReducer from './operatorSlice';
 import roomReducer from './roomSlice';
-import callReducer from './callSlice';
+import credentialsSlice from "./credentialsSlice";
 
 export const store = configureStore({
     reducer: {
         operator: operatorReducer,
         room: roomReducer,
-        call: callReducer,
+        credentials: credentialsSlice
     },
 });
 

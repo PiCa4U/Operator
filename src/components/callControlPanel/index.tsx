@@ -164,10 +164,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // Из cookies
     const { sessionKey } = store.getState().operator
 
-    const sipLogin   = getCookies('sip_login') || '';
-    const fsServer   = getCookies('fs_server') || '';
-    const worker     = getCookies('worker') || '';
-    const roomId     = useSelector((state: RootState) => state.room.roomId) || 'default_room';
+    const {
+        sipLogin   = '',
+        worker     = '',
+    } = store.getState().credentials;    const roomId     = useSelector((state: RootState) => state.room.roomId) || 'default_room';
 
     // Состояния для формы
     const fsReasons = useSelector((state: RootState) => state.operator.fsReasons);
@@ -292,7 +292,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 project_name: activeProject,
             });
         }
-    }, [hasActiveCall, worker, sipLogin, sessionKey, roomId, fsServer, activeProject]);
+    }, [hasActiveCall, worker, sipLogin, sessionKey, roomId, activeProject]);
 
     // Обработка ответа сервера для "get_modules"
     useEffect(() => {
@@ -629,16 +629,28 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
 
     const [callDuration, setCallDuration] = useState(0);
+    const [secondCallDuration, setSecondCallDuration] = useState(0)
+
     useEffect(() => {
         let interval: NodeJS.Timeout | null = null;
         if (hasActiveCall) {
             interval = setInterval(() => {
-                const startTimeStr = activeCalls[0].b_created;
+                // const startTimeStr = activeCalls[0].b_created;
+                const startTimeStr = activeCalls[0].created;
                 if (startTimeStr) {
                     const startMs = new Date(startTimeStr).getTime();
                     const now = Date.now();
                     const diffSec = Math.floor((now - startMs) / 1000);
                     setCallDuration(diffSec);
+                }
+                if (activeCalls.length > 1) {
+                    const startTimeStr = activeCalls[1].created;
+                    if (startTimeStr) {
+                        const startMs = new Date(startTimeStr).getTime();
+                        const now = Date.now();
+                        const diffSec = Math.floor((now - startMs) / 1000);
+                        setSecondCallDuration(diffSec);
+                    }
                 }
             }, 1000);
         } else {
@@ -653,6 +665,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         const minutes = Math.floor(sec / 60);
         const seconds = sec % 60;
         return `${minutes} мин. ${seconds} сек.`;
+    }
+
+    function extractSuffix(input?: string | null): string {
+        return input?.split(' ').pop() ?? '';
     }
 
     const iconCol = call?.total_direction === 'outbound' ? '#f26666' : '#7cd420';
@@ -682,9 +698,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     {mainActiveCall.direction === 'outbound' ? 'logout' : 'login'}
                   </span>
                     <strong className="ml-2" style={{ fontSize: 16, fontWeight: 600}}>
-                        {mainActiveCall.direction === 'outbound' ? mainActiveCall.callee_num : mainActiveCall.cid_num}
+                        {mainActiveCall.direction === 'outbound' ? mainActiveCall.callee_num || extractSuffix(mainActiveCall.cid_num) : extractSuffix(mainActiveCall.cid_num)}
                         {' | '}
-                        {new Date(mainActiveCall.b_created).toLocaleString()}
+                        {new Date(mainActiveCall.created).toLocaleString()}
                     </strong>
                 </div>
                 <div className="mt-2 mb-2">
@@ -730,9 +746,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             const iconName = isHeld ? 'play_arrow' : 'pause';
             const iconColor = sc.direction === 'outbound' ? '#f26666' : '#7cd420';
             // Вычисляем длительность второго звонка (в секундах)
-            const secondCallDuration = Math.floor(
-                (Date.now() - new Date(sc.b_created).getTime()) / 1000
-            );
+            // const secondCallDuration = Math.floor(
+            //     (Date.now() - new Date(sc.b_created).getTime()) / 1000
+            // );
 
             return (
                 <div className="mt-3">
@@ -760,9 +776,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 {sc.direction === 'outbound' ? 'logout' : 'login'}
                               </span>
                                 <strong className="ml-2" style={{ fontSize: 16, fontWeight: 600}}>
-                                    {sc.direction === 'outbound' ? sc.callee_num : sc.cid_num}
+                                    {sc.direction === 'outbound' ? extractSuffix(sc.cid_num) || sc.callee_num  : extractSuffix(sc.cid_num)}
                                     {' | '}
-                                    {new Date(sc.b_created).toLocaleString()}
+                                    {new Date(sc.created).toLocaleString()}
                                 </strong>
                             </div>
                             <div className="mt-2 mb-2">

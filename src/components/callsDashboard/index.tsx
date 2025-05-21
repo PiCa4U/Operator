@@ -40,9 +40,10 @@ type CallsDashboardProps = {
 const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading, setSelectedCall, currentPage, setCurrentPage}) => {
     const { sessionKey } = store.getState().operator
 
-    const sipLogin   = getCookies('sip_login')   || '';
-    const fsServer   = getCookies('fs_server')   || '';
-    const worker     = getCookies('worker')      || '';
+    const {
+        sipLogin   = '',
+        worker     = '',
+    } = store.getState().credentials;
 
     const roomId   = useSelector((state: RootState) => state.room.roomId) || 'default_room';
     const [fsReport, setFsReport] = useState<any[]>([])
@@ -117,7 +118,7 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
             date_range: dateRangeString,
             phone_search: searchParams.phone,
         });
-    }, [searchParams, currentPage, worker, sessionKey, sipLogin, roomId, fsServer]);
+    }, [searchParams, currentPage, worker, sessionKey, sipLogin, roomId]);
 
     useEffect(() => {
         if (!fsReport || !Array.isArray(fsReport)) return;

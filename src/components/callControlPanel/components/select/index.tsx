@@ -1,7 +1,11 @@
-import React, {useState} from 'react';
-import Select, { StylesConfig, GroupBase, SingleValue } from 'react-select';
-import {ReasonItem, ResultItem} from "../../index";
-// подставьте свой путь
+import React from 'react';
+import Select, {
+    StylesConfig,
+    GroupBase,
+    SingleValue,
+    ClearIndicatorProps,
+} from 'react-select';
+import { ReasonItem, ResultItem } from '../../index';
 
 // Общий тип для опции
 interface Option {
@@ -78,7 +82,14 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
 
     indicatorSeparator: () => ({ display: 'none' }),
 
-    menu: (base) => ({
+    clearIndicator: base => ({
+        ...base,
+        padding: '0 8px',
+        cursor: 'pointer',
+        color: '#999',
+        '&:hover': { color: '#333' },
+    }),
+    menu: base => ({
         ...base,
         width: '100%',
         boxSizing: 'border-box',
@@ -119,14 +130,18 @@ const SearchableSelect: React.FC<Props> = ({
         : staticOpts;
 
     // 3) находим выбранный
-    const selected = finalOpts.find(o => o.value === stringValue) || null;
+    const selected: Option | null =
+        finalOpts.find(o => o.value === stringValue) ?? null;
 
     return (
         <Select<Option, false>
             isSearchable
             options={finalOpts}
+            isClearable
             value={selected}
-            onChange={opt => onChange((opt as SingleValue<Option>)!.value)}
+            onChange={opt =>
+                onChange((opt as SingleValue<Option>)?.value ?? '')
+            }
             styles={customStyles}
             placeholder={placeholder}
             menuPlacement="auto"

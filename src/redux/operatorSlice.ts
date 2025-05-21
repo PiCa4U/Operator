@@ -48,6 +48,16 @@ export interface OperatorState {
         call_results: ResultItem[];
         as_is_dict: FieldDefinition[];
     } | null;
+    userStatuses: Record<string, UserStatus>;
+
+}
+
+export interface UserStatus {
+    ping_status?: string;
+    sofia_status?: string;
+    state?: string;
+    status?: string;
+    [key: string]: any;
 }
 
 const initialState: OperatorState = {
@@ -64,6 +74,7 @@ const initialState: OperatorState = {
         monitorCallcenter: {},
     },
     fsReasons: null,
+    userStatuses: {},
 };
 
 // Мемоизированный селектор для полной коллекции проектов для оператора
@@ -85,6 +96,7 @@ export const selectMyProjects = createSelector(
     (monitorCallcenter, sipLogin) => monitorCallcenter[sipLogin] || []
 );
 
+export const selectUserStatuses = (state: RootState) => state.operator.userStatuses;
 export const selectProjectPool = createSelector(
     [
         (state: RootState) => state.operator.monitorData.allProjects,
@@ -142,6 +154,12 @@ const operatorSlice = createSlice({
                 state.sessionKey = action.payload;
             }
         },
+        setUserStatuses(state, action: PayloadAction<Record<string, UserStatus>>) {
+            if (!isEqual(state.userStatuses, action.payload)) {
+                state.userStatuses = action.payload;
+            }
+        },
+
     },
 });
 
@@ -154,6 +172,7 @@ export const {
     setMonitorData,
     setFsReasons,
     setSessionKey,
+    setUserStatuses,
 } = operatorSlice.actions;
 
 export default operatorSlice.reducer;

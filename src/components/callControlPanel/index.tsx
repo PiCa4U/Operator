@@ -192,6 +192,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [isParams, setIsParams] = useState<boolean>(true)
     const [startModulesRan, setStartModulesRan] = useState(false);
 
+    const sanitize = (v: any) =>
+        typeof v === 'string' && v.includes('|_|_|') ? '' : v;
+
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
     console.log("projectPool: ", projectPool)
@@ -218,6 +221,20 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const startModulesRanRef = useRef(false);
 
+
+    useEffect(() => {
+        const handleReports = (msg: any) => {
+            const item = msg.find((c: any) => c.special_key_call === postCallData?.call_uuid)
+            if (item) {
+                setIsLoading(false)
+            }
+        }
+        socket.on('fs_report', handleReports);
+
+        return () => {
+            socket.off('fs_report', handleReports);
+        };
+    },[postCallData, setIsLoading, socket])
 
     useEffect(() => {
         if (hasActiveCall) {
@@ -444,20 +461,50 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         if (!key) return;
 
                         // обновляем опции селекта
-                        setParams(prev =>
-                            prev.map(p =>
-                                p.field_id === key
-                                    ? { ...p, field_vals: rawValue }
-                                    : p
-                            )
+                        setParams(prevParams =>
+                            prevParams.map(p => {
+                                const outName = Object.keys(outputs).find(
+                                    name => outputs[name]?.[activeProject] === p.field_id
+                                );
+                                if (!outName) return p;
+
+                                const rawValue = returnedValues[outName];
+                                if (typeof rawValue !== 'string') return p;
+
+                                const normalized = rawValue.includes('|_|_|')
+                                    ? rawValue
+                                    : `${rawValue}|_|_|`;
+
+                                const newOpts = normalized
+                                    .split('|_|_|')
+                                    .map(s => s.trim())
+                                    .filter(Boolean);
+
+                                const oldRaw = p.field_vals || '';
+                                const oldOpts = oldRaw
+                                    .split('|_|_|')
+                                    .map(s => s.trim())
+                                    .filter(Boolean);
+
+                                const allExist = newOpts.every(opt => oldOpts.includes(opt));
+                                if (allExist) {
+                                    return p;
+                                }
+
+                                return {
+                                    ...p,
+                                    field_vals: normalized
+                                };
+                            })
                         );
+                        if (!key) return;
+
                         // и текущее значение поля
                         setBaseFieldValues(prev => ({
                             ...prev,
-                            [key]:
-                                typeof rawValue === 'string'
-                                    ? rawValue
-                                    : JSON.stringify(rawValue)
+                            [key]: typeof rawValue === 'string'
+                                ? rawValue
+                                : JSON.stringify(rawValue)
 
                         }));
                     });
@@ -617,10 +664,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             Swal.fire({ title: "Ошибка", text: "Проверьте заполнение обязательных полей", icon: "error" });
             return;
         }
-        const reasonText = callReasons.find(r => String(r.id) === callReason)?.name || '';
-        const resultText = callResults.find(r => String(r.id) === callResult)?.name || '';
         const reasonNumber = typeof callReason === "string" ? parseInt(callReason, 10) : callReason
         const resultNumber = typeof callResult === "string" ? parseInt(callResult, 10) : callResult
+
+        const sanitizedBaseFields = Object.fromEntries(
+            Object.entries(baseFieldValues).map(([k, v]) => [k, sanitize(v)])
+        );
 
         socket.emit('edit_call_fs', {
             b_uuid: call?.special_key_call ,
@@ -632,7 +681,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             comment,
             session_key: sessionKey,
             worker,
-            base_fields: baseFieldValues,
+            base_fields: sanitizedBaseFields,
             // reason_text: reasonText,
             // result_text: resultText
         });
@@ -686,6 +735,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
         const uuid = postCallData?.direction === "outbound" ? postCallData?.call_uuid : postCallData?.b_uuid
         const b_uuid = postCallData?.direction === "outbound" ? postCallData?.call_uuid : postCallData?.uuid
+        const sanitizedBaseFields = Object.fromEntries(
+            Object.entries(baseFieldValues).map(([k, v]) => [k, sanitize(v)])
+        );
+
         socket.emit("edit_call_fs", {
             b_uuid,
             uuid,
@@ -695,7 +748,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             comment,
             session_key: sessionKey,
             worker,
-            base_fields: baseFieldValues,
+            base_fields: sanitizedBaseFields,
             // reason_text: reasonText,
             // result_text: resultText,
         });

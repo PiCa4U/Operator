@@ -94,11 +94,13 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         worker     = '',
     } = store.getState().credentials;
     const roomId = useSelector((state: RootState) => state.room.roomId) || 'default_room';
-
+    const userStatuses      = useSelector((state: RootState) => state.operator.userStatuses);
+    useEffect(()=> console.log("123userStatuses: ", userStatuses),[userStatuses])
     const dispatch = useDispatch();
     const { monitorUsers, monitorProjects, allProjects, monitorCallcenter } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
+    useEffect(()=> console.log("123monitorUsers: ", monitorUsers),[monitorUsers])
 
     const fsStatus = useSelector(
         (state: RootState) => state.operator.fsStatus,
@@ -753,99 +755,138 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const renderColleagueCards = () => {
         const allEntries = Object.entries(monitorUsers);
 
-        // Фильтруем по строке поиска
-        let filteredEntries = allEntries.filter(([login, user]: [string, any]) =>
+        // 1. Поиск
+        let filtered = allEntries.filter(([login, user]: [string, any]) =>
             login.toLowerCase().includes(searchTerm.toLowerCase()) ||
             (user.name && user.name.toLowerCase().includes(searchTerm.toLowerCase()))
         );
 
-        // Фильтрация по типу:
+        // 2. Тип
         if (typeFilter === 'operators') {
-            filteredEntries = filteredEntries.filter(([_, user]) => user.post_obrabotka !== false);
+            filtered = filtered.filter(([_, u]) => u.post_obrabotka !== false);
         } else if (typeFilter === 'robots') {
-            filteredEntries = filteredEntries.filter(([_, user]) => user.post_obrabotka === false);
+            filtered = filtered.filter(([_, u]) => u.post_obrabotka === false);
         }
 
-        // Разбиваем пользователей на две группы по статусу
-        // Если выбран статус, например "online" или "offline"
+        // 3. Онлайн/оффлайн
         if (statusFilter !== 'all') {
-            filteredEntries = filteredEntries.filter(([_, user]) => {
-                const isOnline = user.callcenter; // предполагается, что true - онлайн, false - оффлайн
-                return statusFilter === 'online' ? isOnline : !isOnline;
+            filtered = filtered.filter(([login, user]) => {
+                // берём реальный SIP-ключ
+                const sipKey = user.sip_login || login;
+
+                const statusObj = userStatuses.statuses[sipKey] || {};
+                // приводим к boolean
+                const isOnline = statusObj.sofia_status?.includes('Registered');
+                const online = statusFilter === "online" ? isOnline : !isOnline
+                return online
+
             });
         }
 
-        // Далее можно всё равно разделять (если фильтр типа "all" выбран, можно группировать) или просто рендерить все карточки.
-        // Пример ниже разделяет карточки на группы, если по умолчанию ничего не выбрано.
-        const liveOperators = filteredEntries.filter(([_, user]) => user.post_obrabotka !== false);
-        const robots = filteredEntries.filter(([_, user]) => user.post_obrabotka === false);
+        const liveOperators = filtered.filter(([_, u]) => u.post_obrabotka !== false);
+        const robots        = filtered.filter(([_, u]) => u.post_obrabotka === false);
+
+        // const renderGroup = (entries: [string, any][]) =>
+        const renderGroup = (entries: [string, any][]) =>
+            entries.map(([login, user]) => {
+                // 1) Получаем список «ключей» проектов для этого логина, либо []
+                const projectKeys: string[] = Array.isArray(monitorCallcenter[login])
+                    ? monitorCallcenter[login]!
+                    : [];
+
+                // 2) Строим имена: если monitorProjects[key] есть — берём, иначе fallback на key
+                const projectNames = projectKeys.map(key =>
+                    monitorProjects?.[key] ?? key
+                );
+                // 1) Получаем статус для этого логина
+                const statusObj = userStatuses.statuses[login] || {};
+                const { sofia_status, status: fsStatus, state: fsState } = statusObj;
+                // 2) Вычисляем Sofía-статус
+                const sofiaText  = sofia_status?.includes('Registered') ? 'Авторизован' : 'Выключен';
+                const sofiaColor = sofia_status?.includes('Registered') ? '#0BB918' : '#f33333';
+
+                // 3) Вычисляем FS-статус
+                let fsText  = fsStatus || 'Обновляется';
+                let fsColor = '#cba200';
+                if (fsStatus === 'Logged Out') {
+                    fsText  = 'Выключен';
+                    fsColor = '#f33333';
+                } else if (fsState === 'In a queue call' && fsStatus?.includes('Available')) {
+                    fsText  = 'Активный вызов';
+                    fsColor = '#cba200';
+                } else if (fsStatus?.includes('Available') && fsState === 'Idle') {
+                    fsText  = 'Постобработка';
+                    fsColor = '#cba200';
+                } else if (fsStatus?.includes('Available') && fsState === 'Waiting') {
+                    fsText  = 'На линии';
+                    fsColor = '#0BB918';
+                } else if (fsStatus === "On Break") {
+                    fsText  = 'Перерыв';
+                    fsColor = '#cba200';
+                }
+
+                // 4) «Готов», если Available + Idle
+                const ready = fsStatus?.includes('Available') && fsState === 'Waiting';
+
+                // 5) Проекты пользователя
+                // const projectKeys  = monitorCallcenter[login] || [];
+                // const projectNames = projectKeys.map(key => monitorProjects[key] || key);
+
+                return (
+                    <div key={login} className="col-sm-6 col-md-4 col-lg-3 mb-3">
+                        <div className="card h-100">
+                            <div className="card-body">
+                                <h6 className="card-title">{user.name} ({login})</h6>
+
+                                <p className="mb-1" style={{ color: sofiaColor }}>
+                                    {sofiaText}
+                                </p>
+
+                                {/* FS-статус */}
+                                <p className="mb-2" style={{ color: fsColor }}>
+                                    {fsText}
+                                </p>
+                                {ready && (
+                                    <span
+                                        style={{ color: fsColor }}
+                                    >
+                                        Готов
+                                    </span>
+                                )}
+                                <div className="d-flex flex-wrap">
+
+                                    {projectNames.length ? (projectNames.map(prj => (
+                                        <span
+                                            key={prj}
+                                            className=" mb-1 mr-1 px-2 py-1 rounded text-primary"
+                                            style={{border:"1px  solid"}}
+                                        >
+                                            {prj}
+                                        </span>
+                                    ))) : "Проекты не назначены"}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            });
 
         return (
             <div>
                 <div>
                     <h6>Операторы</h6>
-                    {liveOperators.length > 0 ? (
-                        <div className="row">
-                            {liveOperators.map(([login, user]) => {
-                                const userProjects: string[] = monitorCallcenter[login] || [];
-                                const humanProjectNames = userProjects.map((pName) => monitorProjects[pName] || pName);
-                                return (
-                                    <div key={login} className="col-sm-6 col-md-4 col-lg-3 mb-3">
-                                        <div className="card h-100">
-                                            <div className="card-body">
-                                                <h6 className="card-title">
-                                                    {user.name} ({login})
-                                                </h6>
-                                                <p className="card-text">
-                                                    Статус: {user.callcenter ? "Онлайн" : "Оффлайн"}
-                                                </p>
-                                                <p className="card-text">
-                                                    Проекты: {humanProjectNames.length > 0
-                                                    ? humanProjectNames.join(", ")
-                                                    : "Не назначены"}
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    ) : (
-                        <p>Нет операторов</p>
-                    )}
+                    {liveOperators.length > 0
+                        ? <div className="row">{renderGroup(liveOperators)}</div>
+                        : <p>Нет операторов</p>
+                    }
                 </div>
                 <hr />
                 <div>
                     <h6>Роботы</h6>
-                    {robots.length > 0 ? (
-                        <div className="row">
-                            {robots.map(([login, user]) => {
-                                const userProjects: string[] = monitorCallcenter[login] || [];
-                                const humanProjectNames = userProjects.map((pName) => monitorProjects[pName] || pName);
-                                return (
-                                    <div key={login} className="col-sm-6 col-md-4 col-lg-3 mb-3">
-                                        <div className="card h-100">
-                                            <div className="card-body">
-                                                <h6 className="card-title">
-                                                    {user.name} ({login})
-                                                </h6>
-                                                <p className="card-text">
-                                                    Статус: {user.callcenter ? "Онлайн" : "Оффлайн"}
-                                                </p>
-                                                <p className="card-text">
-                                                    Проекты: {humanProjectNames.length > 0
-                                                    ? humanProjectNames.join(", ")
-                                                    : "Не назначены"}
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    ) : (
-                        <p>Нет роботов</p>
-                    )}
+                    {robots.length > 0
+                        ? <div className="row">{renderGroup(robots)}</div>
+                        : <p>Нет роботов</p>
+                    }
                 </div>
             </div>
         );
@@ -994,7 +1035,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             {showStatuses && (
                 <div id="active_sips" className="row col-12 pr-0 py-2">
 
-                    <div className="card col-12 ml-3 pl-0">
+                    <div className="card col-12 mx-3 pl-0">
                         <div className="card-header mt-0">
                             <h5 style={{ marginRight: '20px', whiteSpace: 'nowrap' }}>Список коллег онлайн</h5>
                             <div className="d-flex align-items-center">

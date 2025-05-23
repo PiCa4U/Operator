@@ -1,0 +1,36 @@
+/* custom-checkbox.css */
+.customCheckbox  {
+    /* убираем дефолтный стиль */
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 4px;
+    border: 1px solid #77cb1f;
+    border-radius: 3px;
+    position: relative;
+    cursor: pointer;
+    background-color: #fff;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+.customCheckbox:hover {
+    border-color: #4ea12f;
+}
+
+.customCheckbox:checked {
+    background-color: #77cb1f;
+    border-color: #77cb1f;
+}
+
+.customCheckbox:checked::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 5px;
+    width: 4px;
+    height: 8px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}

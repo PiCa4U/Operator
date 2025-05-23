@@ -38,6 +38,7 @@ const App: React.FC = () => {
     const [prefix, setPrefix] = useState<string>('')
     const [get_callcenter, setGet_callcenter] = useState<boolean>(false)
     const [scriptDir, setScriptDir] = useState<"inbound" | "outbound" >("inbound")
+    const [tuskMode, setTuskMode] = useState<boolean>(false)
 
     useEffect(()=> console.log("activeProjectName: ", activeProjectName),[activeProjectName])
 

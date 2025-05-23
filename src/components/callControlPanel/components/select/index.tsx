@@ -19,6 +19,7 @@ interface Props {
     options: Array<ReasonItem | ResultItem | { id: string | number; name: string; }>;
     placeholder?: string;
     augmentSaved?: boolean;
+    isSearchable?: boolean
 }
 
 const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
@@ -111,6 +112,7 @@ const SearchableSelect: React.FC<Props> = ({
                                                options,
                                                placeholder = '— выберите —',
                                                augmentSaved = false,
+                                               isSearchable = true
                                            }) => {
     const stringValue = value != null ? String(value) : '';
 

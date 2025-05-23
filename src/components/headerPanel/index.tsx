@@ -6,6 +6,7 @@ import { socket } from '../../socket';
 import { getCookies, parseMonitorData } from '../../utils';
 import {makeSelectFullProjectPool, selectProjectPool, setMonitorData} from "../../redux/operatorSlice";
 import isEqual from "lodash/isEqual";
+import ModeSwitch, { Mode } from './components/switch';
 
 // types.ts
 export interface Project {
@@ -953,16 +954,18 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 >
                     Скрипты
                 </button>
-                <button
-                    key="tasks"
-                    className={`btn btn-outline-${showTasksDashboard ? 'primary' : 'light'} mx-1`}
-                    onClick={() => {
-                        setShowTasksDashboard(!showTasksDashboard);
-                        setShowScriptPanel(false);
-                    }}
-                >
-                    Задачи
-                </button>
+                <div className="row" style={{marginLeft: 0}}>
+                    <div className="col text-center">
+                        <ModeSwitch
+                            mode={showTasksDashboard ? 'tasks' : 'calls'}
+                            onChange={(m: Mode) => {
+                                setShowTasksDashboard(m === 'tasks');
+                                setShowScriptPanel(false);
+                            }}
+                        />
+                    </div>
+                </div>
+
             </>
         );
     };

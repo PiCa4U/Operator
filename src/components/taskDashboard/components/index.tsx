@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, {useState, useEffect, useMemo} from 'react';
 import Swal from 'sweetalert2';
 import { socket } from '../../../socket';
 import {store} from "../../../redux/store";
 import {getCookies} from "../../../utils";
+import styles from "./checkbox.module.css";
+import {useSelector} from "react-redux";
+import {makeSelectFullProjectPool} from "../../../redux/operatorSlice";
 
 interface Action {
     action_name: string;
@@ -38,6 +41,11 @@ interface Props {
 const GroupActionModal: React.FC<Props> = ({
                                                isOpen, onClose, preset, action, ids, glagolParent, role, onConfirm
                                            }) => {
+    const {
+        sipLogin   = '',
+        worker     = '',
+    } = store.getState().credentials;
+
     const [rawRows, setRawRows] = useState<RawRow[]>([]);
     const [loading, setLoading] = useState(false);
 
@@ -46,38 +54,74 @@ const GroupActionModal: React.FC<Props> = ({
     // Какие значения групп-факторов выбраны
     const [selectedFilters, setSelectedFilters] = useState<Record<string,Set<string>>>({});
 
+    const projectPool = useSelector(useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]));
+    const projectNames = useMemo(() => projectPool.map(p => p.project_name), [projectPool]);
+
     const { sessionKey } = store.getState().operator
-    const sipLogin = getCookies('sip_login') || '';
-    const worker = getCookies('worker') || '';
 
     useEffect(() => {
-        if (!isOpen) return;
+        if (!isOpen || !preset) return;
         setLoading(true);
 
-        const handleGetOutStart = (data: RawRow[]) => {
-            setRawRows(data);
-            setSelectedIds(new Set(data.map(r => r.id)));
-            // init filters
-            const init: Record<string,Set<string>> = {};
-            preset?.group_by.forEach(key => init[key] = new Set());
-            setSelectedFilters(init);
-            setLoading(false);
+        const body = {
+            glagol_parent: 'fs.at.glagol.ai',
+            group_by:      preset.group_by,
+            filter_by:     { project: ['IN', projectNames] },
+            group_table:   preset.group_table,
+            role,
         };
 
-        socket.on('get_out_start', handleGetOutStart);
+        fetch('/api/v1/get_grouped_phones', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify(body),
+        })
+            .then(async res => {
+                if (!res.ok) throw new Error(res.statusText);
 
-        socket.emit('get_phone_line', {
-            MessageID: 'get_phone_lineRequest',
-            ids,
-            project_name: "akc24",
-            session_key: sessionKey,
-            worker,
-        });
+                // 1) Типизируем вложенный ответ
+                type NestedResponse = Record<
+                    string,
+                    Record<
+                        string,
+                        Record<
+                            string,
+                            RawRow[]
+                        >
+                    >
+                >;
 
-        return () => {
-            socket.off('get_out_start', handleGetOutStart);
-        };
-    }, [isOpen, ids, sessionKey, worker, preset?.group_by]);
+                const nested = (await res.json()) as NestedResponse;
+
+                // 2) Сплющиваем всё в один массив RawRow[]
+                const allRows: RawRow[] = [];
+                for (const level2Obj of Object.values(nested)) {
+                    for (const level3Obj of Object.values(level2Obj)) {
+                        for (const arr of Object.values(level3Obj)) {
+                            allRows.push(...arr);
+                        }
+                    }
+                }
+
+                // 3) Фильтруем по тем id, что передали в props.ids
+                const filtered = allRows.filter(r => ids.includes(r.id));
+
+                // 4) Обновляем стейты
+                setRawRows(filtered);
+                setSelectedIds(new Set(filtered.map(r => r.id)));
+
+                const init: Record<string, Set<string>> = {};
+                preset.group_by.forEach(key => {
+                    init[key] = new Set();
+                });
+                setSelectedFilters(init);
+            })
+            .catch(err => {
+                console.error(err);
+                Swal.fire('Ошибка', 'Не удалось загрузить данные', 'error');
+            })
+            .finally(() => setLoading(false));
+    }, [isOpen, preset, projectNames, role, ids]);
 
     if (!isOpen) return null;
     if (loading) return <div className="modal">Загрузка...</div>;
@@ -122,6 +166,7 @@ const GroupActionModal: React.FC<Props> = ({
                                 <label key={val} style={{ marginRight: 8 }}>
                                     <input
                                         type="checkbox"
+                                        className={styles.customCheckbox}
                                         checked={selectedFilters[key].has(val)}
                                         onChange={() => toggleFilter(key, val)}
                                     />{' '}
@@ -150,6 +195,7 @@ const GroupActionModal: React.FC<Props> = ({
                             <td className="border p-1 text-center">
                                 <input
                                     type="checkbox"
+                                    className={styles.customCheckbox}
                                     checked={selectedIds.has(r.id)}
                                     onChange={() => toggleRow(r.id)}
                                 />

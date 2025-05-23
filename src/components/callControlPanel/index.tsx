@@ -171,7 +171,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const {
         sipLogin   = '',
         worker     = '',
-    } = store.getState().credentials;    const roomId     = useSelector((state: RootState) => state.room.roomId) || 'default_room';
+    } = store.getState().credentials;
+    const roomId     = useSelector((state: RootState) => state.room.roomId) || 'default_room';
 
     // Состояния для формы
     const fsReasons = useSelector((state: RootState) => state.operator.fsReasons);

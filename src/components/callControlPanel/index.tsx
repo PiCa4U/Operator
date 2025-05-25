@@ -143,6 +143,7 @@ interface CallControlPanelProps {
     setModules: (modules: ModuleData[]) => void
     prefix: string
     outboundCall: boolean
+    tuskMode:boolean
 }
 
 
@@ -163,7 +164,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                modules,
                                                                setModules,
                                                                prefix,
-                                                               outboundCall
+                                                               outboundCall,
+                                                               tuskMode
                                                            }) => {
     // Из cookies
     const { sessionKey } = store.getState().operator
@@ -192,6 +194,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // const [modules, setModules] = useState<ModuleData[]>([]);
     const [isParams, setIsParams] = useState<boolean>(true)
     const [startModulesRan, setStartModulesRan] = useState(false);
+
+    // const [projectsData, setProjectsData] = useState<ProjectFieldsResponse | null>(null);
 
     const sanitize = (v: any) =>
         typeof v === 'string' && v.includes('|_|_|') ? '' : v;
@@ -975,10 +979,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // Отрисовка секции модулей (если вызов не активен и нет постобработки)
     const renderModules = () => {
         if (!hasActiveCall && !postActive) {
-            console.log("123ffff")
+            // console.log("123ffff")
             return null
         };
-        console.log("123activeProject: ", activeProject)
+        // console.log("123activeProject: ", activeProject)
         if (modules.length === 0) return null;
 
         return (

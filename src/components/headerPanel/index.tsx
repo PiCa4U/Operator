@@ -61,6 +61,7 @@ interface HeaderPanelProps {
     setShowTasksDashboard: (show: boolean) => void;
     prefix: string
     setPrefix: (prefix: string) => void
+    tuskMode: boolean
 }
 
 export interface OutActivePhone {
@@ -88,7 +89,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      setSpecialKey,
                                                      activeProjectName,
                                                      prefix,
-                                                     setPrefix
+                                                     setPrefix,
+                                                     tuskMode
                                                  }) => {
     const {
         sipLogin   = '',
@@ -96,12 +98,12 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     } = store.getState().credentials;
     const roomId = useSelector((state: RootState) => state.room.roomId) || 'default_room';
     const userStatuses      = useSelector((state: RootState) => state.operator.userStatuses);
-    useEffect(()=> console.log("123userStatuses: ", userStatuses),[userStatuses])
+    // useEffect(()=> console.log("123userStatuses: ", userStatuses),[userStatuses])
     const dispatch = useDispatch();
     const { monitorUsers, monitorProjects, allProjects, monitorCallcenter } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
-    useEffect(()=> console.log("123monitorUsers: ", monitorUsers),[monitorUsers])
+    // useEffect(()=> console.log("123monitorUsers: ", monitorUsers),[monitorUsers])
 
     const fsStatus = useSelector(
         (state: RootState) => state.operator.fsStatus,
@@ -291,7 +293,19 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         });
     };
 
+    useEffect(()=> console.log("123specialKey: ", specialKey))
     const outProjectClickToCall = ( phone: string, project_name: string ) => {
+        console.log("123arg: ", {
+            // fs_server: fsServer,
+            // room_id: roomId,
+            worker,
+            session_key: sessionKey,
+            // call_section: 1,
+            project_name: project_name,
+            phone: phone,
+            // out_extension: out_extension,
+            special_key: specialKey
+        })
         socket.emit('get_phone_line', {
             // fs_server: fsServer,
             // room_id: roomId,
@@ -309,17 +323,18 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         const handleGetPhoneToCall = (msg: any) => {
             console.log("msg: ", msg)
             if (!msg.length) return
+            console.log("msg12: ",msg[0])
             setSpecialKey(msg[0].special_key)
             setOutActivePhone(msg[0].phone);
             setOutActiveProjectName(msg[0].project);
-            setPrefix(msg.out_extensions[0]?.prefix || '')
+            // setPrefix(msg.out_extensions[0]?.prefix || '')
             const startType = projectPool.find(p => p.project_name === msg[0].project).start_type || ""
             console.log("startType: ", startType)
             setOutActiveStartType(startType);
             // setOutActiveStart(msg[0].start);
             // setOutActiveTakenReason(msg[0].taken_reason);
             // setOutExtensions(msg[0].out_extensions);
-            const outExtensions = projectPool.find(p => p.project_name === msg[0].project).out_gateways[2].prefix
+            // const outExtensions = projectPool.find(p => p.project_name === msg[0].project).out_gateways[2].prefix
             setAssignedKey(msg[0].contact_key);
             setOutPreparation(true);
 
@@ -519,7 +534,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     start_type: "auto"
                 });
             }
-        }, 30000);
+        }, 3000);
         return () => clearInterval(interval);
     }, [hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, projectPoolForCall, fsStatus.state, fsStatus.status]);
 

@@ -1,0 +1,116 @@
+/* modal.module.css */
+
+/* 1. Фон-оверлей и центрирование */
+.modal {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+/* 2. Окошко */
+.modalContent {
+    background: #fff;
+    border-radius: 8px;
+    padding: 24px;
+    width: 90%;
+    max-width: 1000px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+}
+
+/* 3. Заголовок и счётчик в одну строку */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+.header h2 { margin:0; font-size:1.25rem; }
+.header h4 { margin:0; color:#666; font-weight:400; }
+
+/* 4. Сетка фильтров */
+.filters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px,1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+.filtersFieldset {
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 12px;
+}
+.filtersLegend {
+    padding: 0 6px;
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+/* 5. Таблица с зеброй и «липкой» шапкой */
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 24px;
+}
+.thead th {
+    position: sticky;
+    top: 0;
+    background: #fafafa;
+    z-index: 1;
+    padding: 8px;
+    border-bottom: 2px solid #ddd;
+}
+.tbody tr:nth-child(odd) {
+    background: #f9f9f9;
+}
+.tbody td {
+    padding: 8px;
+    border-bottom: 1px solid #eee;
+}
+
+/* 6. Кнопки внизу, выравнивание и отступ */
+.buttonRow {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 16px;
+}
+.btn {
+    min-width: 100px;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-weight: 500;
+    transition: background-color .2s, color .2s;
+}
+.btnDanger {
+    border: 1px solid #e74c3c;
+    color: #e74c3c;
+}
+.btnDanger:hover {
+    background: #e74c3c;
+    color: white;
+}
+.btnSuccess {
+    border: 1px solid #2ecc71;
+    color: #2ecc71;
+}
+.btnSuccess:hover {
+    background: #2ecc71;
+    color: white;
+}
+
+.noWrap {
+    white-space: nowrap;
+}
+
+.filterOptions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}

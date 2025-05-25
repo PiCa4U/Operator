@@ -59,7 +59,7 @@ const App: React.FC = () => {
 
     useEffect(()=> {
         if (!activeCall && !postActive) {
-            console.log("1234delete")
+            // console.log("1234delete")
             setModules([])
         }
     },[activeCall, postActive])
@@ -230,6 +230,7 @@ const App: React.FC = () => {
                 setShowTasksDashboard={setShowTasksDashboard}
                 prefix={prefix}
                 setPrefix={setPrefix}
+                tuskMode={tuskMode}
             />
 
             {/* Основной контент */}
@@ -275,7 +276,7 @@ const App: React.FC = () => {
                             modules={modules}
                             prefix={prefix}
                             outboundCall={outboundCall}
-
+                            tuskMode={tuskMode}
                         />
                     )}
                 </div>

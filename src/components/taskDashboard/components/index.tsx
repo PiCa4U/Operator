@@ -2,37 +2,30 @@ import React, {useState, useEffect, useMemo} from 'react';
 import Swal from 'sweetalert2';
 import { socket } from '../../../socket';
 import {store} from "../../../redux/store";
-import {getCookies} from "../../../utils";
-import styles from "./checkbox.module.css";
 import {useSelector} from "react-redux";
 import {makeSelectFullProjectPool} from "../../../redux/operatorSlice";
+import styles from "./checkbox.module.css";
+import stylesModal from "./modal.module.css";
 
-interface Action {
-    action_name: string;
-    action_type: string;
-    code_filename: string;
-}
-
+interface Action { action_name: string; action_type: string; code_filename: string; }
 interface Preset {
     id: number;
     preset_name: string;
     group_table: string;
-    group_by: string[];       // ключи группировки, например ["group_factor_1","group_factor_2",...]
+    group_by: string[];
 }
-
 interface RawRow {
     id: number;
     phone: string;
     status: string;
-    [key: string]: any;       // сюда попадут и group_factor_1, group_factor_2 и т.д.
+    [key: string]: any;
 }
-
 interface Props {
     isOpen: boolean;
     onClose(): void;
     preset: Preset | null;
     action: Action;
-    ids: number[];            // row.id_list из родителя
+    ids: number[];            // от родителя
     glagolParent: string;
     role: string;
     onConfirm(selectedIds: number[], selectedFilters: Record<string,string[]>): void;
@@ -41,152 +34,225 @@ interface Props {
 const GroupActionModal: React.FC<Props> = ({
                                                isOpen, onClose, preset, action, ids, glagolParent, role, onConfirm
                                            }) => {
-    const {
-        sipLogin   = '',
-        worker     = '',
-    } = store.getState().credentials;
-
+    const { sipLogin = '', worker = '' } = store.getState().credentials;
     const [rawRows, setRawRows] = useState<RawRow[]>([]);
     const [loading, setLoading] = useState(false);
 
-    // Какие контакты выбраны
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-    // Какие значения групп-факторов выбраны
-    const [selectedFilters, setSelectedFilters] = useState<Record<string,Set<string>>>({});
+    const [selectedFilters, setSelectedFilters] = useState<{
+        group1: Set<string>,
+        group2: Set<string>,
+        group3: Set<string>,
+        status: Set<string>,
+    }>({
+        group1: new Set(),
+        group2: new Set(),
+        group3: new Set(),
+        status: new Set(),
+    });
 
     const projectPool = useSelector(useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]));
     const projectNames = useMemo(() => projectPool.map(p => p.project_name), [projectPool]);
+    // const projectNames = ["group_project_1", "group_project_2"]
 
-    const { sessionKey } = store.getState().operator
+    // названия полей группировки из пресета или дефолт
+    const factorKeys = ['group_factor_1','group_factor_2','group_factor_3'] as const;
+    const [f1Key, f2Key, f3Key] = factorKeys;
 
+    // уникальные значения для каждой группы и статусов
+    const unique1 = useMemo(() => Array.from(new Set(rawRows.map(r => r[f1Key]).filter(Boolean))), [rawRows, f1Key]);
+    const unique2 = useMemo(() => Array.from(new Set(rawRows.map(r => r[f2Key]).filter(Boolean))), [rawRows, f2Key]);
+    const unique3 = useMemo(() => Array.from(new Set(rawRows.map(r => r[f3Key]).filter(Boolean))), [rawRows, f3Key]);
+    const uniqueStatus = useMemo(() => Array.from(new Set(rawRows.map(r => r.status))), [rawRows]);
+
+    // пересчёт подходящих под фильтры ID
+    const matchingIds = useMemo(() => {
+        // флаги — выбран ли хоть один фильтр
+        const anyGroup1 = selectedFilters.group1.size > 0;
+        const anyGroup2 = selectedFilters.group2.size > 0;
+        const anyGroup3 = selectedFilters.group3.size > 0;
+        const anyStatus = selectedFilters.status.size > 0;
+
+        // если ни одного фильтра не выбрано — считаем, что подходят все
+        const noFilters = !anyGroup1 && !anyGroup2 && !anyGroup3 && !anyStatus;
+
+        return rawRows
+            .filter(r => {
+                if (noFilters) return true;
+                // попадает ли строка хотя бы под один из выбранных фильтров?
+                return (
+                    (anyGroup1 && selectedFilters.group1.has(r[f1Key])) ||
+                    (anyGroup2 && selectedFilters.group2.has(r[f2Key])) ||
+                    (anyGroup3 && selectedFilters.group3.has(r[f3Key])) ||
+                    (anyStatus && selectedFilters.status.has(r.status))
+                );
+            })
+            .map(r => r.id);
+    }, [rawRows, selectedFilters, f1Key, f2Key, f3Key]);
+
+    // при любом изменении matchingIds — помечаем их галочками
+    useEffect(() => {
+        setSelectedIds(new Set(matchingIds));
+    }, [matchingIds]);
+
+    const allSelected = rawRows.length > 0 && rawRows.every(r => selectedIds.has(r.id));
+    const toggleSelectAll = () =>
+        setSelectedIds(prev => allSelected ? new Set() : new Set(rawRows.map(r => r.id)));
+
+    function flattenRows(input: any): RawRow[] {
+        if (Array.isArray(input)) {
+            return input as RawRow[];
+        }
+        if (input && typeof input === 'object') {
+            return Object.values(input).flatMap(flattenRows);
+        }
+        return [];
+    }
+
+    // загрузка данных при открытии
     useEffect(() => {
         if (!isOpen || !preset) return;
         setLoading(true);
-
-        const body = {
-            glagol_parent: 'fs.at.glagol.ai',
-            group_by:      preset.group_by,
-            filter_by:     { project: ['IN', projectNames] },
-            group_table:   preset.group_table,
-            role,
-        };
-
         fetch('/api/v1/get_grouped_phones', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify(body),
+            method: 'POST',
+            headers: { 'Content-Type':'application/json' },
+            body: JSON.stringify({
+                glagol_parent: glagolParent,
+                group_by: preset.group_by,
+                filter_by: { project: ['IN', projectNames] },
+                group_table: preset.group_table,
+                role
+            })
         })
             .then(async res => {
                 if (!res.ok) throw new Error(res.statusText);
-
-                // 1) Типизируем вложенный ответ
-                type NestedResponse = Record<
-                    string,
-                    Record<
-                        string,
-                        Record<
-                            string,
-                            RawRow[]
-                        >
-                    >
-                >;
-
-                const nested = (await res.json()) as NestedResponse;
-
-                // 2) Сплющиваем всё в один массив RawRow[]
-                const allRows: RawRow[] = [];
-                for (const level2Obj of Object.values(nested)) {
-                    for (const level3Obj of Object.values(level2Obj)) {
-                        for (const arr of Object.values(level3Obj)) {
-                            allRows.push(...arr);
-                        }
-                    }
-                }
-
-                // 3) Фильтруем по тем id, что передали в props.ids
+                type Nested = Record<string, Record<string, Record<string,RawRow[]>>>;
+                const raw = await res.json();
+                const allRows: RawRow[] = flattenRows(raw);
                 const filtered = allRows.filter(r => ids.includes(r.id));
-
-                // 4) Обновляем стейты
                 setRawRows(filtered);
                 setSelectedIds(new Set(filtered.map(r => r.id)));
-
-                const init: Record<string, Set<string>> = {};
-                preset.group_by.forEach(key => {
-                    init[key] = new Set();
-                });
-                setSelectedFilters(init);
+                setSelectedFilters({ group1:new Set(), group2:new Set(), group3:new Set(), status:new Set() });
             })
-            .catch(err => {
-                console.error(err);
-                Swal.fire('Ошибка', 'Не удалось загрузить данные', 'error');
-            })
+            .catch(e => Swal.fire('Ошибка','Не удалось загрузить данные','error'))
             .finally(() => setLoading(false));
-    }, [isOpen, preset, projectNames, role, ids]);
+    }, [isOpen, preset, role, ids, glagolParent]);
+
+    useEffect(()=> {
+        console.log("selectedIds: ", selectedIds)
+    },[selectedIds])
 
     if (!isOpen) return null;
-    if (loading) return <div className="modal">Загрузка...</div>;
+    if (loading) return <div className={stylesModal.modal}><div className={stylesModal.modalContent}>Загрузка...</div></div>;
 
-
-    // собрать уникальные значения для каждого фактора
-    const uniqueValues: Record<string,string[]> = {};
-    preset?.group_by.forEach(key => {
-        uniqueValues[key] = Array.from(new Set(rawRows.map(r => r[key])));
-    });
-
-    // хелперы для чекбоксов
-    const toggleFilter = (key: string, val: string) => {
+    // переключатели фильтров
+    const toggleFilter = (which: keyof typeof selectedFilters, val: string) => {
         setSelectedFilters(prev => {
-            const nxt = { ...prev };
-            if (nxt[key].has(val)) nxt[key].delete(val);
-            else nxt[key].add(val);
-            return nxt;
-        });
-    };
-    const toggleRow = (id: number) => {
-        setSelectedIds(prev => {
-            const nxt = new Set(prev);
-            if (nxt.has(id)) nxt.delete(id);
-            else nxt.add(id);
+            const nxt = {...prev};
+            nxt[which].has(val) ? nxt[which].delete(val) : nxt[which].add(val);
             return nxt;
         });
     };
 
     return (
-        <div className="modal">
-            <div className="modal-content">
-                <h2>Группа: «{action.action_name}»</h2>
-                <p>Кол-во контактов: {rawRows.length}</p>
+        <div
+            className={stylesModal.modal}
+            onClick={onClose}
+        >
+            <div
+                className={stylesModal.modalContent}
+                onClick={e => e.stopPropagation()}
+            >
+                <div className={stylesModal.header}>
+                    <h2>Совершить действие: «{action.action_name}»</h2>
+                    <h4>Кол-во контактов: {rawRows.length}</h4>
+                </div>
 
-                {/* ФИЛЬТРЫ ПО ГРУПП-ФАКТОРАМ */}
-                <div className="filters mb-4">
-                    {preset?.group_by.map(key => (
-                        <fieldset key={key} className="mb-2">
-                            <legend><b>{key}</b></legend>
-                            {uniqueValues[key].map(val => (
-                                <label key={val} style={{ marginRight: 8 }}>
+                {/* ─── РЯДЫ ФИЛЬТРОВ ────────────────────────────────── */}
+                <div className={stylesModal.filters}>
+                    <fieldset className={stylesModal.filtersFieldset}>
+                        <h3 className={stylesModal.noWrap}><b>Групповой фактор 1</b></h3>
+                        <div className={stylesModal.filterOptions}>
+                        {unique1.map(val => (
+                            <label key={val} style={{display:"inline-flex", gap:"4px"}}>
+                                <input
+                                    type="checkbox"
+                                    className={styles.customCheckbox}
+                                    checked={selectedFilters.group1.has(val)}
+                                    onChange={() => toggleFilter('group1', val)}
+                                />{' '}{val}
+                            </label>
+                        ))}
+                        </div>
+                    </fieldset>
+
+                    <fieldset className={stylesModal.filtersFieldset}>
+                        <h3 className={stylesModal.noWrap}><b>Групповой фактор 2</b></h3>
+                        <div className={stylesModal.filterOptions}>
+                            {unique2.map(val => (
+                                <label key={val} style={{display:"inline-flex", gap:"4px"}}>
                                     <input
-                                        type="checkbox"
-                                        className={styles.customCheckbox}
-                                        checked={selectedFilters[key].has(val)}
-                                        onChange={() => toggleFilter(key, val)}
-                                    />{' '}
+                                         type="checkbox"
+                                         className={styles.customCheckbox}
+                                         checked={selectedFilters.group2.has(val)}
+                                         onChange={() => toggleFilter('group2', val)}
+                                    />
                                     {val}
                                 </label>
                             ))}
-                        </fieldset>
-                    ))}
+                        </div>
+                    </fieldset>
+
+                    <fieldset className={stylesModal.filtersFieldset}>
+                        <h3 className={stylesModal.noWrap}><b>Групповой фактор 3</b></h3>
+                        <div className={stylesModal.filterOptions}>
+                        {unique3.map(val => (
+                            <label key={val} style={{display:"inline-flex", gap:"4px"}}>
+                                <input
+                                    type="checkbox"
+                                    className={styles.customCheckbox}
+                                    checked={selectedFilters.group3.has(val)}
+                                    onChange={() => toggleFilter('group3', val)}
+                                />{' '}{val}
+                            </label>
+                        ))}
+                        </div>
+                    </fieldset>
+
+                    <fieldset className={stylesModal.filtersFieldset}>
+                        <h3><b>Статус</b></h3>
+                        <div className={stylesModal.filterOptions}>
+                        {uniqueStatus.map(val => (
+                            <label key={val} style={{display:"inline-flex", gap:"4px"}}>
+                                <input
+                                    type="checkbox"
+                                    className={styles.customCheckbox}
+                                    checked={selectedFilters.status.has(val)}
+                                    onChange={() => toggleFilter('status', val)}
+                                />{' '}{val}
+                            </label>
+                        ))}
+                        </div>
+                    </fieldset>
                 </div>
 
-                {/* ТАБЛИЦА КОНТАКТОВ */}
-                <table className="mb-4 border-collapse w-full">
+                {/* ─── ТАБЛИЦА ───────────────────────────────────────── */}
+                <table className={stylesModal.table}>
                     <thead>
                     <tr>
-                        <th className="border p-1 text-center">✓</th>
-                        <th className="border p-1">phone</th>
-                        {preset?.group_by.map(key => (
-                            <th key={key} className="border p-1">{key}</th>
-                        ))}
-                        <th className="border p-1">status</th>
+                        <th className="border p-1 text-center">
+                            <input
+                                type="checkbox"
+                                className={styles.customCheckbox}
+                                checked={allSelected}
+                                onChange={toggleSelectAll}
+                            />
+                        </th>
+                        <th className="border p-1">Телефон</th>
+                        <th className="border p-1">Групповой фактор 1</th>
+                        <th className="border p-1">Групповой фактор 2</th>
+                        <th className="border p-1">Групповой фактор 3</th>
+                        <th className="border p-1">Статус</th>
                     </tr>
                     </thead>
                     <tbody>
@@ -197,32 +263,39 @@ const GroupActionModal: React.FC<Props> = ({
                                     type="checkbox"
                                     className={styles.customCheckbox}
                                     checked={selectedIds.has(r.id)}
-                                    onChange={() => toggleRow(r.id)}
+                                    onChange={() => setSelectedIds(s => {
+                                        const nxt = new Set(s);
+                                        nxt.has(r.id) ? nxt.delete(r.id) : nxt.add(r.id);
+                                        return nxt;
+                                    })}
                                 />
                             </td>
                             <td className="border p-1">{r.phone}</td>
-                            {preset?.group_by.map(key => (
-                                <td key={key} className="border p-1">{r[key]}</td>
-                            ))}
+                            <td className="border p-1">{r[f1Key] ?? '—'}</td>
+                            <td className="border p-1">{r[f2Key] ?? '—'}</td>
+                            <td className="border p-1">{r[f3Key] ?? '—'}</td>
                             <td className="border p-1">{r.status}</td>
                         </tr>
                     ))}
                     </tbody>
                 </table>
 
-                {/* КНОПКИ */}
-                <div className="flex justify-end space-x-2">
-                    <button onClick={onClose} className="px-3 py-1 border rounded">Отмена</button>
+                {/* ─── КНОПКИ ───────────────────────────────────────── */}
+                <div className={stylesModal.buttonRow}>
+                    <button onClick={onClose} className="px-3 py-1 btn btn-outline-danger mr-2 ">Отмена</button>
                     <button
                         onClick={() =>
                             onConfirm(
                                 Array.from(selectedIds),
-                                Object.fromEntries(
-                                    Object.entries(selectedFilters).map(([k, set]) => [k, Array.from(set)])
-                                )
+                                {
+                                    group1: Array.from(selectedFilters.group1),
+                                    group2: Array.from(selectedFilters.group2),
+                                    group3: Array.from(selectedFilters.group3),
+                                    status: Array.from(selectedFilters.status),
+                                }
                             )
                         }
-                        className="px-3 py-1 bg-blue-600 text-white rounded"
+                        className="btn btn-outline-success"
                     >
                         Подтвердить
                     </button>

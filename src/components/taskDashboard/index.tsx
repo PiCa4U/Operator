@@ -72,6 +72,7 @@ const PresetSelectorTable: React.FC = () => {
     const role = "admin";
     const projectPool = useSelector(useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]));
     const projectNames = useMemo(() => projectPool.map(p => p.project_name), [projectPool]);
+    // const projectNames = ["group_project_1", "group_project_2"]
 
     const { sessionKey } = store.getState().operator
 
@@ -89,7 +90,7 @@ const PresetSelectorTable: React.FC = () => {
             const data: Preset[] = await resp.json();
             setPresets(data.map(p => ({ value: p.id, label: p.preset_name, preset: p })));
         })();
-    }, [glagolParent, worker, role, projectNames]);
+    }, [glagolParent, worker, role]);
 
     // 2) загрузка строк при выборе пресета
     useEffect(() => {
@@ -145,26 +146,21 @@ const PresetSelectorTable: React.FC = () => {
     // Внутри PresetSelectorTable:
     const handleBulkProcess = () => {
         if (!selectedActionOption) {
-            Swal.fire('Ошибка', 'Выберите действие в шапке', 'error');
-            return;
+            return Swal.fire('Ошибка', 'Выберите действие в шапке', 'error');
         }
 
-        // Собираем отмеченные строки
         const keys = Array.from(selectedRows);
         const rows = processedRows.filter(r => keys.includes(r.id_list.join(',')));
 
         if (rows.length === 0) {
-            Swal.fire('Нечего обрабатывать', 'Отметьте хотя бы одну строку', 'info');
-            return;
+            return Swal.fire('Нечего обрабатывать', 'Отметьте хотя бы одну строку', 'info');
         }
 
-        // Если выбрана ровно 1 строка — передаём её в handleProcess
         if (rows.length === 1) {
-            handleProcess(rows[0]);
-            return;
+            return handleProcess(rows[0]);
         }
 
-        // Если больше одной строки — групповой режим
+        // >1 строк
         const allIds = rows.flatMap(r => r.id_list);
         setModalIds(allIds);
         setModalAction(selectedActionOption.action);

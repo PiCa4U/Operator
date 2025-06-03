@@ -6,6 +6,7 @@ import {useSelector} from "react-redux";
 import {makeSelectFullProjectPool} from "../../../redux/operatorSlice";
 import styles from "./checkbox.module.css";
 import stylesModal from "./modal.module.css";
+import {ModuleType} from "../index";
 
 interface Action { action_name: string; action_type: string; code_filename: string; }
 interface Preset {
@@ -24,15 +25,30 @@ interface Props {
     isOpen: boolean;
     onClose(): void;
     preset: Preset | null;
-    action: Action;
-    ids: number[];            // от родителя
+    action?: Action;
+    ids: number[];
     glagolParent: string;
     role: string;
-    onConfirm(selectedIds: number[], selectedFilters: Record<string,string[]>): void;
+    // onConfirm(selectedIds: number[], selectedFilters: Record<string,string[]>): void;
+    idProjectMap: { id: number; project_name: string }[]
+    modules?: ModuleType[]
+    onSelectionChange?: (ids: number[]) => void
+    handleGroupSave?: () => void
 }
 
 const GroupActionModal: React.FC<Props> = ({
-                                               isOpen, onClose, preset, action, ids, glagolParent, role, onConfirm
+                                               isOpen,
+                                               onClose,
+                                               preset,
+                                               action,
+                                               ids,
+                                               glagolParent,
+                                               role,
+                                               // onConfirm,
+                                               idProjectMap,
+                                               modules,
+                                               onSelectionChange,
+                                               handleGroupSave
                                            }) => {
     const { sipLogin = '', worker = '' } = store.getState().credentials;
     const [rawRows, setRawRows] = useState<RawRow[]>([]);
@@ -51,9 +67,21 @@ const GroupActionModal: React.FC<Props> = ({
         status: new Set(),
     });
 
+    useEffect(() => {
+        onSelectionChange?.(Array.from(selectedIds));
+    }, [selectedIds, onSelectionChange]);
+
     const projectPool = useSelector(useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]));
     const projectNames = useMemo(() => projectPool.map(p => p.project_name), [projectPool]);
     // const projectNames = ["group_project_1", "group_project_2"]
+
+    const { sessionKey } = store.getState().operator
+
+    const idToProject = useMemo(() => {
+        const map: Record<number,string> = {};
+        idProjectMap.forEach(({id, project_name}) => { map[id] = project_name });
+        return map;
+    }, [idProjectMap]);
 
     // названия полей группировки из пресета или дефолт
     const factorKeys = ['group_factor_1','group_factor_2','group_factor_3'] as const;
@@ -109,6 +137,78 @@ const GroupActionModal: React.FC<Props> = ({
         return [];
     }
 
+    const handleConfirm = () => {
+        // 1) Группируем выделенные ID по проектам
+        const groups = Array.from(selectedIds).reduce<Record<string, number[]>>((acc, id) => {
+            const proj = idToProject[id];
+            if (!proj) return acc;
+            if (!acc[proj]) acc[proj] = [];
+            acc[proj].push(id);
+            return acc;
+        }, {});
+        if (!action) {
+            handleGroupSave?.()
+            return;
+        }
+        // 2) В зависимости от типа действия шлём нужные ивенты
+        if (action?.action_type === 'delete') {
+            Object.entries(groups).forEach(([project_name, ids]) => {
+                console.log("args: ", {
+                    worker,
+                    session_key: sessionKey,
+                    project_name,
+                    ids,
+                })
+                // socket.emit('delete_phone', {
+                //     worker,
+                //     session_key: sessionKey,
+                //     project_name,
+                //     ids,
+                // });
+            });
+            Swal.fire('Готово', 'Запросы на удаление отправлены', 'success');
+
+        } else if (action?.action_type === 'code') {
+                const targetName = action.code_filename.replace(/\.py$/, '');
+                const foundModule = modules?.find(m => m.filename.replace(/\.py$/, '') === targetName);
+                if (!foundModule) {
+                    return Swal.fire('Ошибка', `Модуль "${action.code_filename}" не найден.`, 'error');
+                }
+
+                type KwargDef = { source: string; default?: string };
+                const argDefs = Object.values(foundModule.kwargs || {}) as KwargDef[];
+
+                Object.entries(groups).forEach(([project_name, ids]) => {
+                    ids.forEach(id => {
+                        const contact = rawRows.find((p: any) => p.id === id);
+                        const contactInfo = contact?.contact_info ?? {};
+
+                        const kwargs: Record<string, string> = {};
+                        argDefs.forEach(({ source, default: def }) => {
+                            if (!source) return;
+                            kwargs[source] = contactInfo[source] ?? def ?? '';
+                        });
+
+                        socket.emit('run_module', {
+                            uuid:        "",
+                            b_uuid:      "",
+                            worker,
+                            session_key: sessionKey,
+                            project_name,
+                            filename:    foundModule.filename.replace(/\.py$/, ''),
+                            common_code: foundModule.common_code,
+                            kwargs,
+                        });
+                    });
+                });
+
+            } else {
+            Swal.fire('Ошибка', 'Неподдерживаемый тип действия', 'error');
+        }
+
+        onClose();
+    };
+
     // загрузка данных при открытии
     useEffect(() => {
         if (!isOpen || !preset) return;
@@ -139,8 +239,21 @@ const GroupActionModal: React.FC<Props> = ({
     }, [isOpen, preset, role, ids, glagolParent]);
 
     useEffect(()=> {
-        console.log("selectedIds: ", selectedIds)
-    },[selectedIds])
+        console.log("777isOpen: ", isOpen)
+    },[isOpen])
+    useEffect(()=> {
+        console.log("777preset: ", preset)
+    },[preset])
+    useEffect(()=> {
+        console.log("777role: ", role)
+    },[role])
+    useEffect(()=> {
+        console.log("777ids: ", ids)
+    },[ids])
+    useEffect(()=> {
+        console.log("777glagolParent: ", glagolParent)
+    },[glagolParent])
+
 
     if (!isOpen) return null;
     if (loading) return <div className={stylesModal.modal}><div className={stylesModal.modalContent}>Загрузка...</div></div>;
@@ -164,7 +277,7 @@ const GroupActionModal: React.FC<Props> = ({
                 onClick={e => e.stopPropagation()}
             >
                 <div className={stylesModal.header}>
-                    <h2>Совершить действие: «{action.action_name}»</h2>
+                    <h2>Совершить действие: «{action?.action_name}»</h2>
                     <h4>Кол-во контактов: {rawRows.length}</h4>
                 </div>
 
@@ -284,17 +397,7 @@ const GroupActionModal: React.FC<Props> = ({
                 <div className={stylesModal.buttonRow}>
                     <button onClick={onClose} className="px-3 py-1 btn btn-outline-danger mr-2 ">Отмена</button>
                     <button
-                        onClick={() =>
-                            onConfirm(
-                                Array.from(selectedIds),
-                                {
-                                    group1: Array.from(selectedFilters.group1),
-                                    group2: Array.from(selectedFilters.group2),
-                                    group3: Array.from(selectedFilters.group3),
-                                    status: Array.from(selectedFilters.status),
-                                }
-                            )
-                        }
+                        onClick={handleConfirm}
                         className="btn btn-outline-success"
                     >
                         Подтвердить

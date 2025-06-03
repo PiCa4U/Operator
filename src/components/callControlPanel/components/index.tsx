@@ -7,13 +7,15 @@ interface EditableFieldsProps {
     initialValues?: { [fieldId: string]: string };
     onChange?: (values: { [fieldId: string]: string }) => void;
     augmentSaved?: boolean;
+    compact?: boolean;
 }
 
 const EditableFields: React.FC<EditableFieldsProps> = ({
                                                            params,
                                                            initialValues = {},
                                                            onChange,
-                                                           augmentSaved = false
+                                                           augmentSaved = false,
+                                                           compact = false     // <- дефолт
                                                        }) => {
     const [fieldValues, setFieldValues] = useState<{ [fieldId: string]: string }>(initialValues);
 
@@ -30,15 +32,25 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
     };
 
     return (
-        <div>
-            {visibleParams.map((param) => {
+        <div
+            style={
+                compact
+                    ? {
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: '12px',
+                        marginBottom: '16px'
+                    }
+                    : {}
+            }
+        >
+            {visibleParams.map(param => {
                 const currentValue = fieldValues[param.field_id] || '';
 
-                // Общие пропсы для большинства инпутов
                 const commonProps = {
                     className: "form-control",
                     value: currentValue,
-                    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+                    onChange: (e: React.ChangeEvent<any>) =>
                         handleChange(param.field_id, e.target.value),
                     readOnly: !param.editable,
                 };
@@ -49,16 +61,17 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         className="form-group"
                         style={{
                             display: 'flex',
-                            flexDirection: 'row',
                             alignItems: 'center',
-                            flexWrap: 'nowrap',
-                            marginBottom: '1rem'
+                            marginBottom: '1rem',
+                            ...(compact
+                                ? { flex: '1 1 calc(50% - 12px)', minWidth: 0 }
+                                : {})
                         }}
                     >
                         <label
                             style={{
                                 whiteSpace: 'nowrap',
-                                fontWeight: '400',
+                                fontWeight: 400,
                                 fontSize: '16px',
                                 marginRight: '8px'
                             }}
@@ -68,21 +81,18 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         </label>
 
                         {param.field_type === 'regular' && <input type="text" {...commonProps} />}
-                        {param.field_type === 'number' && <input type="number" {...commonProps} />}
-                        {param.field_type === 'date' && <input type="date" {...commonProps} />}
-                        {param.field_type === 'time' && <input type="time" {...commonProps} />}
-                        {param.field_type === 'textarea' && <textarea {...commonProps} />}
+                        {param.field_type === 'number'  && <input type="number" {...commonProps} />}
+                        {param.field_type === 'date'    && <input type="date" {...commonProps} />}
+                        {param.field_type === 'time'    && <input type="time" {...commonProps} />}
+                        {param.field_type === 'textarea'&& <textarea {...commonProps} />}
 
                         {param.field_type === 'select' && (() => {
                             const raw = param.field_vals || '';
-
                             const splitVals = raw.includes('|_|_|')
                                 ? raw.split('|_|_|')
                                 : raw.split(',');
                             const opts = splitVals.map(s => s.trim()).filter(Boolean);
-
                             const options = [{ id: '', name: '' }, ...opts.map(o => ({ id: o, name: o }))];
-
                             return (
                                 <SearchableSelect
                                     value={currentValue}
@@ -94,7 +104,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             );
                         })()}
 
-                        {param.field_type === "checkbox" && (
+                        {param.field_type === 'checkbox' && (
                             <div className="form-check" style={{ marginLeft: '8px' }}>
                                 <input
                                     type="checkbox"
@@ -102,7 +112,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                     id={`checkbox_${param.id}`}
                                     checked={currentValue === 'true'}
                                     disabled={!param.editable}
-                                    onChange={(e) =>
+                                    onChange={e =>
                                         handleChange(param.field_id, e.target.checked ? 'true' : 'false')
                                     }
                                 />
@@ -112,7 +122,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             </div>
                         )}
 
-                        {param.field_type === "radio" && (
+                        {param.field_type === 'radio' && (
                             <>
                                 {param.field_vals?.split(',').map((opt, idx) => (
                                     <div
@@ -128,9 +138,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                             value={opt}
                                             checked={currentValue === opt}
                                             disabled={!param.editable}
-                                            onChange={(e) =>
-                                                handleChange(param.field_id, e.target.value)
-                                            }
+                                            onChange={e => handleChange(param.field_id, e.target.value)}
                                         />
                                         <label
                                             className="form-check-label"
@@ -190,7 +198,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             </div>
                         )}
 
-                        {param.field_type === "non_editable" && (
+                        {param.field_type === 'non_editable' && (
                             <input
                                 type="text"
                                 className="form-control"

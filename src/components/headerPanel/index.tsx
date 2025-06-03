@@ -62,6 +62,7 @@ interface HeaderPanelProps {
     prefix: string
     setPrefix: (prefix: string) => void
     tuskMode: boolean
+    setOutboundID: (outboundID: number) => void
 }
 
 export interface OutActivePhone {
@@ -90,7 +91,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      activeProjectName,
                                                      prefix,
                                                      setPrefix,
-                                                     tuskMode
+                                                     tuskMode,
+                                                     setOutboundID
                                                  }) => {
     const {
         sipLogin   = '',
@@ -233,7 +235,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
         if (hasActiveCall) {
             // получаем первый звонок
-            const first = activeCalls[0];
+            const first = activeCalls && activeCalls.length ? activeCalls[0] : {};
             // пытаемся взять время из epoch-поля, иначе текущее время
             const epoch = first.b_created_epoch || first.created_epoch;
             const start = epoch
@@ -293,31 +295,30 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         });
     };
 
-    useEffect(()=> console.log("123specialKey: ", specialKey))
-    const outProjectClickToCall = ( phone: string, project_name: string ) => {
-        console.log("123arg: ", {
-            // fs_server: fsServer,
-            // room_id: roomId,
-            worker,
-            session_key: sessionKey,
-            // call_section: 1,
-            project_name: project_name,
-            phone: phone,
-            // out_extension: out_extension,
-            special_key: specialKey
-        })
-        socket.emit('get_phone_line', {
-            // fs_server: fsServer,
-            // room_id: roomId,
-            worker,
-            session_key: sessionKey,
-            // call_section: 1,
-            project_name: project_name,
-            phone: phone,
-            // out_extension: out_extension,
-            special_key: specialKey
-        });
-    };
+    const outProjectClickToCall = ( phone: string, project_name: string, specialKey: string ) => {
+            console.log("123arg: ", {
+                // fs_server: fsServer,
+                // room_id: roomId,
+                worker,
+                session_key: sessionKey,
+                // call_section: 1,
+                project_name: project_name,
+                phone: phone,
+                // out_extension: out_extension,
+                special_key: specialKey
+            })
+            socket.emit('get_phone_line', {
+                // fs_server: fsServer,
+                // room_id: roomId,
+                worker,
+                session_key: sessionKey,
+                // call_section: 1,
+                project_name: project_name,
+                phone: phone,
+                // out_extension: out_extension,
+                special_key: specialKey
+            });
+    }
 
     useEffect(() => {
         const handleGetPhoneToCall = (msg: any) => {
@@ -350,7 +351,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     timerProgressBar: true,
                 }).then((result) => {
                     if (result.isConfirmed) {
-                        outProjectClickToCall( msg[0].phone, msg[0].project);
+                        outProjectClickToCall( msg[0].phone, msg[0].project, msg[0].special_key);
                         if (projectPoolForCall.length > 0) {
                             socket.emit('outbound_call_update', {
                                 worker,
@@ -367,20 +368,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                         changeStateFs('waiting', 'outbound_reject');
                         setOutPreparation(false);
                         if (projectPoolForCall.length > 0) {
-                            // socket.emit('outbound_calls', {
-                            //     worker,
-                            //     sip_login: sipLogin,
-                            //     session_key: sessionKey,
-                            //     room_id: roomId,
-                            //     fs_server: fsServer,
-                            //     project_pool: projectPoolForCall,
-                            //     action: 'update_phone_to_call',
-                            //     assigned_key: msg.assigned_key,
-                            //     log_status: 'reject',
-                            //     phone_status: msg.phone?.status,
-                            //     special_key: msg.phone?.special_key,
-                            //     project_name: msg.project_name,
-                            // });
                             socket.emit('outbound_call_update', {
                                 worker,
                                 // sip_login: sipLogin,
@@ -403,22 +390,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     timer: 3000,
                     timerProgressBar: true,
                 }).then(() => {
-                    outProjectClickToCall(msg[0].phone, msg[0].project);
+                    outProjectClickToCall(msg[0].phone, msg[0].project, msg[0].special_key);
                     if (projectPoolForCall.length > 0) {
-                        // socket.emit('outbound_calls', {
-                        //     worker,
-                        //     sip_login: sipLogin,
-                        //     session_key: sessionKey,
-                        //     room_id: roomId,
-                        //     fs_server: fsServer,
-                        //     project_pool: projectPoolForCall,
-                        //     action: 'update_phone_to_call',
-                        //     assigned_key: msg.assigned_key,
-                        //     log_status: 'taken',
-                        //     phone_status: 'taken',
-                        //     special_key: msg.phone?.special_key,
-                        //     project_name: msg.project_name,
-                        // });
                         socket.emit('outbound_call_update', {
                             worker,
                             // sip_login: sipLogin,
@@ -437,20 +410,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         const handleClickToCallStart = (msg: any) => {
             if (msg.status === 'OK') {
                 Swal.fire({ title: "Звонок запускается", icon: "success", timer: 1000 });
-                // socket.emit('outbound_calls', {
-                //     worker,
-                //     sip_login: sipLogin,
-                //     session_key: sessionKey,
-                //     room_id: roomId,
-                //     fs_server: fsServer,
-                //     project_pool: projectPoolForCall,
-                //     action: 'update_phone_to_call',
-                //     assigned_key: assignedKey,
-                //     log_status: 'ringing',
-                //     phone_status: 'ringing',
-                //     special_key: outActivePhone?.special_key,
-                //     project_name: outActiveProjectName,
-                // });
                 socket.emit('outbound_call_update', {
                     worker,
                     // sip_login: sipLogin,
@@ -509,7 +468,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             socket.off('uuid_break', handleUuidBreak);
             socket.off('uuid_bridge', handleUuidBridge);
         };
-    }, [allProjects, assignedKey, outActivePhone?.special_key, outActiveProjectName, projectPoolForCall, roomId, sessionKey, sipLogin, worker]);
+    }, [allProjects, assignedKey, specialKey, outActiveProjectName, projectPoolForCall, roomId, sessionKey, sipLogin, worker]);
 
     // Автодозвон (раз в 30 секунд)
     useEffect(() => {
@@ -540,6 +499,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     useEffect(() => {
         const handleGetOutStart = (msg: any) => {
+            console.log("get_out_data: ", msg)
+            setOutboundID(msg.phone_line[0].id)
             setOutboundCall(true)
             // setOutActivePhone(msg.phone);
             setOutActiveProjectName(msg.project_name);

@@ -55,6 +55,7 @@ store.subscribe(() => {
 
 // остальные обработчики без изменений
 socket.on("monitor_projects", (data: any) => {
+    console.log("moniotorParsedData: ", parseMonitorData(data))
     store.dispatch(setMonitorData(parseMonitorData(data)));
 });
 socket.on('fs_report', (data: any) => store.dispatch(setFsReport(data)));

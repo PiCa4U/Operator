@@ -1,0 +1,26 @@
+.projectButton {
+    all: unset; /* ❗️убирает ВСЕ глобальные стили */
+    display: inline-block;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 0.75rem;
+    cursor: pointer;
+    background: transparent;
+    transition: background 0.2s ease;
+    border: 2px solid transparent;
+    user-select: none;
+}
+
+/* Активная кнопка */
+
+
+/* Неактивная кнопка — hover эффект */
+.projectButton:hover {
+    background: #e6e6e6;
+}
+
+/* Убираем фокус рамку */
+.projectButton:focus {
+    outline: none;
+    box-shadow: none;
+}

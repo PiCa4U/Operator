@@ -15,7 +15,7 @@ interface ColumnCell {
     name: string;
     value: any[];
 }
-interface ApiRow {
+export interface ApiRow {
     id_list: number[];
     [columnKey: string]: ColumnCell | number[];
 }
@@ -32,7 +32,7 @@ interface Preset {
     actions: Action[];
     group_by: string[];
 }
-interface OptionType {
+export interface OptionType {
     value: number;
     label: string;
     preset: Preset;
@@ -44,16 +44,41 @@ interface ActionOption {
     action: Action;
 }
 
-const ROWS_PER_PAGE = 5;
+export interface ModuleType {
+    id:            number;
+    project:       string;
+    filename:      string;
+    common_code:   boolean;
+    created_dt:    string;
+    [key: string]: any;
+}
 
-const PresetSelectorTable: React.FC = () => {
-    // --- стейты ---
+type Props = {
+    openedGroup: any[]
+    setOpenedGroup: (openedGroup: any[]) => void
+    phonesData: any
+    setPhonesData: (phonesData: any) => void
+    setGroupIDs: (groupIDs: any[]) => void
+    selectedPreset: OptionType | null
+    setSelectedPreset: (selectedPreset: OptionType | null) => void
+}
+const ROWS_PER_PAGE = 10;
+
+const PresetSelectorTable: React.FC<Props> = ({
+                                                  openedGroup,
+                                                  setOpenedGroup,
+                                                  setPhonesData,
+                                                  phonesData,
+                                                  setGroupIDs,
+                                                  selectedPreset,
+                                                  setSelectedPreset
+                                              }) => {
     const [presets, setPresets] = useState<OptionType[]>([]);
-    const [selectedPreset, setSelectedPreset] = useState<OptionType | null>(null);
     const [selectedActionOption, setSelectedActionOption] = useState<ActionOption | null>(null);
     const [tableData, setTableData] = useState<ApiRow[]>([]);
     const [loading, setLoading] = useState(false);
-
+    const [idProjectMap, setIdProjectMap] = useState<{ id: number; project_name: string }[]>([]);
+    useEffect(()=> console.log("tableData: ", tableData),[tableData])
     const [searchTerm, setSearchTerm] = useState('');
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc'|'desc' }|null>(null);
     const [currentPage, setCurrentPage] = useState(1);
@@ -63,6 +88,8 @@ const PresetSelectorTable: React.FC = () => {
     const [modalIds, setModalIds] = useState<number[]>([]);
     const [modalAction, setModalAction] = useState<Action | null>(null);
 
+    const [modules, setModules] = useState<ModuleType[]>([]);
+    useEffect(() => console.log("presetModules: ", modules),[modules])
     // --- глобальные зависимости для запросов ---
     const glagolParent = "fs.at.glagol.ai";
     const {
@@ -75,6 +102,38 @@ const PresetSelectorTable: React.FC = () => {
     // const projectNames = ["group_project_1", "group_project_2"]
 
     const { sessionKey } = store.getState().operator
+    useEffect(() => {
+        const list = tableData.map( group => group.id_list )
+        setGroupIDs(list)
+    },[tableData])
+    useEffect(() => {
+        const handler = (payload: Record<string, ModuleType[]>) => {
+            // Собираем модули в flat-массив
+            const allModules = Object.values(payload).flat();
+
+            // Уникализируем по filename (можно по id, если гарантированно одинаков)
+            const uniqueMap = new Map<string, ModuleType>();
+            allModules.forEach(mod => {
+                if (!uniqueMap.has(mod.filename)) {
+                    uniqueMap.set(mod.filename, mod);
+                }
+            });
+
+            setModules(Array.from(uniqueMap.values()));
+        };
+
+        socket.on('get_modules', handler);
+
+        socket.emit('get_modules', {
+            projects: projectNames,
+            session_key: sessionKey,
+            worker,
+        });
+
+        return () => {
+            socket.off('get_modules', handler);
+        };
+    }, [sessionKey, worker]);
 
     console.log("projectNames: ", projectNames)
     useEffect(()=> console.log("selectedRows: ", selectedRows))
@@ -120,6 +179,32 @@ const PresetSelectorTable: React.FC = () => {
                     })
                 });
                 if (!resp.ok) throw new Error(resp.statusText);
+                // второй запрос, который отдаёт данные по проектам
+                const respProjectIds = await fetch('/api/v1/get_grouped_phones', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({
+                        glagol_parent: glagolParent,
+                        group_by: ["project"],
+                        filter_by: { project: ['IN', projectNames] },
+                        group_table: preset.group_table,
+                        role
+                    })
+                });
+                if (!respProjectIds.ok) throw new Error(respProjectIds.statusText);
+                // распарсим JSON вида { akc24: [{id:13,…},…], test_2: [{id:23,…},…] }
+                const projectIdData: Record<string, { id: number }[]> = await respProjectIds.json();
+                const flatPhones = Object.values(projectIdData).flat();
+                setPhonesData(flatPhones);
+                console.log("projectIdData: ", projectIdData)
+                const flat: { id: number; project_name: string }[] = Object
+                    .entries(projectIdData)
+                    .flatMap(([project_name, list]) =>
+                            list.map(item => ({ id: item.id, project_name }))
+                    );
+                setIdProjectMap(flat);
+
+                console.log("flat: ", flat)
                 const rows: ApiRow[] = await resp.json();
                 setTableData(rows);
                 setSelectedActionOption(null);
@@ -157,14 +242,85 @@ const PresetSelectorTable: React.FC = () => {
         }
 
         if (rows.length === 1) {
-            return handleProcess(rows[0]);
+            // Показываем модалку — поведение как раньше
+            setModalIds(rows[0].id_list);
+            setModalAction(selectedActionOption.action);
+            setModalOpen(true);
+            return;
         }
 
-        // >1 строк
+        // Множественная обработка — auto-run
+        handleProcessBulk(rows)
+
+        // Swal.fire('Готово', 'Операции отправлены на сервер', 'success');
+    };
+
+
+    const handleProcessBulk = (rows: ApiRow[]) => {
+        if (!selectedActionOption) {
+            return Swal.fire('Ошибка', 'Выберите действие в шапке', 'error');
+        }
+        const act = selectedActionOption.action;
+
         const allIds = rows.flatMap(r => r.id_list);
-        setModalIds(allIds);
-        setModalAction(selectedActionOption.action);
-        setModalOpen(true);
+
+        const idToProject = idProjectMap.reduce<Record<number, string>>((acc, { id, project_name }) => {
+            acc[id] = project_name;
+            return acc;
+        }, {});
+        const groups = allIds.reduce<Record<string, number[]>>((acc, id) => {
+            const proj = idToProject[id] || 'unknown';
+            if (!acc[proj]) acc[proj] = [];
+            acc[proj].push(id);
+            return acc;
+        }, {});
+
+        if (act.action_type === 'code') {
+            const targetName = act.code_filename.replace(/\.py$/, '');
+            const foundModule = modules.find(m => m.filename.replace(/\.py$/, '') === targetName);
+            if (!foundModule) {
+                return Swal.fire('Ошибка', `Модуль "${act.code_filename}" не найден.`, 'error');
+            }
+
+            // Явно указываем структуру аргументов
+            type KwargDef = { source: string; default?: string };
+            const argDefs = Object.values(foundModule.kwargs || {}) as KwargDef[];
+
+            Object.entries(groups).forEach(([project_name, ids]) => {
+                ids.forEach(id => {
+                    const contact = phonesData.find((p: any) => p.id === id);
+                    const contactInfo = contact?.contact_info ?? {};
+
+                    const kwargs: Record<string, string> = {};
+                    argDefs.forEach(({ source, default: def }) => {
+                        if (!source) return;
+                        kwargs[source] = contactInfo[source] ?? def ?? '';
+                    });
+
+                    socket.emit('run_module', {
+                        uuid:        "",
+                        b_uuid:      "",
+                        worker,
+                        session_key: sessionKey,
+                        project_name,
+                        filename:    foundModule.filename.replace(/\.py$/, ''),
+                        common_code: foundModule.common_code,
+                        kwargs:      kwargs,
+                    });
+                });
+            });
+        } else if (act.action_type === 'delete') {
+            Object.entries(groups).forEach(([project_name, ids]) => {
+                console.log('args:', {
+                    worker,
+                    session_key: sessionKey,
+                    project_name,
+                    ids,
+                });
+            });
+        }
+
+        Swal.fire('Готово', 'Операции отправлены на сервер', 'success');
     };
 
     // обработка нажатия кнопки «Обработать»
@@ -202,7 +358,7 @@ const PresetSelectorTable: React.FC = () => {
         (currentPage-1)*ROWS_PER_PAGE,
         currentPage*ROWS_PER_PAGE
     );
-
+    useEffect(() => console.log("selected: ", selectedPreset),[selectedPreset])
     // --- обработчики ---
     const toggleSort = (colKey: string) => {
         setSortConfig(prev => {
@@ -213,38 +369,84 @@ const PresetSelectorTable: React.FC = () => {
     };
     const handleProcess = (row: ApiRow) => {
         if (!selectedActionOption) {
-            Swal.fire('Ошибка', 'Выберите действие в шапке', 'error');
-            return;
+            return Swal.fire('Ошибка', 'Выберите действие в шапке', 'error');
         }
         const act = selectedActionOption.action;
 
-        // Находим колонку «ID заказа»
+        // 1) Построим словарь id → project_name
+        const idToProject = idProjectMap.reduce<Record<number, string>>((acc, { id, project_name }) => {
+            acc[id] = project_name;
+            return acc;
+        }, {});
+
         const orderColumnKey = Object
             .entries(selectedPreset!.preset.structure)
             .find(([_, cfg]) => cfg.name === 'ID заказа')?.[0];
-
+        console.log("row.id_list: ", row.id_list)
         // Достаём текст заказа (первый элемент массива)
         let orderIdText = row.id_list[0] + ''; // fallback на первый из id_list
         if (orderColumnKey) {
             const cell = row[orderColumnKey] as ColumnCell;
             orderIdText = cell.value[0] ?? orderIdText;
         }
-        // socket.emit("get_modules", {
-        //     project_name: "akc24",
-        //     session_key: sessionKey,
-        //     worker
-        // })
-        // Всегда показываем одно-строчный диалог (даже если в row.id_list > 1)
+        // 2) Сгруппируем id_list по проектам
+        const groups = row.id_list.reduce<Record<string, number[]>>((acc, id) => {
+            const proj = idToProject[id] || 'unknown';
+            if (!acc[proj]) acc[proj] = [];
+            acc[proj].push(id);
+            return acc;
+        }, {});
+
+        // 3) Проверим, что для code-actions есть модуль
+        let missingModule = false;
+        let foundModule: ModuleType | undefined;
+        if (act.action_type === 'code') {
+            foundModule = modules.find(m => m.filename === act.code_filename);
+            if (!foundModule) {
+                missingModule = true;
+            }
+        }
+
         Swal.fire({
             title: `Применить «${act.action_name}» к заказу ${orderIdText}?`,
             icon: 'question',
             showCancelButton: true,
             confirmButtonText: 'Выполнить',
         }).then(result => {
-            if (result.isConfirmed) {
-                // Ваша логика для 1 строки (row.id_list может содержать несколько внутренних ID)
-                console.log('Обработка строки с заказом:', orderIdText);
+            if (!result.isConfirmed) return;
+
+            if (act.action_type === 'code') {
+                if (missingModule) {
+                    return Swal.fire(
+                        'Ошибка',
+                        `Модуль "${act.code_filename}" не найден в загруженных модулях.`,
+                        'error'
+                    );
+                }
+
             }
+            else if (act.action_type === 'delete') {
+                // для каждого проекта отправляем delete_phone
+                Object.entries(groups).forEach(([project_name, ids]) => {
+                    console.log("args: ",{
+                        worker,
+                        session_key:  sessionKey,
+                        project_name,
+                        ids,
+                    })
+                    // socket.emit('delete_phone', {
+                    //     worker,
+                    //     session_key:  sessionKey,
+                    //     project_name,
+                    //     ids,
+                    // });
+                });
+            }
+            else {
+                // остальные типы action_type…
+            }
+
+            Swal.fire('Готово', 'Операция отправлена на сервер', 'success');
         });
     };
 
@@ -269,7 +471,6 @@ const PresetSelectorTable: React.FC = () => {
         setSelectedRows(newSet);
     };
 
-    useEffect(()=> console.log("selectedPreset: ", selectedPreset),[selectedPreset])
     return (
         <div className="card p-4 ml-4">
             <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
@@ -334,7 +535,7 @@ const PresetSelectorTable: React.FC = () => {
 
             {selectedPreset && !loading && (
                 <div >
-                <div className="d-flex  overflow-y-auto" style={{height: "70vh"}}>
+                <div style={{ height: '70vh', overflowY: 'auto' }}>
                     {/*<div className="overflow-y-auto" style={{height: "60vh"}}>*/}
                         <table className="w-100 table-auto border-collapse">
                             <thead>
@@ -407,19 +608,21 @@ const PresetSelectorTable: React.FC = () => {
                                         <td className="border p-2 space-x-2">
                                             <button
                                                 className="btn btn-outline-light text text-dark mx-1 ml-2"
-                                                onClick={() => {
-                                                    /* здесь можно открыть деталь row */
-                                                    console.log('Открываем', row);
-                                                }}
+                                                onClick={() => setOpenedGroup(row.id_list)}
                                             >
                                                 Открыть
                                             </button>
-                                            {/*<button*/}
-                                            {/*    className="btn btn-outline-light text text-dark mx-1 ml-2"*/}
-                                            {/*    onClick={() => handleProcess(row)}*/}
-                                            {/*>*/}
-                                            {/*    Обработать*/}
-                                            {/*</button>*/}
+                                            <button
+                                                className="btn btn-outline-light text text-dark mx-1 ml-2"
+                                                onClick={() => {
+                                                    setModalIds(row.id_list);
+                                                    setModalAction(selectedActionOption?.action ?? null);
+                                                    setModalOpen(true);
+                                                }}
+                                                disabled={!selectedActionOption} // disable if no action is selected
+                                            >
+                                                Обработать
+                                            </button>
                                         </td>
                                     </tr>
                                 );
@@ -429,7 +632,7 @@ const PresetSelectorTable: React.FC = () => {
                     {/*</div>*/}
                 </div>
             {/* Пагинация */}
-                <div className="mt-4 flex justify-center items-center space-x-2 my-2" style={{position:"absolute", right:"48%", bottom: -50}}>
+                <div className="mt-4 flex justify-center items-center space-x-2 my-2" style={{position:"absolute", right:"48%", bottom: -50, zIndex: 10}}>
                     <button
                         onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                         disabled={currentPage === 1}
@@ -463,12 +666,10 @@ const PresetSelectorTable: React.FC = () => {
                 preset={selectedPreset?.preset ?? null}
                 action={modalAction!}
                 ids={modalIds}
+                idProjectMap={idProjectMap}
                 glagolParent={glagolParent}
                 role={role}
-                onConfirm={(selectedIds, selectedFilters) => {
-                    setModalOpen(false);
-                    console.log("confirmed", modalAction, selectedIds, selectedFilters);
-                }}
+                modules={modules}
             />
         </div>
     );

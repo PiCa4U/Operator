@@ -9,7 +9,7 @@ import { socket } from "./socket";
 import { getCookies, makeId } from "./utils";
 import {setActiveCalls, setFsStatus, setUserStatuses} from './redux/operatorSlice';
 import {RootState, store} from './redux/store';
-import TasksDashboard from "./components/taskDashboard";
+import TasksDashboard, {ApiRow, OptionType} from "./components/taskDashboard";
 import {first} from "lodash";
 
 
@@ -18,6 +18,11 @@ export interface ModuleData {
     id: number;
     kwargs: any;
     return_structure: any;
+    common_code: boolean
+}
+
+export interface MonoProjectsModuleData {
+    [projectName: string]: ModuleData[];
 }
 const App: React.FC = () => {
     const [selectedCall, setSelectedCall] = useState<CallData | null>(null);
@@ -35,18 +40,84 @@ const App: React.FC = () => {
     const [specialKey, setSpecialKey] = useState<string>('')
     const [showTasksDashboard, setShowTasksDashboard] = useState<boolean>(false);
     const [modules, setModules] = useState<ModuleData[]>([]);
+    const [monoModules, setMonoModules] = useState<MonoProjectsModuleData>({})
+    const [scriptProject, setScriptProject] = useState<string>("")
+
     const [prefix, setPrefix] = useState<string>('')
     const [get_callcenter, setGet_callcenter] = useState<boolean>(false)
     const [scriptDir, setScriptDir] = useState<"inbound" | "outbound" >("inbound")
     const [tuskMode, setTuskMode] = useState<boolean>(false)
 
+    const [outboundID, setOutboundID] = useState<number | null>(null)
+    const [selectedPreset, setSelectedPreset] = useState<OptionType | null>(null);
+    useEffect(() => console.log('selectedPreset: ', selectedPreset),[selectedPreset])
+    const [fullWidthCard, setFullWidthCard] = useState<boolean>(() => {
+        try {
+            return JSON.parse(localStorage.getItem('fullWidthCard') ?? 'false');
+        } catch {
+            return false;
+        }
+    });
+
+    useEffect(()=> {
+        if (showTasksDashboard) {
+            setSelectedCall(null)
+        }
+    },[showTasksDashboard])
+    const [openedGroup, setOpenedGroup] = useState<any[]>([]);
+    const [phonesData, setPhonesData] = useState<any[]>([])
+    const [openedPhones, setOpenedPhones] = useState<any[]>([])
+    const [GroupIDs, setGroupIDs] = useState<any[]>([])
+    useEffect(() => console.log("outboundCall: ", outboundCall),[outboundCall])
+    useEffect(() => console.log("openedGroup: ", openedGroup),[openedGroup])
+
+    useEffect(() => console.log("openedPhones: ", openedPhones),[openedPhones])
+    useEffect(() => console.log("phonesData: ", phonesData),[phonesData])
+
+    useEffect(() => {
+        if(!tuskMode) {
+            setOpenedPhones([])
+            setPhonesData([])
+            setOpenedGroup([])
+        }
+    },[tuskMode])
+    useEffect(() => {
+        if (openedGroup.length > 0 && phonesData.length > 0 && !outboundCall && !outboundID) {
+            const matched = phonesData.filter(phone =>
+                openedGroup.includes(phone.id)
+            );
+            setOpenedPhones(matched);
+        } else if (GroupIDs?.length > 0 && outboundCall && phonesData.length > 0 && outboundID) {
+            const matchedGroup = GroupIDs.find(group => group.includes(outboundID));
+            if (matchedGroup) {
+                const matched = phonesData.filter(phone =>
+                    matchedGroup.includes(phone.id)
+                );
+                console.log("matched: ", matched)
+                setOpenedPhones(matched);
+            } else {
+                setOpenedPhones([]);
+            }
+        } else {
+            setOpenedPhones([]);
+        }
+    }, [openedGroup, phonesData, outboundID, GroupIDs, outboundCall]);
+
+
     useEffect(()=> console.log("activeProjectName: ", activeProjectName),[activeProjectName])
+    useEffect(()=> console.log("activeCall: ", activeCall),[activeCall])
 
     // const sessionKey = getCookies('session_key') || '';
     const {
         sipLogin   = '',
         worker     = '',
     } = store.getState().credentials;
+
+    useEffect(() => {
+        try {
+            localStorage.setItem('fullWidthCard', JSON.stringify(fullWidthCard));
+        } catch {}
+    }, [fullWidthCard]);
 
     const dispatch = useDispatch();
     const roomId = useMemo(() => makeId(40), []);
@@ -58,11 +129,12 @@ const App: React.FC = () => {
     const { sessionKey } = store.getState().operator
 
     useEffect(()=> {
-        if (!activeCall && !postActive) {
-            // console.log("1234delete")
+        if (!activeCall && !postActive && modules.length) {
+            console.log("1234delete")
             setModules([])
+            setMonoModules({})
         }
-    },[activeCall, postActive])
+    },[activeCall, modules.length, postActive])
 
     useEffect(() => {
         if (!activeCall && !postActive) {
@@ -88,7 +160,9 @@ const App: React.FC = () => {
     },[activeCall, postActive, activeCalls, sessionKey])
     useEffect(() => {
         console.log("activeCalls: ", activeCalls)
-        const first = activeCalls[0];
+        const first = activeCalls && activeCalls.length ? activeCalls[0] : {};
+        console.log("first: ", first)
+
         if (activeCalls.length > 0 && !activeCall && (first?.application || first?.b_callstate === "ACTIVE")) {
             setActiveCall(true);
         } else if (!activeCalls.length && activeCall) {
@@ -124,9 +198,9 @@ const App: React.FC = () => {
     useEffect(() => {
         const handleFsDiaDes = (msg: any) => {
             // if (!outboundCall) {
-                if (msg.out_extensions[0]?.prefix) {
-                    setPrefix(msg.out_extensions[0]?.prefix || '')
-                }
+            //     if (msg.out_extensions[0]?.prefix) {
+            //         setPrefix(msg.out_extensions[0]?.prefix || '')
+            //     }
                 setActiveProjectName(msg.project_name);
                 socket.emit('get_fs_reasons', {
                     project_name: msg.project_name,
@@ -153,6 +227,7 @@ const App: React.FC = () => {
 
         const handleFsCalls = (msg: any) => {
             const callsArray: any[] = Object.values(msg);
+            console.log("callsArray123: ", callsArray)
             dispatch(setActiveCalls(callsArray));
         };
 
@@ -231,15 +306,124 @@ const App: React.FC = () => {
                 prefix={prefix}
                 setPrefix={setPrefix}
                 tuskMode={tuskMode}
+                setOutboundID={setOutboundID}
             />
 
             {/* Основной контент */}
             {showTasksDashboard ? (
-                    <TasksDashboard />
-                ) : <div className="row my-3">
+                <>
+                    {/* Показываем Dashboard, если нет активного звонка */}
+                    {!(activeCall || postActive) &&
+                        <TasksDashboard
+                            openedGroup={openedGroup}
+                            setOpenedGroup={setOpenedGroup}
+                            phonesData={phonesData}
+                            setPhonesData={setPhonesData}
+                            setGroupIDs={setGroupIDs}
+                            selectedPreset={selectedPreset}
+                            setSelectedPreset={setSelectedPreset}
+                        />
+                    }
+                    <div className="row my-3">
+                        {fullWidthCard ? (
+                            <>
+                                {/* CallControlPanel на всю ширину */}
+                                <div className="col-12">
+                                    {(openedPhones.length || activeCall || postActive) && (
+                                        <CallControlPanel
+                                            call={selectedCall}
+                                            hasActiveCall={activeCall}
+                                            activeProject={scriptProject}
+                                            onClose={() => setSelectedCall(null)}
+                                            postActive={postActive}
+                                            setPostActive={setPostActive}
+                                            currentPage={currentPage}
+                                            outActivePhone={outActivePhone}
+                                            outActiveProjectName={outActiveProjectName}
+                                            assignedKey={assignedKey}
+                                            isLoading={isLoading}
+                                            setIsLoading={setIsLoading}
+                                            specialKey={specialKey}
+                                            setModules={setModules}
+                                            modules={modules}
+                                            prefix={prefix}
+                                            outboundCall={outboundCall}
+                                            tuskMode={showTasksDashboard}
+                                            fullWidthCard={fullWidthCard}
+                                            setFullWidthCard={setFullWidthCard}
+                                            openedPhones={openedPhones}
+                                            setOpenedPhones={setOpenedPhones}
+                                            monoModules={monoModules}
+                                            setMonoModules={setMonoModules}
+                                            setActiveProjectName={setScriptProject}
+                                            selectedPreset={selectedPreset}
+                                        />
+                                    )}
+                                </div>
+                                {/* ScriptPanel под ней на всю ширину */}
+                                <div className="col-12">
+                                    {(activeCall || postActive) &&
+                                        <ScriptPanel
+                                            key={scriptProject}
+                                            projectName={scriptProject}
+                                            onClose={() => setShowScriptPanel(false)}
+                                        />
+                                    }
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                {/* Обычная компоновка: слева ScriptPanel… */}
+                                <div className="col-12 col-md-7">
+                                    {(activeCall || postActive) &&
+                                        <ScriptPanel
+                                            key={scriptProject}
+                                            projectName={scriptProject}
+                                            onClose={() => setShowScriptPanel(false)}
+                                        />
+                                    }
+                                </div>
+                                {/* …справа CallControlPanel */}
+                                <div className="col-12 col-md-5">
+                                    {(openedPhones.length || activeCall || postActive) && (
+                                        <CallControlPanel
+                                            call={selectedCall}
+                                            hasActiveCall={activeCall}
+                                            activeProject={scriptProject}
+                                            onClose={() => setSelectedCall(null)}
+                                            postActive={postActive}
+                                            setPostActive={setPostActive}
+                                            currentPage={currentPage}
+                                            outActivePhone={outActivePhone}
+                                            outActiveProjectName={outActiveProjectName}
+                                            assignedKey={assignedKey}
+                                            isLoading={isLoading}
+                                            setIsLoading={setIsLoading}
+                                            specialKey={specialKey}
+                                            setModules={setModules}
+                                            modules={modules}
+                                            prefix={prefix}
+                                            outboundCall={outboundCall}
+                                            tuskMode={showTasksDashboard}
+                                            fullWidthCard={fullWidthCard}
+                                            setFullWidthCard={setFullWidthCard}
+                                            openedPhones={openedPhones}
+                                            setOpenedPhones={setOpenedPhones}
+                                            monoModules={monoModules}
+                                            setMonoModules={setMonoModules}
+                                            setActiveProjectName={setActiveProjectName}
+                                            selectedPreset={selectedPreset}
+                                        />
+                                    )}
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </>
+            ) : <div className="row my-3">
                 {/* Левая колонка: Дашборд звонков или панель скриптов */}
                 <div className="col-12 col-md-7">
-                    {showScriptPanel || (activeCalls[0] && Object.keys(activeCalls[0]).length > 0 && activeCalls[0].uuid && activeProjectName) || (postActive && activeProjectName) ? (
+                    {showScriptPanel || (activeCalls.length && activeCalls[0] && Object.keys(activeCalls[0]).length > 0 && activeCalls[0].uuid && activeProjectName) || (postActive && activeProjectName) ? (
                         <ScriptPanel
                             direction={scriptDir}
                             projectName={activeProjectName}
@@ -276,7 +460,7 @@ const App: React.FC = () => {
                             modules={modules}
                             prefix={prefix}
                             outboundCall={outboundCall}
-                            tuskMode={tuskMode}
+                            tuskMode={showTasksDashboard}
                         />
                     )}
                 </div>

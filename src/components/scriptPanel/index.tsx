@@ -94,7 +94,7 @@ interface ScriptPanelProps {
 
 const ScriptPanel: React.FC<ScriptPanelProps> = ({
                                                      projectName,
-                                                     direction,
+                                                     direction = "outbound",
                                                      uuid = '',
                                                      bUuid = '',
                                                      onClose,
@@ -134,7 +134,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
 
     // Из Redux — массив активных звонков
     const activeCalls: any[] = useSelector((state: RootState) => state.operator.activeCalls);
-    const hasActiveCall = Array.isArray(activeCalls) ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
+    const hasActiveCall = Array.isArray(activeCalls) && activeCalls.length ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
     /** При монтировании: если есть активный звонок, запрашиваем start_script */
     useEffect(() => {
         if (hasActiveCall) {

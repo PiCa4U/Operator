@@ -141,7 +141,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     // 1) загрузка пресетов
     useEffect(() => {
         (async () => {
-            const resp = await fetch('/api/v1/get_preset_list', {
+            const resp = await fetch('http://45.145.66.28:8000/api/v1/get_preset_list', {
                 method: 'POST',
                 headers: {'Content-Type':'application/json'},
                 body: JSON.stringify({ glagol_parent: glagolParent, worker, projects: projectNames, role })
@@ -163,7 +163,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         (async () => {
             try {
                 const { preset } = selectedPreset;
-                const resp = await fetch('/api/v1/get_grouped_phones', {
+                const resp = await fetch('http://45.145.66.28:8000/api/v1/get_grouped_phones', {
                     method: 'POST',
                     headers: {'Content-Type':'application/json'},
                     body: JSON.stringify({
@@ -181,7 +181,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                 });
                 if (!resp.ok) throw new Error(resp.statusText);
                 // второй запрос, который отдаёт данные по проектам
-                const respProjectIds = await fetch('/api/v1/get_grouped_phones', {
+                const respProjectIds = await fetch('http://45.145.66.28:8000/api/v1/get_grouped_phones', {
                     method: 'POST',
                     headers: {'Content-Type':'application/json'},
                     body: JSON.stringify({

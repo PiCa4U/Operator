@@ -213,7 +213,7 @@ const GroupActionModal: React.FC<Props> = ({
     useEffect(() => {
         if (!isOpen || !preset) return;
         setLoading(true);
-        fetch('/api/v1/get_grouped_phones', {
+        fetch('http://45.145.66.28:8000/api/v1/get_grouped_phones', {
             method: 'POST',
             headers: { 'Content-Type':'application/json' },
             body: JSON.stringify({

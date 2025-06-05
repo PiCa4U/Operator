@@ -9,9 +9,12 @@ import {
 } from '../redux/operatorSlice';
 import { parseMonitorData } from "../utils";
 
-export const socket = io("http://45.145.66.28:8000/", {
+const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+
+export const socket = io(`${protocol}://45.145.66.28:8000`, {
     transports: ['websocket'],
 });
+
 
 let isInitialized = false;       // залогинились и запустили поллинг?
 let statusIntervalId: number;    // ID интервала для опроса

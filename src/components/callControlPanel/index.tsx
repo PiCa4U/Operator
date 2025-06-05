@@ -181,10 +181,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [callResults, setCallResults] = useState<ResultItem[]>([]);
     const [params, setParams]      = useState<FieldDefinition[]>([]);
 
+    const [callId, setCallId] = useState<string | null>(null);
+
     // Состояние для списка модулей, полученных с сервера
     const [isParams, setIsParams] = useState<boolean>(true)
     const [startModulesRan, setStartModulesRan] = useState(false);
-
+    const [postCallRecord, setPostCallRecord] = useState<null | { record_name: string; project_name: string }>(null);
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
     const projectPoolForCall = useMemo(() => {
@@ -199,9 +201,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const POST_LIMIT = worker.includes('fs.at.akc24.ru') ? 120 : 15;
     const [postSeconds, setPostSeconds] = useState(POST_LIMIT);
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
-    useEffect(() => {
-        console.log("postCallData: ", postCallData)
-    },[postCallData])
     const fsReport = useSelector((state: RootState) => state.operator.fsReport);
 
     const forbiddenProjects = ['outbound', 'api_call', 'no_project_out'];
@@ -222,6 +221,27 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
     },[hasActiveCall])
 
+    useEffect(() => {
+        if (!postCallData?.call_uuid || !fsReport?.length) return;
+
+        const reportItem = fsReport.find((c: any) => c.special_key_call === postCallData.call_uuid);
+        if (reportItem?.id) {
+            setCallId(reportItem.id);
+        }
+    }, [fsReport, postCallData]);
+
+    useEffect(() => {
+        if (!postActive) return
+        const item = fsReport?.find((c: any) => c.special_key_call === postCallData?.call_uuid) || null;
+        if (item) {
+            setIsLoading(false);
+            // сохраняем локально только нужные поля
+            setPostCallRecord({
+                record_name: item.record_name,
+                project_name: item.project_name
+            });
+        }
+    },[fsReport, setIsLoading, postCallData, postActive])
     const sanitize = (v: any) =>
         typeof v === 'string' && v.includes('|_|_|') ? '' : v;
 
@@ -729,8 +749,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         socket.emit("edit_call_fs", {
             fs_server: fsServer,
-            call_id: fsReport.find((c: any) => c.special_key_call === postCallData?.call_uuid)
-                .id,
+            call_id: callId,
             call_reason: callReason,
             call_result: callResult,
             comment,
@@ -872,6 +891,17 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 <label className="mt-3" style={{ whiteSpace: 'nowrap', marginTop: "4px", fontWeight: 600, fontSize: 16 }}>
                     {`Проект: ${findNameProject(activeProject)}`}
                 </label>
+                {postCallRecord && postCallRecord.record_name && !isLoading && (
+                    <div className="mb-3">
+                        <audio controls style={{ width: '100%' }}>
+                            <source
+                                src={`https://my.glagol.ai/get_cc_audio/${(postCallRecord.project_name || '').replace('@', '_at_')}/${postCallRecord.record_name}`}
+                                type="audio/mpeg"
+                            />
+                            Ваш браузер не поддерживает аудиоплеер
+                        </audio>
+                    </div>
+                )}
             </div>
         );
     };
@@ -942,15 +972,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             </div>
         );
     };
-    useEffect(()=> console.log("1234modules: ", modules),[modules])
     const renderModules = () => {
         if (!hasActiveCall && !postActive) {
-            console.log("123ffff")
             return null
         };
-        console.log("123activeProject: ", activeProject)
         const manualModules = modules.filter(mod => mod.start_modes[activeProject] === "manual")
-        console.log("123manualModules: ", manualModules)
         if (manualModules.length === 0) return null;
 
         return (
@@ -968,7 +994,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             </div>
         );
     };
-    useEffect(()=> console.log("selectedCall: ", call),[call])
     return (
         <div>
             {renderModules()}
@@ -1076,7 +1101,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     {postActive && (
                         <div>
                             <p>Постобработка: осталось {postSeconds} сек.</p>
-                            <button className="btn btn-outline-success" onClick={handlePostSave} disabled={isLoading}>
+                            <button className="btn btn-outline-success" onClick={handlePostSave} disabled={!callId}>
                                 Сохранить и вернуться на линию
                             </button>
                         </div>

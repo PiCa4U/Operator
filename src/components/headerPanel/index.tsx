@@ -78,6 +78,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      showScriptPanel,
                                                      prefix,
                                                      setPrefix,
+                                                     setActiveProjectName,
                                                  }) => {
     const {
         sessionKey = '',
@@ -413,6 +414,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     special_key: outActivePhone?.special_key,
                     project_name: outActiveProjectName,
                 });
+                setActiveProjectName("")
+                setOutboundCall(false)
                 socket.emit('change_stat_fs', {
                     fs_server: fsServer,
                     sip_login: sipLogin,
@@ -472,7 +475,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     action: 'get_phone_to_call'
                 });
             }
-        }, 30000);
+        }, 3000);
         return () => clearInterval(interval);
     }, [hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, fsServer, projectPoolForCall, fsStatus.state, fsStatus.status]);
 

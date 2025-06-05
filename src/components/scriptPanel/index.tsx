@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import Swal from 'sweetalert2';
 import {initSocket} from '../../socket';
 import { useSelector } from "react-redux";
@@ -127,6 +127,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     const [searchText, setSearchText] = useState('');
     const [openAnswers, setOpenAnswers] = useState<{ [id: string]: boolean }>({});
 
+    const prevCallUuid = useRef<string | null>(null);
     // Комментарий (если commentMode === 'true')
     const [comment, setComment] = useState('');
     const [selectedQuestion, setSelectedQuestion] = useState<ScriptQuestion | null>(null);
@@ -144,7 +145,13 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
 
             const firstCall = activeCalls[0];
             const currentUuid  = firstCall.uuid  || uuid;
-            const currentBUuid = firstCall.b_uuid|| bUuid;
+            const currentBUuid = firstCall.b_uuid || bUuid;
+
+            if (prevCallUuid.current === currentUuid) return;
+
+            if (projectName) {
+                prevCallUuid.current = currentUuid
+            }
 
             socket.emit('script_operations', {
                 worker,
@@ -311,15 +318,31 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
             </div>
 
             {instructions && (
-                <div className=" mb-3">
-                    <div  style={{display: "flex", flexDirection: "row", gap: 30}}>
-                        <span className="material-icons" style={{fontSize: 16, color: "#11a5ed", marginTop: 2}}>
+                <div className="mb-3 p-3" style={{
+                    backgroundColor: "#f7fafd",
+                    border: "1px solid #b6defb",
+                    borderRadius: 6
+                }}>
+                    <div className="d-flex align-items-center mb-2" style={{ gap: 8 }}>
+                        <span className="material-icons" style={{ fontSize: 18, color: "#11a5ed" }}>
                             info
                         </span>
+                        <span style={{ fontWeight: 600, color: "#0c4b85" }}>
+                            Инструкция:
+                        </span>
+                    </div>
+
+                    <div style={{
+                        wordBreak: "break-word",
+                        whiteSpace: "normal",
+                        overflowX: "auto",
+                        maxWidth: "100%"
+                    }}>
                         {renderEditorJsData(instructions)}
                     </div>
                 </div>
             )}
+
 
             {commentMode === 'true' && (
                 <div className="mb-3">

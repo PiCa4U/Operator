@@ -46,18 +46,17 @@ const App: React.FC = () => {
     } = store.getState().credentials;
 
 
-    useEffect(()=> console.log("activeProjectName: ", activeProjectName),[activeProjectName])
+
     const dispatch = useDispatch();
     const roomId = useMemo(() => makeId(40), []);
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
     const activeCalls: any[] = useMemo(() => {
         return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
     }, [rawActiveCalls]);
-    useEffect(()=> console.log("activeCalls: ", activeCalls),[activeCalls])
+
     useEffect(()=> {
         if (!(activeCalls[0] && Object.keys(activeCalls[0]).length > 0)) return
         const first = activeCalls[0]
-        console.log("first: ", first)
         if (first.uuid !== "" && first.cid_num !== "" && !get_callcenter && !outboundCall){
             setGet_callcenter(true)
             setScriptDir("inbound")
@@ -74,7 +73,6 @@ const App: React.FC = () => {
     },[activeCalls, get_callcenter])
     useEffect(()=> {
         if (!activeCall && !postActive) {
-            console.log("1234delete")
             setModules([])
         }
     },[activeCall, postActive])
@@ -103,6 +101,7 @@ const App: React.FC = () => {
             });
         }
     },[activeCall, postActive, activeCalls])
+
     useEffect(() => {
         const first = activeCalls[0];
         if (activeCalls.length > 0 && !activeCall && (first?.application || first?.b_callstate === "ACTIVE")) {
@@ -112,7 +111,7 @@ const App: React.FC = () => {
             // setOutboundCall(false);
             setPostActive(true);
         }
-    }, [activeCalls]);
+    }, [activeCall, activeCalls]);
 
     useEffect(()=> {
         const getOuboundProject = (msg:any) => {
@@ -179,7 +178,6 @@ const App: React.FC = () => {
 
         const handleFsCalls = (msg: any) => {
             const callsArray: any[] = Object.values(msg);
-            console.log("callsArray:L ", callsArray)
             dispatch(setActiveCalls(callsArray));
         };
 
@@ -247,7 +245,7 @@ const App: React.FC = () => {
 
             <div className="row my-3">
                 <div className="col-12 col-md-7">
-                    {showScriptPanel || (activeCalls[0] && Object.keys(activeCalls[0]).length > 0 && activeCalls[0].uuid && activeProjectName) || (postActive && activeProjectName)  ? (
+                    {showScriptPanel || (activeCalls[0] && Object.keys(activeCalls[0]).length > 0 && activeCalls[0].uuid && activeProjectName) || activeCall || (postActive && activeProjectName)  ? (
                         <ScriptPanel
                             direction={scriptDir}
                             projectName={activeProjectName}

@@ -90,6 +90,7 @@ interface ScriptPanelProps {
     uuid?: string;
     bUuid?: string;
     onClose: () => void;
+    tuskMode?: boolean
 }
 
 const ScriptPanel: React.FC<ScriptPanelProps> = ({
@@ -98,11 +99,14 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
                                                      uuid = '',
                                                      bUuid = '',
                                                      onClose,
+                                                     tuskMode = false
                                                  }) => {
     const {
         sipLogin   = '',
         worker     = '',
     } = store.getState().credentials;
+    console.log("scriptuuid: ", uuid)
+    console.log("scriptbUuid: ", bUuid)
 
     // Текущая «комната» (room_id)
     const roomId     = useSelector((state: RootState) => state.room.roomId) || 'default_room';
@@ -137,20 +141,19 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     const hasActiveCall = Array.isArray(activeCalls) && activeCalls.length ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
     /** При монтировании: если есть активный звонок, запрашиваем start_script */
     useEffect(() => {
-        if (hasActiveCall) {
+        if (hasActiveCall || tuskMode) {
 
             const firstCall = activeCalls[0];
-            const currentUuid  = firstCall.uuid  || uuid;
-            const currentBUuid = firstCall.b_uuid|| bUuid;
+            const currentUuid  = firstCall?.uuid  || uuid;
+            const currentBUuid = firstCall?.b_uuid|| bUuid;
 
             socket.emit('start_script', {
                 worker,
                 sip_login: sipLogin,
                 session_key: sessionKey,
-                // action: 'start_script',
                 direction,
-                uuid: currentUuid || "",
-                b_uuid: currentBUuid || "",
+                uuid: currentUuid || " ",
+                b_uuid: currentBUuid || " ",
                 project_name: projectName
             });
         }
@@ -294,7 +297,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     };
 
     return (
-        <div className="card border-info p-3 ml-3 w-100" style={{ backgroundColor: '#fff' }}>
+        <div className="card border-info p-3 ml-3 mr-3 w-100" style={{ backgroundColor: '#fff' }}>
             <div className="d-flex justify-content-between align-items-center mb-2">
                 <h5 className="mb-0 text-dark">
                     {blockName || 'Приветствие'}

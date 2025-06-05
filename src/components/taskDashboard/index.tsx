@@ -31,6 +31,7 @@ interface Preset {
     structure: Record<string, { name: string; default: string; render_template: string }>;
     actions: Action[];
     group_by: string[];
+    projects: string[];
 }
 export interface OptionType {
     value: number;
@@ -171,7 +172,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                         filter_by: {
                             project: [
                                 "IN",
-                                projectNames
+                                preset.projects
                             ]
                         },
                         preset_id: preset.id,
@@ -186,7 +187,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                     body: JSON.stringify({
                         glagol_parent: glagolParent,
                         group_by: ["project"],
-                        filter_by: { project: ['IN', projectNames] },
+                        filter_by: { project: ['IN', preset.projects] },
                         group_table: preset.group_table,
                         role
                     })
@@ -481,6 +482,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                         isSearchable
                         onChange={val => {
                             const p = presets.find(x => String(x.preset.id) === val);
+                            setTableData([])
                             setSelectedPreset(p || null);
                         }}
                         options={presets.map(p => ({

@@ -145,6 +145,8 @@ interface MergedField {
     spatialGroup?: string;
     /** (опционально) позиция в сетке, если нужно */
     position?: number;
+    group_id?: number | null ;
+    group_position?: number | null;
 }
 
 type GroupFieldValues = Record<
@@ -179,6 +181,8 @@ interface CallControlPanelProps {
     setMonoModules?: (monoModules: MonoProjectsModuleData) => void
     setActiveProjectName?: (activeProjectName: string) => void
     selectedPreset?: OptionType | null
+    postCallData: ActiveCall | null
+    setPostCallData: (postCallData: ActiveCall | null) => void
 }
 
 
@@ -208,11 +212,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                monoModules,
                                                                setMonoModules,
                                                                setActiveProjectName,
-                                                               selectedPreset
+                                                               selectedPreset,
+                                                               postCallData,
+                                                               setPostCallData
                                                            }) => {
     // Из cookies
     const { sessionKey } = store.getState().operator
-    useEffect(() => console.log("openedPhones: ", openedPhones),[openedPhones])
+
     const {
         sipLogin   = '',
         worker     = '',
@@ -235,14 +241,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // useEffect(() => console.log("1111callReasons: ", callReasons),[callReasons])
     // useEffect(() => console.log("1111callResults: ", callResults),[callResults])
     // useEffect(() => console.log("1111params: ", params),[params])
-
+    const [group_instructions, setGroup_instructions] = useState<any>(null)
     const [mergedFields, setMergedFields] = useState<MergedField[]>([]);
     const [values, setValues] = useState<GroupFieldValues>({});
     const [basicFields, setBasicFields] = useState<any[]>([])
-
-    useEffect(() => console.log("values: ", values),[values])
-    useEffect(() => console.log("1111values: ", values),[values])
-    useEffect(() => console.log("1111mergedFields: ", mergedFields),[mergedFields])
 
     // Состояние для списка модулей, полученных с сервера
     // const [modules, setModules] = useState<ModuleData[]>([]);
@@ -313,7 +315,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
-    console.log("projectPool: ", projectPool)
     const projectPoolForCall = useMemo(() => {
         return projectPool.filter(project => (project.out_active && project.active)).map(project => project.project_name);
     }, [projectPool]);
@@ -325,7 +326,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // Логика «постобработки»
     const POST_LIMIT = worker.includes('fs@akc24.ru') ? 12000 : 15;
     const [postSeconds, setPostSeconds] = useState(POST_LIMIT);
-    const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
     useEffect(() => console.log("postCall: ", postCallData),[postCallData])
 
     const forbiddenProjects = ['outbound', 'api_call', 'no_project_out'];
@@ -349,18 +349,18 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
 
     },[openedPhones])
-
 // ────────────────────────────────────────────────────────────────────────────────
     const handleProjectFields = (data: {
         project_fields: string;
         as_is_dict: Record<string, FieldDefinition[]>;
         call_reasons: ReasonItem[];
         call_results: ResultItem[];
+        group_instructions: any
     }) => {
         // Если включён tuskMode, собираем mergedFields (вне зависимости от hasActiveCall)
         if (tuskMode) {
             const map = new Map<string, MergedField>();
-
+            setGroup_instructions(data.group_instructions || null)
             Object.entries(data.as_is_dict).forEach(([projName, fields]) => {
                 if (!selectedProjects.includes(projName)) return;
                 fields.forEach(f => {
@@ -379,6 +379,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             projects: [projName],
                             fieldIds: { [projName]: f.field_id },
                             spatialGroup: (f as any).spatial_group,
+                            group_position: f.group_position || null,
+                            group_id: f.group_id || null
                         });
                     } else {
                         const e = map.get(key)!;
@@ -589,14 +591,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         const handleModules = (data: any) => {
             // if (data.project !== activeProject) return;
-            console.log("setmoduletuskmodeTRY")
 
             if (tuskMode) {
                 if (data && typeof data === 'object' && setMonoModules) {
                     setMonoModules(data);
                 }
             } else {
-                console.log("setmoduletuskmodeFAKE")
                 setModules(data[activeProject] || []);
             }
         };
@@ -789,6 +789,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     };
 
     //
+// Слушаем ответы от run_module и распределяем значения по проектам
     useEffect(() => {
         const handleModuleResult = (...args: any[]) => {
             const dataObj: Record<string, any> | undefined = args.find(
@@ -796,42 +797,25 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             );
             if (!dataObj) return;
 
-            // ───── Определяем проект ─────
-            let project = activeProject;
-            if (tuskMode) {
-                // Пытаемся определить проект по полям
-                const fieldKeys = Object.keys(dataObj);
-                const guess = fieldKeys.find(f =>
-                    Object.entries(values).some(([proj, fields]) =>
-                        Object.keys(fields).includes(f)
-                    )
-                );
-                if (guess) {
-                    const entry = Object.entries(values).find(([proj, fields]) =>
-                        fields.hasOwnProperty(guess)
-                    );
-                    if (entry) {
-                        project = entry[0];
-                    }
-                }
-            }
+            // Если приходит структура: { project_name, result: {...} }
+            if ('project_name' in dataObj && 'result' in dataObj && tuskMode) {
+                const project = dataObj.project_name;
+                const result = dataObj.result || {};
 
-            // ───── Обработка module_return-подобных структур ─────
-            Object.entries(dataObj).forEach(([fieldKey, value]) => {
-                const v = value == null ? '' : String(value);
+                Object.entries(result).forEach(([fieldKey, value]) => {
+                    const v = value == null ? '' : String(value);
 
-                switch (fieldKey) {
-                    case 'call_reason':
-                        setCallReason(v);
-                        break;
-                    case 'call_result':
-                        setCallResult(v);
-                        break;
-                    case 'comment':
-                        setComment(v);
-                        break;
-                    default:
-                        if (tuskMode) {
+                    switch (fieldKey) {
+                        case 'call_reason':
+                            setCallReason(v);
+                            break;
+                        case 'call_result':
+                            setCallResult(v);
+                            break;
+                        case 'comment':
+                            setComment(v);
+                            break;
+                        default:
                             setValues(prev => ({
                                 ...prev,
                                 [project]: {
@@ -839,14 +823,59 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                     [fieldKey]: v
                                 }
                             }));
-                        } else {
-                            setBaseFieldValues(prev => ({
-                                ...prev,
-                                [fieldKey]: v
-                            }));
+                    }
+                });
+            } else {
+                // fallback — старый формат (без project_name)
+                let project = activeProject;
+                if (tuskMode) {
+                    const fieldKeys = Object.keys(dataObj);
+                    const guess = fieldKeys.find(f =>
+                        Object.entries(values).some(([proj, fields]) =>
+                            Object.keys(fields).includes(f)
+                        )
+                    );
+                    if (guess) {
+                        const entry = Object.entries(values).find(([proj, fields]) =>
+                            fields.hasOwnProperty(guess)
+                        );
+                        if (entry) {
+                            project = entry[0];
                         }
+                    }
                 }
-            });
+
+                Object.entries(dataObj).forEach(([fieldKey, value]) => {
+                    const v = value == null ? '' : String(value);
+
+                    switch (fieldKey) {
+                        case 'call_reason':
+                            setCallReason(v);
+                            break;
+                        case 'call_result':
+                            setCallResult(v);
+                            break;
+                        case 'comment':
+                            setComment(v);
+                            break;
+                        default:
+                            if (tuskMode) {
+                                setValues(prev => ({
+                                    ...prev,
+                                    [project]: {
+                                        ...prev[project],
+                                        [fieldKey]: v
+                                    }
+                                }));
+                            } else {
+                                setBaseFieldValues(prev => ({
+                                    ...prev,
+                                    [fieldKey]: v
+                                }));
+                            }
+                    }
+                });
+            }
 
             Swal.fire({
                 title: 'Успех',
@@ -991,24 +1020,30 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
         const reasonNumber = typeof callReason === "string" ? parseInt(callReason, 10) : callReason
         const resultNumber = typeof callResult === "string" ? parseInt(callResult, 10) : callResult
+        const projectsPayload: Record<string, {
+            call_reason: number;
+            call_result: number;
+            comment: string;
+            base_fields: Record<string, string>;
+        }> = {};
 
         const sanitizedBaseFields = Object.fromEntries(
             Object.entries(baseFieldValues).map(([k, v]) => [k, sanitize(v)])
         );
 
-        socket.emit('edit_call_fs', {
-            // b_uuid: call?.special_key_call ,
-            uuid: call?.special_key_conn ,
-            // call_id: call?.id,
-            project_name: call?.project_name,
+        projectsPayload[call?.project_name ?? "proj"] = {
             call_reason: reasonNumber,
             call_result: resultNumber,
             comment,
+            base_fields: sanitizedBaseFields,
+        };
+
+        socket.emit("edit_call_fs", {
+            b_uuid: call?.special_key_call,
+            uuid: call?.special_key_conn,
             session_key: sessionKey,
             worker,
-            base_fields: sanitizedBaseFields,
-            // reason_text: reasonText,
-            // result_text: resultText
+            projects: projectsPayload,
         });
         setIsLoading(true)
         socket.emit('get_fs_report', {
@@ -1489,7 +1524,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             .filter(({ count }) => count === totalProjects)
             .map(({ sample }) => sample);
     }, [monoModules]);
-    console.log("commonModules: ", commonModules)
     const projectModules = useMemo(() => {
         if (!monoModules) return {};
 
@@ -1502,7 +1536,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         return result;
     }, [monoModules, commonModules]);
-    console.log("projectModules: ", projectModules)
     const renderModules = () => {
         if (!hasActiveCall && !postActive) {
             return null
@@ -1618,10 +1651,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         ? (hasActiveCall || postActive)
         : (hasActiveCall || postActive || !hideReportFields);
 
-    useEffect(() => console.log("uniqueFieldsByProject: ", uniqueFieldsByProject),[commonFields])
-    useEffect(() => console.log("uniqueFieldsByProjectcommonFields: ", commonFields),[commonFields])
-
-    console.log("")
     const memoizedIds = useMemo(() => {
         return openedPhones?.map(p => p.id) || [];
     }, [openedPhones]);
@@ -1639,50 +1668,84 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             {!tuskMode && !hasActiveCall && !postActive && (
                                 renderSelectedCallHeader()
                             )}
-                            {shouldShowMeta && (
-                                <div
-                                    className="form-group d-flex align-items-center"
-                                    style={
-                                        compact
-                                            ? { flex: '1 1 calc(50% - 12px)', minWidth: 0 }
-                                            : { flex: '1 1 0%', minWidth: 0 }
-                                    }
-                                >
-                                    <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
-                                        Причина звонка: <span style={{ color: 'red' }}>*</span>
-                                    </label>
-                                    <SearchableSelect
-                                        options={callReasons}
-                                        value={callReason}
-                                        onChange={setCallReason}
-                                        placeholder="Выберите причину..."
-                                        augmentSaved={!hasActiveCall && !postActive}
-                                    />
-                                </div>
-                            )}
+                        {shouldShowMeta && fullWidthCard ? (
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    gap: 12,
+                                    marginBottom: 8,
+                                    flexWrap: 'wrap'
+                                }}
+                            >
+                                {[{
+                                    label: 'Причина звонка',
+                                    value: callReason,
+                                    onChange: setCallReason,
+                                    options: callReasons
+                                }, {
+                                    label: 'Результат звонка',
+                                    value: callResult as number,
+                                    onChange: setCallResult,
+                                    options: callResults
+                                }].map(({ label, value, onChange, options }, idx) => (
+                                    <div
+                                        key={idx}
+                                        className="form-group"
+                                        style={{
+                                            flex: '1 1 calc(50% - 6px)', // 50% - половина gap
+                                            minWidth: 0,
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: 4
+                                        }}
+                                    >
+                                        <label style={{ fontWeight: 400, fontSize: 16 }}>
+                                            {label}: <span style={{ color: 'red' }}>*</span>
+                                        </label>
+                                        <SearchableSelect
+                                            options={options}
+                                            value={value}
+                                            onChange={onChange}
+                                            placeholder={`Выберите ${label.toLowerCase()}...`}
+                                            augmentSaved={!hasActiveCall && !postActive}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <>
+                                {shouldShowMeta && (
+                                    <div className="form-group d-flex align-items-center" style={compact ? { flex: '1 1 calc(50% - 12px)', minWidth: 0 } : { flex: '1 1 0%', minWidth: 0 }}>
+                                        <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
+                                            Причина звонка: <span style={{ color: 'red' }}>*</span>
+                                        </label>
+                                        <SearchableSelect
+                                            options={callReasons}
+                                            value={callReason}
+                                            onChange={setCallReason}
+                                            placeholder="Выберите причину..."
+                                            augmentSaved={!hasActiveCall && !postActive}
+                                        />
+                                    </div>
+                                )}
 
-                            {/* Результат звонка */}
-                            {shouldShowMeta && (
-                                <div
-                                    className="form-group d-flex align-items-center"
-                                    style={
-                                        compact
-                                            ? { flex: '1 1 calc(50% - 22px)', minWidth: 0 }
-                                            : { flex: '1 1 0%', minWidth: 0 }
-                                    }
-                                >
-                                    <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
-                                        Результат звонка: <span style={{ color: 'red' }}>*</span>
-                                    </label>
-                                    <SearchableSelect
-                                        options={callResults}
-                                        value={callResult as number}
-                                        onChange={setCallResult}
-                                        placeholder="Выберите результат..."
-                                        augmentSaved={!hasActiveCall && !postActive}
-                                    />
-                                </div>
-                            )}
+                                {shouldShowMeta && (
+                                    <div className="form-group d-flex align-items-center" style={compact ? { flex: '1 1 calc(50% - 22px)', minWidth: 0 } : { flex: '1 1 0%', minWidth: 0 }}>
+                                        <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
+                                            Результат звонка: <span style={{ color: 'red' }}>*</span>
+                                        </label>
+                                        <SearchableSelect
+                                            options={callResults}
+                                            value={callResult as number}
+                                            onChange={setCallResult}
+                                            placeholder="Выберите результат..."
+                                            augmentSaved={!hasActiveCall && !postActive}
+                                        />
+                                    </div>
+                                )}
+                            </>
+                        )}
+
                         {(tuskMode && (hasActiveCall || postActive)) && (
                             <div style={{ padding:1}}>
                                 <div style={{ display: "flex", gap: 8 }}>
@@ -1711,7 +1774,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
                                 {commonFields.length > 0 && <div style={{marginTop: 8, marginBottom: 8}}>
                                     <div style={{
-                                        border: `1px solid black`,
+                                        border: `2px solid black`,
                                         borderRadius: 4,
                                         padding: 8
                                     }}>
@@ -1745,41 +1808,131 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 </div>}
 
                                 {/* 2) УНИКАЛЬНЫЕ поля по проектам */}
-                                <div style={{marginTop: 4, marginBottom: 4}}>
-                                    {selectedProjects.map(proj => (
-                                        uniqueFieldsByProject[proj].length ?
-                                        <div style={{
-                                            border: `1px solid ${projectColors[proj]}`,
-                                            borderRadius: 4,
-                                            padding: 8
-                                        }}>
-                                            {uniqueFieldsByProject[proj].map(f => (
-                                                <div key={f.id}>
-                                                    <EditableFields
-                                                        params={[{
-                                                            field_id: f.id,
-                                                            field_name: f.label,
-                                                            field_type: f.type,
-                                                            field_vals: f.values,
-                                                            editable: true,
-                                                            must_have: false,
-                                                            project_name: ''
-                                                        }]}
-                                                        initialValues={{[f.id]: values[proj][f.fieldIds[proj]] || ''}}
-                                                        onChange={nv => {
-                                                            const v = nv[f.id] || '';
-                                                            setValues(cur => ({
-                                                                ...cur,
-                                                                [proj]: {...cur[proj], [f.fieldIds[proj]]: v}
-                                                            }));
-                                                        }}
-                                                    />
+                                <div style={{ marginTop: 4, marginBottom: 4 }}>
+                                    {selectedProjects.map(proj => {
+                                        const fields = uniqueFieldsByProject[proj];
+                                        if (!fields.length) return null;
+
+                                        const validGroupIds = new Set(
+                                            (group_instructions[proj]?.groups || []).map((g: any) => g.id)
+                                        );
+                                        (group_instructions[proj]?.groups || []).forEach((group: any) => {
+                                            console.log('>>> group.id:', group.id);
+                                            const matching = fields.filter(f => f.group_id === group.id);
+                                            console.log(`>>>Group ${group.id} matched fields:`, matching);
+                                        });
+
+
+                                        const groupedFields = (group_instructions[proj]?.groups || [])
+                                            .slice()
+                                            .sort((a: any, b: any) => a.position - b.position)
+                                            .map((group: any) => {
+                                                const fieldsInGroup = fields
+                                                    .filter(f => f.group_id === group.id)
+                                                    .sort((a, b) => (a.group_position ?? 0) - (b.group_position ?? 0));
+                                                return { group, fields: fieldsInGroup };
+                                            })
+                                            .filter(({ fields }: any) => fields.length > 0);
+
+                                        const orphanFields = fields.filter(
+                                            f => f.group_id == null || !validGroupIds.has(f.group_id)
+                                        );
+
+                                        console.log("999validGroupIds: ", validGroupIds)
+                                        console.log("999groupedFields: ", groupedFields)
+                                        console.log("999orphanFields: ", orphanFields)
+
+                                        return (
+                                            <div
+                                                key={proj}
+                                                style={{
+                                                    border: `2px solid ${projectColors[proj]}`,
+                                                    borderRadius: 4,
+                                                    padding: 8,
+                                                    marginBottom: 12
+                                                }}
+                                            >
+                                                <div
+                                                    style={{
+                                                        display: 'flex',
+                                                        flexWrap: 'wrap',
+                                                        gap: 16,
+                                                        marginBottom: 16
+                                                    }}
+                                                >
+                                                    {groupedFields.map(({ group, fields }: any) => (
+                                                        <div
+                                                            key={group.id}
+                                                            style={{
+                                                                border: '1px solid #ccc',
+                                                                borderRadius: 4,
+                                                                padding: 8,
+                                                                width: group.width === 0.5 ? 'calc(50% - 8px)' : '100%',
+                                                                minWidth: 0
+                                                            }}
+                                                        >
+                                                            <div style={{ fontWeight: 600, marginBottom: 8 }}>{group.group_name}</div>
+                                                            {fields.map((f: any) => (
+                                                                <EditableFields
+                                                                    key={f.id}
+                                                                    params={[{
+                                                                        field_id: f.id,
+                                                                        field_name: f.label,
+                                                                        field_type: f.type,
+                                                                        field_vals: f.values,
+                                                                        editable: true,
+                                                                        must_have: false,
+                                                                        project_name: proj
+                                                                    }]}
+                                                                    initialValues={{
+                                                                        [f.id]: values[proj][f.fieldIds[proj]] || ''
+                                                                    }}
+                                                                    onChange={nv => {
+                                                                        const v = nv[f.id] || '';
+                                                                        setValues(cur => ({
+                                                                            ...cur,
+                                                                            [proj]: { ...cur[proj], [f.fieldIds[proj]]: v }
+                                                                        }));
+                                                                    }}
+                                                                />
+                                                            ))}
+                                                        </div>
+                                                    ))}
+
+                                                    {orphanFields.length > 0 && (
+                                                        <div style={{ flex: '1 1 100%' }}>
+                                                            {orphanFields.map(f => (
+                                                                <EditableFields
+                                                                    key={f.id}
+                                                                    params={[{
+                                                                        field_id: f.id,
+                                                                        field_name: f.label,
+                                                                        field_type: f.type,
+                                                                        field_vals: f.values,
+                                                                        editable: true,
+                                                                        must_have: false,
+                                                                        project_name: proj
+                                                                    }]}
+                                                                    initialValues={{
+                                                                        [f.id]: values[proj][f.fieldIds[proj]] || ''
+                                                                    }}
+                                                                    onChange={nv => {
+                                                                        const v = nv[f.id] || '';
+                                                                        setValues(cur => ({
+                                                                            ...cur,
+                                                                            [proj]: { ...cur[proj], [f.fieldIds[proj]]: v }
+                                                                        }));
+                                                                    }}
+                                                                />
+                                                            ))}
+                                                        </div>
+                                                    )}
                                                 </div>
-                                            ))}
-                                        </div> : null
-                                        )
-                                    )}
+                                            </div>
+                                        );
+                                    })}
                                 </div>
+
                             </div>
                         )}
                         {tuskMode && !(hasActiveCall || postActive) && (
@@ -1904,7 +2057,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         )}
                     {(tuskMode) &&
                         <div className="d-flex justify-end mb-3">
-                            <label style={{ cursor: 'pointer', fontWeight: 500, display: "flex", gap: 8 }}>
+                            <label style={{ cursor: 'pointer', fontWeight: 500, display: "flex", gap: 8, marginTop: 8}}>
                                 <input
                                     type="checkbox"
                                     checked={fullWidthCard}

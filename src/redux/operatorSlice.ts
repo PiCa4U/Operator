@@ -86,7 +86,7 @@ export const makeSelectFullProjectPool = (sipLogin: string) =>
             // Если проектов нет – вернём пустой массив.
             return myProjects
                 .map((pName: string) => allProjects[pName])
-                .filter(proj => proj && proj.out_active);
+                // .filter(proj => proj && proj.out_active);
         }
     );
 

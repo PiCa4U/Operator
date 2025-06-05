@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { setRoomId } from './redux/roomSlice';
 import HeaderPanel, {OutActivePhone, Project} from './components/headerPanel';
-import CallControlPanel, { CallData } from './components/callControlPanel';
+import CallControlPanel, {ActiveCall, CallData} from './components/callControlPanel';
 import CallsDashboard from './components/callsDashboard';
 import ScriptPanel from './components/scriptPanel';
 import { socket } from "./socket";
@@ -11,6 +11,7 @@ import {setActiveCalls, setFsStatus, setUserStatuses} from './redux/operatorSlic
 import {RootState, store} from './redux/store';
 import TasksDashboard, {ApiRow, OptionType} from "./components/taskDashboard";
 import {first} from "lodash";
+
 
 
 export interface ModuleData {
@@ -42,6 +43,7 @@ const App: React.FC = () => {
     const [modules, setModules] = useState<ModuleData[]>([]);
     const [monoModules, setMonoModules] = useState<MonoProjectsModuleData>({})
     const [scriptProject, setScriptProject] = useState<string>("")
+    const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
 
     const [prefix, setPrefix] = useState<string>('')
     const [get_callcenter, setGet_callcenter] = useState<boolean>(false)
@@ -357,6 +359,8 @@ const App: React.FC = () => {
                                             setMonoModules={setMonoModules}
                                             setActiveProjectName={setScriptProject}
                                             selectedPreset={selectedPreset}
+                                            postCallData={postCallData}
+                                            setPostCallData={setPostCallData}
                                         />
                                     )}
                                 </div>
@@ -367,6 +371,10 @@ const App: React.FC = () => {
                                             key={scriptProject}
                                             projectName={scriptProject}
                                             onClose={() => setShowScriptPanel(false)}
+                                            tuskMode={showTasksDashboard}
+                                            uuid={postCallData?.uuid}
+                                            bUuid={postCallData?.b_uuid}
+
                                         />
                                     }
                                 </div>
@@ -380,6 +388,7 @@ const App: React.FC = () => {
                                             key={scriptProject}
                                             projectName={scriptProject}
                                             onClose={() => setShowScriptPanel(false)}
+                                            tuskMode={showTasksDashboard}
                                         />
                                     }
                                 </div>
@@ -413,6 +422,8 @@ const App: React.FC = () => {
                                             setMonoModules={setMonoModules}
                                             setActiveProjectName={setActiveProjectName}
                                             selectedPreset={selectedPreset}
+                                            postCallData={postCallData}
+                                            setPostCallData={setPostCallData}
                                         />
                                     )}
                                 </div>
@@ -428,6 +439,7 @@ const App: React.FC = () => {
                             direction={scriptDir}
                             projectName={activeProjectName}
                             onClose={() => setShowScriptPanel(false)}
+                            tuskMode={tuskMode}
                         />
                     ) : (
                         <CallsDashboard
@@ -461,6 +473,8 @@ const App: React.FC = () => {
                             prefix={prefix}
                             outboundCall={outboundCall}
                             tuskMode={showTasksDashboard}
+                            postCallData={postCallData}
+                            setPostCallData={setPostCallData}
                         />
                     )}
                 </div>

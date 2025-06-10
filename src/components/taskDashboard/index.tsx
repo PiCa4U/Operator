@@ -8,7 +8,7 @@ import GroupActionModal from "./components/index";
 import { getCookies } from "../../utils";
 import Swal from "sweetalert2";
 import {socket} from "../../socket";
-import {store} from "../../redux/store";
+import {RootState, store} from "../../redux/store";
 
 // --- Типы данных ---
 interface ColumnCell {
@@ -62,6 +62,7 @@ type Props = {
     setGroupIDs: (groupIDs: any[]) => void
     selectedPreset: OptionType | null
     setSelectedPreset: (selectedPreset: OptionType | null) => void
+    role: string
 }
 const ROWS_PER_PAGE = 10;
 
@@ -72,8 +73,14 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                   phonesData,
                                                   setGroupIDs,
                                                   selectedPreset,
-                                                  setSelectedPreset
+                                                  setSelectedPreset,
+    role
                                               }) => {
+
+    const { monitorUsers } = useSelector(
+        (state: RootState) => state.operator.monitorData
+    );
+
     const [presets, setPresets] = useState<OptionType[]>([]);
     const [selectedActionOption, setSelectedActionOption] = useState<ActionOption | null>(null);
     const [tableData, setTableData] = useState<ApiRow[]>([]);
@@ -89,6 +96,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [modalIds, setModalIds] = useState<number[]>([]);
     const [modalAction, setModalAction] = useState<Action | null>(null);
 
+    useEffect(() => console.log("loading: ", loading),[loading])
     const [modules, setModules] = useState<ModuleType[]>([]);
     useEffect(() => console.log("presetModules: ", modules),[modules])
     // --- глобальные зависимости для запросов ---
@@ -97,7 +105,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         sipLogin   = '',
         worker     = '',
     } = store.getState().credentials;
-    const role = "admin";
+    // const role = "admin";
     const projectPool = useSelector(useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]));
     const projectNames = useMemo(() => projectPool.map(p => p.project_name), [projectPool]);
     // const projectNames = ["group_project_1", "group_project_2"]
@@ -140,6 +148,8 @@ const PresetSelectorTable: React.FC<Props> = ({
     useEffect(()=> console.log("selectedRows: ", selectedRows))
     // 1) загрузка пресетов
     useEffect(() => {
+        if (!role || projectNames.length === 0) return;
+
         (async () => {
             const resp = await fetch('http://45.145.66.28:8000/api/v1/get_preset_list', {
                 method: 'POST',
@@ -150,7 +160,7 @@ const PresetSelectorTable: React.FC<Props> = ({
             const data: Preset[] = await resp.json();
             setPresets(data.map(p => ({ value: p.id, label: p.preset_name, preset: p })));
         })();
-    }, [glagolParent, worker, role]);
+    }, [glagolParent, worker, role, projectNames]);
 
     // 2) загрузка строк при выборе пресета
     useEffect(() => {
@@ -217,7 +227,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                 setLoading(false);
             }
         })();
-    }, [selectedPreset]);
+    }, [selectedPreset, setPhonesData]);
 
     // Опции для выпадающего списка действий в шапке
     const actionOptions: ActionOption[] = useMemo(() => {

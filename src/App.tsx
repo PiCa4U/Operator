@@ -49,6 +49,17 @@ const App: React.FC = () => {
     const [get_callcenter, setGet_callcenter] = useState<boolean>(false)
     const [scriptDir, setScriptDir] = useState<"inbound" | "outbound" >("inbound")
     const [tuskMode, setTuskMode] = useState<boolean>(false)
+    const { monitorUsers } = useSelector(
+        (state: RootState) => state.operator.monitorData
+    );
+    const {
+        sipLogin   = '',
+        worker     = '',
+    } = store.getState().credentials;
+
+    const role =
+        // monitorUsers[sipLogin]?.type === "operator" ? "worker" : monitorUsers[sipLogin]?.type ||
+            "manager";
 
     const [outboundID, setOutboundID] = useState<number | null>(null)
     const [selectedPreset, setSelectedPreset] = useState<OptionType | null>(null);
@@ -110,11 +121,6 @@ const App: React.FC = () => {
     useEffect(()=> console.log("activeCall: ", activeCall),[activeCall])
 
     // const sessionKey = getCookies('session_key') || '';
-    const {
-        sipLogin   = '',
-        worker     = '',
-    } = store.getState().credentials;
-
     useEffect(() => {
         try {
             localStorage.setItem('fullWidthCard', JSON.stringify(fullWidthCard));
@@ -324,6 +330,7 @@ const App: React.FC = () => {
                             setGroupIDs={setGroupIDs}
                             selectedPreset={selectedPreset}
                             setSelectedPreset={setSelectedPreset}
+                            role={role}
                         />
                     }
                     <div className="row my-3">
@@ -361,6 +368,7 @@ const App: React.FC = () => {
                                             selectedPreset={selectedPreset}
                                             postCallData={postCallData}
                                             setPostCallData={setPostCallData}
+                                            role={role}
                                         />
                                     )}
                                 </div>
@@ -424,6 +432,7 @@ const App: React.FC = () => {
                                             selectedPreset={selectedPreset}
                                             postCallData={postCallData}
                                             setPostCallData={setPostCallData}
+                                            role={role}
                                         />
                                     )}
                                 </div>

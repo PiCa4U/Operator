@@ -105,8 +105,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const { monitorUsers, monitorProjects, allProjects, monitorCallcenter } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
+    console.log("123userStatuses: ", userStatuses)
     // useEffect(()=> console.log("123monitorUsers: ", monitorUsers),[monitorUsers])
-
     const fsStatus = useSelector(
         (state: RootState) => state.operator.fsStatus,
         isEqual
@@ -118,7 +118,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const projectPoolForCall = useMemo(() => {
         return projectPool.filter(project => (project.out_active && project.active)).map(project => project.project_name);
     }, [projectPool]);
-    const projectGateawayPrefix = projectPool.length && projectPool.filter(project => (project.out_active && project.active))[0].out_gateways[2].prefix
+    // const projectGateawayPrefix = projectPool.length && projectPool.filter(project => (project.out_active && project.active))[0].out_gateways[2].prefix
 
     // --- Преобразуем activeCalls к массиву, чтобы .some() не вызывал ошибку ---
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
@@ -132,20 +132,10 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     // Локальные стейты
     const [showStatuses, setShowStatuses] = useState(false);
     const [phone, setPhone] = useState('');
-    const [outExtension, setOutExtension] = useState('');
-    const [outBaseFields, setOutBaseFieldValues] = useState<any>({});
     const [callType, setCallType] = useState<'call' | 'redirect'>('call');
 
     // Стейты для исходящих/автодозвона
     const [handleOutboundCall, setHandleOutboundCall] = useState<boolean>(false)
-    // const [specialKey, setSpecialKey] = useState<string>('')
-    // const [outActivePhone, setOutActivePhone] = useState<OutActivePhone | null>(null);
-    // const [outActiveProjectName, setOutActiveProjectName] = useState('');
-    const [outActiveStartType, setOutActiveStartType] = useState('');
-    const [outActiveStart, setOutActiveStart] = useState('');
-    const [outActiveTakenReason, setOutActiveTakenReason] = useState('');
-    const [outExtensions, setOutExtensions] = useState<any[]>([]);
-    // const [assignedKey, setAssignedKey] = useState('');
     const [outPreparation, setOutPreparation] = useState(false);
     const [hasActiveCall, setHasActiveCall] = useState<boolean>(false)
     const [postCallData, setPostCallData] = useState<any>({})
@@ -154,17 +144,16 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const [typeFilter, setTypeFilter] = useState<'all' | 'operators' | 'robots'>('all');
     const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
 
-    const [callStartTime, setCallStartTime] = useState<Date | null>(null);
     const [callTimer, setCallTimer] = useState<string>('00:00');
 
     const { sessionKey } = store.getState().operator
 
-    const getPrefix = (projectName: string) => {
-        const projectGateawayPrefix =
-            projectPool.length &&
-            projectPool.find(p => p.project_name === projectName).out_gateways[2].prefix
-        return projectGateawayPrefix
-    }
+    // const getPrefix = (projectName: string) => {
+    //     const projectGateawayPrefix =
+    //         projectPool.length &&
+    //         projectPool.find(p => p.project_name === projectName).out_gateways[2].prefix
+    //     return projectGateawayPrefix
+    // }
     useEffect(() => {
         if (activeCalls.length > 0 && Object.keys(activeCalls[0]).length > 0) {
             setHasActiveCall(true);
@@ -244,7 +233,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     ? new Date(first.b_created)
                     : new Date();
 
-            setCallStartTime(start);
 
             intervalId = setInterval(() => {
                 const diffMs = Date.now() - start.getTime();
@@ -258,7 +246,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
         } else {
             // звонок закончен — сбрасываем
-            setCallStartTime(null);
             setCallTimer('00:00');
         }
 
@@ -331,12 +318,11 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             // setPrefix(msg.out_extensions[0]?.prefix || '')
             const startType = projectPool.find(p => p.project_name === msg[0].project).start_type || ""
             console.log("startType: ", startType)
-            setOutActiveStartType(startType);
             // setOutActiveStart(msg[0].start);
             // setOutActiveTakenReason(msg[0].taken_reason);
             // setOutExtensions(msg[0].out_extensions);
             // const outExtensions = projectPool.find(p => p.project_name === msg[0].project).out_gateways[2].prefix
-            setAssignedKey(msg[0].contact_key);
+            setAssignedKey(msg[0].assigned_key);
             setOutPreparation(true);
 
             if (startType === 'manual') {
@@ -358,7 +344,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                 // sip_login: sipLogin,
                                 session_key: sessionKey,
                                 // project_pool: projectPoolForCall,
-                                assigned_key: msg[0].contact_key,
+                                assigned_key: msg[0].assigned_key,
                                 log_status: 'taken',
                                 phone_status: 'taken',
                                 special_key: msg[0].special_key,
@@ -373,7 +359,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                 // sip_login: sipLogin,
                                 session_key: sessionKey,
                                 // project_pool: projectPoolForCall,
-                                assigned_key: msg[0].contact_key,
+                                assigned_key: msg[0].assigned_key,
                                 log_status: 'reject',
                                 phone_status: msg[0].phone?.status,
                                 special_key: msg[0].phone?.special_key,
@@ -397,7 +383,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                             // sip_login: sipLogin,
                             session_key: sessionKey,
                             // project_pool: projectPoolForCall,
-                            assigned_key: msg[0].contact_key,
+                            assigned_key: msg[0].assigned_key,
                             log_status: 'taken',
                             phone_status: 'taken',
                             special_key: msg[0].special_key,
@@ -525,8 +511,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     }, [sipLogin, sessionKey, roomId, worker, hasActiveCall]);
     // --- (B) Обработчик «Вызов по номеру» ---
     const handleCallByNumber = () => {
-        setOutExtension('');
-        setOutBaseFieldValues({});
         if (!activeCalls[0].application) {
             setHandleOutboundCall(true)
         }
@@ -745,14 +729,16 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             filtered = filtered.filter(([_, u]) => u.post_obrabotka === false);
         }
 
+        console.log("monitorCallcenter: ", monitorCallcenter )
         // 3. Онлайн/оффлайн
         if (statusFilter !== 'all') {
             filtered = filtered.filter(([login, user]) => {
                 // берём реальный SIP-ключ
                 const sipKey = user.sip_login || login;
 
-                const statusObj = userStatuses.statuses[sipKey] || {};
+                const statusObj = userStatuses[sipKey] || {};
                 // приводим к boolean
+
                 const isOnline = statusObj.sofia_status?.includes('Registered');
                 const online = statusFilter === "online" ? isOnline : !isOnline
                 return online
@@ -760,6 +746,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             });
         }
 
+        console.log("userStatuses.statuses: ", userStatuses.statuses)
         const liveOperators = filtered.filter(([_, u]) => u.post_obrabotka !== false);
         const robots        = filtered.filter(([_, u]) => u.post_obrabotka === false);
 
@@ -767,16 +754,16 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         const renderGroup = (entries: [string, any][]) =>
             entries.map(([login, user]) => {
                 // 1) Получаем список «ключей» проектов для этого логина, либо []
-                const projectKeys: string[] = Array.isArray(monitorCallcenter[login])
-                    ? monitorCallcenter[login]!
+                const projectNames: string[] = Array.isArray(monitorCallcenter?.[login])
+                    ? monitorCallcenter?.[login]
+                        .filter((key: string) => typeof key === 'string' || typeof key === 'number')
+                        .map((key: string) => monitorProjects?.[key] ?? key)
                     : [];
+                console.log("123333projectNames: ", projectNames)
 
-                // 2) Строим имена: если monitorProjects[key] есть — берём, иначе fallback на key
-                const projectNames = projectKeys.map(key =>
-                    monitorProjects?.[key] ?? key
-                );
                 // 1) Получаем статус для этого логина
-                const statusObj = userStatuses.statuses[login] || {};
+                const statusObj = userStatuses[login] || {};
+                console.log("statusObj: ", statusObj)
                 const { sofia_status, status: fsStatus, state: fsState } = statusObj;
                 // 2) Вычисляем Sofía-статус
                 const sofiaText  = sofia_status?.includes('Registered') ? 'Авторизован' : 'Выключен';

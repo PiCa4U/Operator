@@ -58,6 +58,7 @@ store.subscribe(() => {
 
 // остальные обработчики без изменений
 socket.on("monitor_projects", (data: any) => {
+    console.log("data: ", data)
     console.log("moniotorParsedData: ", parseMonitorData(data))
     store.dispatch(setMonitorData(parseMonitorData(data)));
 });

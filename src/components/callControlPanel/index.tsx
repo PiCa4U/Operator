@@ -154,6 +154,14 @@ type GroupFieldValues = Record<
     Record<string/*field_id*/, string/*value*/>
 >;
 
+interface ExpressState {
+    project: string;
+    express_id: number;
+    active: boolean;
+    calls: number;
+    agents: string[];
+}
+
 interface CallControlPanelProps {
     call: CallData | null;
     onClose: () => void;
@@ -183,6 +191,7 @@ interface CallControlPanelProps {
     selectedPreset?: OptionType | null
     postCallData: ActiveCall | null
     setPostCallData: (postCallData: ActiveCall | null) => void
+    role?: string
 }
 
 
@@ -214,7 +223,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                setActiveProjectName,
                                                                selectedPreset,
                                                                postCallData,
-                                                               setPostCallData
+                                                               setPostCallData,
+                                                               role
                                                            }) => {
     // Из cookies
     const { sessionKey } = store.getState().operator
@@ -250,11 +260,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // const [modules, setModules] = useState<ModuleData[]>([]);
     const [isParams, setIsParams] = useState<boolean>(true)
     const [groupSelectedIds, setGroupSelectedIds] = useState<number[]>([]);
+    const [expressStates, setExpressStates] = useState<Record<string, ExpressState>>({});
+
+    const [expressConfig, setExpressConfig] = useState<Record<string, any>>({});
 
     const [groupModalOpen, setGroupModalOpen] = useState(false);
 
     const moduleProjectMapRef = useRef<Record<number, string>>({});
 
+    useEffect(() => console.log("expressConfig: ", expressConfig),[expressConfig])
 
     // const [projectsData, setProjectsData] = useState<ProjectFieldsResponse | null>(null);
 
@@ -266,10 +280,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         if (!openedPhones) return [];
         return Array.from(new Set(openedPhones.map(p => p.project)));
     }, [openedPhones]);
-    useEffect(() => console.log("groupProjects: ", groupProjects),[groupProjects])
     useEffect(() => setActiveProjectName?.(groupProjects[0]),[groupProjects, setActiveProjectName])
     const [selectedProjects, setSelectedProjects] = useState<string[]>(groupProjects);
-    useEffect(() => console.log("555mergedFields: ", mergedFields),[mergedFields])
 
     const idProjectMap = useMemo(() =>
             openedPhones?.map(ph => ({ id: ph.id, project_name: ph.project })) || [],
@@ -342,13 +354,50 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             // const projects = ["group_project_2", "group_project_1"];
 
             socket.emit("get_project_fields",{
-                projects:projects,
+                projects: projects,
                 session_key: sessionKey,
                 worker
             })
         }
 
     },[openedPhones])
+
+    useEffect(() => {
+        if (role === "manager" && openedPhones?.length) {
+            const projects = Array.from(new Set(openedPhones.map(p => p.project)));
+
+            Promise.all(
+                projects.map(projectName =>
+                    fetch(`http://45.145.66.28:8000/api/v1/express_configs?glagol_parent=fs.at.akc24.ru&project_name=${encodeURIComponent(projectName)}`, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json',
+                        },
+                    })
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error(`Ошибка ${response.status}: ${response.statusText}`);
+                            }
+                            return response.json().then(data => ({
+                                projectName,
+                                config: data,
+                            }));
+                        })
+                )
+            )
+                .then(configs => {
+                    const configMap = configs.reduce<Record<string, any>>((acc, { projectName, config }) => {
+                        acc[projectName] = config;
+                        return acc;
+                    }, {});
+                    setExpressConfig(configMap);
+                    console.log("expressConfig: ", configMap);
+                })
+                .catch(err => {
+                    console.error("Ошибка при получении конфигов:", err);
+                });
+        }
+    }, [openedPhones]);
 // ────────────────────────────────────────────────────────────────────────────────
     const handleProjectFields = (data: {
         project_fields: string;
@@ -1290,10 +1339,101 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return Array.from(projectsSet);
     };
 
-    const findProjectPrefix = (projectName: string) => {
-        const project = projectPool.find(p => p.project_name === projectName);
-        return project.out_gateways[2].prefix
-    }
+    // const findProjectPrefix = (projectName: string) => {
+    //     const project = projectPool.find(p => p.project_name === projectName);
+    //     return project.out_gateways[2].prefix
+    // }
+
+    const handleStartExpress = async (project: string) => {
+        await fetch(`http://45.145.66.28:8000/api/v1/start_express`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                glagol_parent: 'fs.at.akc24.ru',
+                project_name: project
+            })
+        });
+
+        // 🔁 Обнови статусы
+        await fetchStatuses();
+    };
+
+    const handleStopExpress = async (project: string, express_id: number) => {
+        await fetch(`http://45.145.66.28:8000/api/v1/stop_express`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                glagol_parent: 'fs.at.akc24.ru',
+                project_name: project
+            })
+        });
+
+        // 🔁 Обнови статусы
+        await fetchStatuses();
+    };
+
+    const fetchStatuses = async () => {
+        const result: Record<string, ExpressState> = {};
+
+        await Promise.all(
+            Object.entries(expressConfig).map(async ([project, config]) => {
+                const express_id = config.express_config.id;
+
+                const [statusRes, agentsRes] = await Promise.all([
+                    fetch(`http://45.145.66.28:8000/api/v1/express_status?express_id=${express_id}`).then(r => r.json()),
+                    fetch(`http://45.145.66.28:8000/api/v1/express_agents?express_id=${express_id}`).then(r => r.json()),
+                ]);
+
+                result[project] = {
+                    project,
+                    express_id,
+                    active: statusRes.active,
+                    calls: statusRes.active_calls || 0,
+                    agents: agentsRes.operators,
+                };
+            })
+        );
+        console.log("result: ", result);
+        setExpressStates(result);
+    };
+
+    useEffect(() => {
+        if (role !== 'manager' || !Object.keys(expressConfig).length) return;
+        fetchStatuses();
+    }, [expressConfig]);
+
+    const renderExpressCards = () => {
+        return (
+            <div className="d-flex flex-column gap-3">
+                {Object.entries(expressStates).map(([project, state]) => (
+                    <div key={project} className="card p-3">
+                        <div><strong>Проект:</strong> {findNameProject(project)}</div>
+                        <div><strong>Express активен:</strong> {state.active ? 'Да' : 'Нет'}</div>
+                        <div><strong>Операторов в ожидании:</strong> {state.agents.length}</div>
+                        <div><strong>Активных вызовов:</strong> {state.calls}</div>
+                        <div className="mt-2 d-flex gap-2">
+                            {state.active ? (
+                                <button
+                                    className="btn btn-outline-danger"
+                                    onClick={() => handleStopExpress(project, state.express_id)}
+                                >
+                                    Остановить
+                                </button>
+                            ) : (
+                                <button
+                                    className="btn btn-outline-success"
+                                    onClick={() => handleStartExpress(project)}
+                                >
+                                    Запустить
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+    };
+
     const renderGroupPhones = () => {
         if (!openedPhones?.length) return null;
 
@@ -1663,7 +1803,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 <div className="card-body">
                     {hasActiveCall && renderActiveCallHeader(activeCalls[0])}
                     {!hasActiveCall && postActive && renderPostCallHeader()}
-                    {tuskMode && !hasActiveCall && !postActive && renderGroupPhones()}
+                    {tuskMode && !hasActiveCall && !postActive && role === 'worker' && renderGroupPhones()}
+                    {tuskMode && !hasActiveCall && !postActive && role === 'manager' && renderExpressCards()}
+
                     <div>
                             {!tuskMode && !hasActiveCall && !postActive && (
                                 renderSelectedCallHeader()
@@ -1838,10 +1980,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                             f => f.group_id == null || !validGroupIds.has(f.group_id)
                                         );
 
-                                        console.log("999validGroupIds: ", validGroupIds)
-                                        console.log("999groupedFields: ", groupedFields)
-                                        console.log("999orphanFields: ", orphanFields)
-
                                         return (
                                             <div
                                                 key={proj}
@@ -1935,7 +2073,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
                             </div>
                         )}
-                        {tuskMode && !(hasActiveCall || postActive) && (
+                        {tuskMode && !(hasActiveCall || postActive) && role === "worker" && (
                             <div
                                 style={{
                                     display: "grid",

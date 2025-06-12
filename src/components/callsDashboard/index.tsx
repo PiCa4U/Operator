@@ -8,6 +8,7 @@ import {initSocket} from '../../socket';
 import { getCookies } from '../../utils';
 import {CallData} from "../callControlPanel";
 import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
+import {CallRecord} from "../../App";
 
 function getDisplayNumber(call: any): string {
     if (call.total_direction === 'outbound') {
@@ -30,8 +31,8 @@ function formatLenTime(lenTime: number): string {
 }
 
 type CallsDashboardProps = {
-    setSelectedCall: (call: CallData) => void
-    selectedCall: CallData | null
+    setSelectedCall: (call: CallRecord) => void
+    selectedCall: CallRecord | null
     currentPage: number
     setCurrentPage: (currentPage: number) => void
     isLoading: boolean
@@ -112,16 +113,18 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
             }
         }
         setIsLoading(true);
-        socket.emit('get_fs_report', {
-            worker,
-            session_key: sessionKey,
-            sip_login: sipLogin,
-            room_id: roomId,
-            fs_server: fsServer,
-            level: (currentPage - 1) * 10,
-            date_range: dateRangeString,
-            phone_search: searchParams.phone,
-        });
+        if (roomId !== "default_room") {
+            socket.emit('get_fs_report', {
+                worker,
+                session_key: sessionKey,
+                sip_login: sipLogin,
+                room_id: roomId,
+                fs_server: fsServer,
+                level: (currentPage - 1) * 10,
+                date_range: dateRangeString,
+                phone_search: searchParams.phone,
+            });
+        }
     }, [searchParams, currentPage, worker, sessionKey, sipLogin, roomId, fsServer]);
 
     useEffect(() => {
@@ -163,12 +166,12 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
     const showCallEdit = (callId: number, isFilled: boolean) => {
         const allCalls: CallData[] = [...callsToFill, ...callsFilled];
         const call = allCalls.find(c => c.id === callId);
-        if (!call) return;
+        if (!call || !call.project_name || forbiddenProjects.includes(call.project_name)) return;
 
         let adjustedCall = { ...call };
 
-        if (adjustedCall.total_direction === 'outbound' && typeof adjustedCall.project_name === 'string') {
-            const baseName = adjustedCall.project_name.replace(/\s*\(.*\)$/, '');
+        if (adjustedCall.total_direction === 'outbound') {
+            const baseName = adjustedCall.project_name?.replace(/\s*\(.*\)$/, '');
             const fullName = `${baseName}@default`;
             const proj = projectPool.find(p => p.project_name === fullName);
             if (proj) {
@@ -176,7 +179,7 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
             }
         }
 
-        setSelectedCall(adjustedCall);
+        setSelectedCall(adjustedCall as CallRecord);
     };
 
     const handleDateChange = (dates: [Date | null, Date | null]) => {

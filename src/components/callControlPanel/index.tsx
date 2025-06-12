@@ -7,7 +7,7 @@ import EditableFields from "./components";
 import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
 import {OutActivePhone} from "../headerPanel";
 import SearchableSelect from "./components/select";
-import {ModuleData} from "../../App";
+import {CallRecord, ModuleData} from "../../App";
 
 export interface ReasonItem {
     id: string;
@@ -121,7 +121,7 @@ export interface ActiveCall {
 
 
 interface CallControlPanelProps {
-    call: CallData | null;
+    call: CallRecord | null;
     onClose: () => void;
     activeProject: string;
     postActive: boolean;
@@ -180,7 +180,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [callReasons, setCallReasons] = useState<ReasonItem[]>([]);
     const [callResults, setCallResults] = useState<ResultItem[]>([]);
     const [params, setParams]      = useState<FieldDefinition[]>([]);
-
+    console.log("params: ", params)
     const [callId, setCallId] = useState<string | null>(null);
 
     // Состояние для списка модулей, полученных с сервера
@@ -249,8 +249,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         if (!hasActiveCall) {
             startModulesRanRef.current = false;
         }
-
     }, [hasActiveCall]);
+
+    useEffect(() => {
+        if (!hasActiveCall && !postActive) {
+            startModulesRanRef.current = false;
+        }
+    }, [call]);
 
     useEffect(() => {
 
@@ -275,6 +280,28 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
 
     }, [activeCalls, activeProject, modules, hasActiveCall, postActive]);
+
+    useEffect(() => {
+        if (
+            !hasActiveCall &&
+            !postActive &&
+            call &&
+            !call.call_result &&
+            modules.length > 0 &&
+            !startModulesRanRef.current
+        ) {
+            const projectName = call.project_name;
+            if (!projectName) return;
+
+            const startModules = modules.filter(
+                mod => mod.start_modes[projectName] === "start"
+            );
+            if (startModules.length > 0) {
+                startModules.forEach(mod => handleModuleRun(mod));
+                startModulesRanRef.current = true;
+            }
+        }
+    }, [call, hasActiveCall, postActive, modules]);
 
     useEffect(()=> {
         if (postActive) {
@@ -364,13 +391,18 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // }, [hasActiveCall, postActive]);
 
     useEffect(() => {
-        // setModules([]);
         startModulesRanRef.current = false;
 
-        if (!hasActiveCall || !activeProject) return;
+        const project = hasActiveCall || activeProject
+            ? activeProject
+            : (!call?.call_result && call?.project_name)
+                ? call.project_name
+                : null;
+
+        if (!project) return;
 
         const handleModules = (data: any) => {
-            if (data.project_name !== activeProject) return;
+            if (data.project_name !== project) return;
             setModules(data.modules || []);
         };
 
@@ -382,19 +414,19 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             room_id: roomId,
             fs_server: fsServer,
             action: 'get_modules',
-            project_name: activeProject,
+            project_name: project,
         });
 
         return () => {
             socket.off('get_modules', handleModules);
-            // setModules([]);
             startModulesRanRef.current = false;
         };
-
-    }, [hasActiveCall, activeProject]);
+    }, [hasActiveCall, activeProject, call]);
 
     // Функция для запуска модуля
     const handleModuleRun = (mod: any) => {
+        const projectName = activeProject || call?.project_name || "";
+
         // Базовый payload
         const payload: any = {
             worker,
@@ -404,10 +436,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             fs_server: fsServer,
             action: 'run_module',
             name___n: mod.name,
-            project_name: activeProject,
-            uuid: activeCalls[0]?.uuid || postCallData?.uuid || '',
-            b_uuid: activeCalls[0]?.b_uuid || postCallData?.uuid || '',
-            run_mode: mod.start_modes[activeProject],
+            project_name: projectName,
+            uuid: activeCalls[0]?.uuid || postCallData?.uuid || call?.special_key_call,
+            b_uuid: activeCalls[0]?.b_uuid || postCallData?.uuid || call?.special_key_conn,
+            run_mode: mod.start_modes[projectName],
             ma_id: mod.id,
             c_s: 1,
         };
@@ -424,7 +456,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 rawValue = baseFieldValues[baseKey];
             } else {
                 // 2) иначе собираем из call / пост-колл данных
-                const call = hasActiveCall ? activeCalls[0] : postCallData;
+                const actCall = hasActiveCall ? activeCalls[0] : postCallData;
                 switch (baseKey) {
                     case 'operator_id':
                         rawValue = sipLogin;
@@ -441,25 +473,25 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     }
                     case 'phone':
                         rawValue =
-                            call?.direction === 'outbound' ? call?.b_dest : call?.cid_num;
+                            actCall ? (actCall?.direction === 'outbound' ? actCall?.b_dest : actCall?.cid_num) : (call?.total_direction === 'outbound' ? call?.b_line_num : call?.a_line_num)
                         break;
                     case 'comment':
                         rawValue = comment;
                         break;
                     case 'uuid':
-                        rawValue = call?.uuid || '';
+                        rawValue = actCall ? actCall?.uuid : call?.special_key_call
                         break;
                     case 'b_uuid':
-                        rawValue = call?.b_uuid || '';
+                        rawValue = actCall ? actCall?.b_uuid : call?.special_key_conn;
                         break;
                     case 'datetime_start':
-                        rawValue = call?.created || '';
+                        rawValue = actCall ? actCall?.created : call?.datetime_start;
                         break;
                     case 'dest':
-                        rawValue = call?.dest || '';
+                        rawValue = actCall ? actCall?.dest : call?.destination_id;
                         break;
                     case 'cid_num':
-                        rawValue = call?.cid_num || '';
+                        rawValue = actCall ? actCall?.cid_num : call?.caller_id;
                         break;
                     default:
                         rawValue = '';
@@ -483,25 +515,24 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
             const outputs = mod.outputs || {};
             const returnedValues: Record<string, string> = data.module_return || {};
+            const proj = activeProject || call?.project_name || "";
+
+            const updatedSelectFieldIds: string[] = [];
 
             setParams(prevParams =>
                 prevParams.map(p => {
-                    // нашли, какой field_id нужно обновить
                     const outName = Object.keys(outputs).find(
-                        name => outputs[name]?.[activeProject] === p.field_id
+                        name => outputs[name]?.[proj] === p.field_id
                     );
                     if (!outName) return p;
 
-                    // “сырое” значение из модуля
                     const rawValue = returnedValues[outName];
                     if (typeof rawValue !== 'string') return p;
 
-                    // нормализуем маркером
                     const normalized = rawValue.includes('|_|_|')
                         ? rawValue
                         : `${rawValue}|_|_|`;
 
-                    // Парсим новые и старые опции
                     const newOpts = normalized
                         .split('|_|_|')
                         .map(s => s.trim())
@@ -513,13 +544,14 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         .map(s => s.trim())
                         .filter(Boolean);
 
-                    // Если все новые опции уже есть среди старых — не меняем
                     const allExist = newOpts.every(opt => oldOpts.includes(opt));
-                    if (allExist) {
-                        return p;
+                    if (allExist) return p;
+
+                    // Если это поле — select, пометим для сброса значения
+                    if (p.field_type === 'select') {
+                        updatedSelectFieldIds.push(p.field_id);
                     }
 
-                    // Иначе — обновляем field_vals
                     return {
                         ...p,
                         field_vals: normalized
@@ -527,17 +559,27 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 })
             );
 
-            // baseFieldValues можно оставить без изменений
+            const updatedBase: Record<string, string> = {};
+
             Object.entries(returnedValues).forEach(([outName, rawValue]) => {
-                const key = outputs[outName]?.[activeProject];
+                const key = outputs[outName]?.[proj];
                 if (!key) return;
-                setBaseFieldValues(prev => ({
-                    ...prev,
-                    [key]: typeof rawValue === 'string'
+
+                updatedBase[key] =
+                    typeof rawValue === 'string'
                         ? rawValue
-                        : JSON.stringify(rawValue)
-                }));
+                        : JSON.stringify(rawValue);
             });
+
+            // Добавляем сброс значения для обновлённых select
+            updatedSelectFieldIds.forEach(fieldId => {
+                updatedBase[fieldId] = '';
+            });
+
+            setBaseFieldValues(prev => ({
+                ...prev,
+                ...updatedBase
+            }));
 
             Swal.fire({
                 title: "Успех",
@@ -550,7 +592,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return () => {
             socket.off("run_module", handleModuleResult);
         };
-    }, [modules, activeProject, setParams, setBaseFieldValues]);
+    }, [modules, activeProject, setParams, setBaseFieldValues, call]);
 
     // Логика постобработки (если звонок завершён)
     useEffect(() => {
@@ -675,8 +717,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         const reasonText = callReasons.find(r => String(r.id) === callReason)?.name || '';
         const resultText = callResults.find(r => String(r.id) === callResult)?.name || '';
         const sanitizedBaseFields = Object.fromEntries(
-            Object.entries(baseFieldValues).map(([k, v]) => [k, sanitize(v)])
+            params.map(p => {
+                const val = baseFieldValues[p.field_id];
+                return [p.field_id, sanitize(val ?? '')];
+            })
         );
+
         socket.emit('edit_call_fs', {
             fs_server: fsServer,
             call_id:   call?.id,
@@ -744,7 +790,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         }
         const sanitizedBaseFields = Object.fromEntries(
-            Object.entries(baseFieldValues).map(([k, v]) => [k, sanitize(v)])
+            params.map(p => {
+                const val = baseFieldValues[p.field_id];
+                return [p.field_id, sanitize(val ?? '')];
+            })
         );
 
         socket.emit("edit_call_fs", {
@@ -973,15 +1022,22 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         );
     };
     const renderModules = () => {
-        if (!hasActiveCall && !postActive) {
-            return null
-        };
-        const manualModules = modules.filter(mod => mod.start_modes[activeProject] === "manual")
+        const currentProject = !call ? activeProject : call?.call_result ? "" : call.project_name;
+        if (!currentProject) return null;
+
+        const manualModules = modules.filter(mod => mod.start_modes[currentProject] === "manual");
         if (manualModules.length === 0) return null;
 
         return (
-            <div style={{display: "flex", flexDirection: "row", gap: 8, alignItems: "center", marginLeft:20, marginBottom: 10}}>
-                <div style={{fontWeight: 600, fontSize: 16}}>Модули: </div>
+            <div style={{
+                display: "flex",
+                flexDirection: "row",
+                gap: 8,
+                alignItems: "center",
+                marginLeft: 20,
+                marginBottom: 10
+            }}>
+                <div style={{ fontWeight: 600, fontSize: 16 }}>Модули: </div>
                 {manualModules.map((mod, idx) => (
                     <button
                         key={idx}
@@ -994,6 +1050,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             </div>
         );
     };
+
     return (
         <div>
             {renderModules()}
@@ -1054,7 +1111,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                         value={callReason}
                                         onChange={setCallReason}
                                         placeholder="Выберите причину..."
-                                        augmentSaved={!hasActiveCall && !postActive}
+                                        augmentSaved={!hasActiveCall && !postActive && !call?.call_result}
                                     />
                                 </div>
                             )}
@@ -1068,7 +1125,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                         value={callResult as number}
                                         onChange={setCallResult}
                                         placeholder="Выберите результат..."
-                                        augmentSaved={!hasActiveCall && !postActive}
+                                        augmentSaved={!hasActiveCall && !postActive && !call?.call_result}
                                     />
                                 </div>
                             )}
@@ -1076,7 +1133,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 params={params}
                                 initialValues={baseFieldValues}
                                 onChange={setBaseFieldValues}
-                                augmentSaved={!hasActiveCall && !postActive}
+                                augmentSaved={!hasActiveCall && !postActive && !call?.call_result}
                             />
                             {((hasActiveCall || postActive) || !hideReportFields) && (
                                 <div className="form-group d-flex align-items-center" style={{ flexWrap: 'nowrap', gap: '8px' }}>

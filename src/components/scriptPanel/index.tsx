@@ -6,6 +6,7 @@ import {RootState, store} from "../../redux/store";
 import { getCookies } from "../../utils";
 import {CallData} from "../callControlPanel";
 import {Project} from "../headerPanel";
+import {CallRecord} from "../../App";
 
 /** Упрощённая функция для рендера EditorJS-данных. */
 function renderEditorJsData(data: any) {
@@ -91,6 +92,7 @@ interface ScriptPanelProps {
     uuid?: string;
     bUuid?: string;
     onClose: () => void;
+    selectedCall?: CallRecord
 }
 
 const ScriptPanel: React.FC<ScriptPanelProps> = ({
@@ -99,6 +101,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
                                                      uuid = '',
                                                      bUuid = '',
                                                      onClose,
+                                                     selectedCall
                                                  }) => {
     const {
         sessionKey = '',
@@ -136,6 +139,9 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
         setSelectedQuestion(q);
     };
 
+    useEffect(() => console.log("111editScript: ",direction),[direction])
+    useEffect(() => console.log("111editProject: ",projectName),[projectName])
+
     // Из Redux — массив активных звонков
     const activeCalls: any[] = useSelector((state: RootState) => state.operator.activeCalls);
     const hasActiveCall = Array.isArray(activeCalls) ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
@@ -163,6 +169,19 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
                 direction,
                 uuid: currentUuid || "",
                 b_uuid: currentBUuid || "",
+                project_name: projectName
+            });
+        } if (selectedCall) {
+            socket.emit('script_operations', {
+                worker,
+                sip_login: sipLogin,
+                session_key: sessionKey,
+                room_id: roomId,
+                fs_server: fsServer,
+                action: 'start_script',
+                direction,
+                uuid: selectedCall.special_key_call || "",
+                b_uuid: selectedCall.special_key_conn || "",
                 project_name: projectName
             });
         }

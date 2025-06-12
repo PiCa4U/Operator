@@ -19,8 +19,73 @@ export interface ModuleData {
     inputs: { [inputKey: string]: { [project: string]: any } };
     outputs: { [inputKey: string]: { [project: string]: any } };
 }
+export interface CallRecord {
+    a_line_num: string;
+    api_transfer: boolean;
+    b_line_num: string;
+    base_fields: Record<string, string>;
+    billsec: number;
+    call_reason: number | null;
+    call_reson_manual: string | null;
+    call_result: number | null;
+    call_result_manual: string | null;
+    call_stopper: string;
+    caller_context: string;
+    caller_id: string;
+    cc_cancel_reason: string | null;
+    cc_cause: string | null;
+    cc_member_pre_answer_uuid: string | null;
+    cc_member_session_uuid: string | null;
+    cc_member_uuid: string | null;
+    cc_queue_joined_epoch: string | null; // ISO дата-время
+    cc_queue_terminated_epoch: string | null;
+    channel_call_state: string;
+    channel_direction: "inbound" | "outbound" | "internal";
+    channel_name: string;
+    date_end: string; // YYYY-MM-DD
+    date_start: string;
+    datetime_end: string; // YYYY-MM-DD HH:mm:ss
+    datetime_start: string;
+    destination_id: string;
+    direction: "inbound" | "outbound";
+    duration: number;
+    event_sequence: number;
+    fs_server: string;
+    hangup_cause: string;
+    id: number;
+    id_gateway: string | null;
+    is_recorded: boolean;
+    len_queue: number;
+    len_time: number;
+    missed_mark: string | null;
+    oper_saved: boolean | null;
+    other_type: string;
+    project_name: string;
+    recall: boolean;
+    record_name: string;
+    refer_uuid: string | null;
+    seqence_num: string;
+    special_key_call: string;
+    special_key_conn: string;
+    stampsec: number;
+    time_end: string; // HH:mm:ss
+    time_start: string;
+    total_direction: string;
+    total_queue_time: number | null;
+    transfer_destination: string | null;
+    transfered: boolean | null;
+    user_comment: string | null;
+    user_login: string;
+    variable_cc_queue: string | null;
+    variable_last_arg: string | null;
+    variable_profile_start_stamp: string;
+    variable_sip_contact_user: string;
+    waitsec: number;
+}
+
+
 const App: React.FC = () => {
-    const [selectedCall, setSelectedCall] = useState<CallData | null>(null);
+    const [selectedCall, setSelectedCall] = useState<CallRecord | null>(null);
     const [showScriptPanel, setShowScriptPanel] = useState<boolean>(false);
     const [activeCall, setActiveCall] = useState<boolean>(false);
     const [activeProjectName, setActiveProjectName] = useState<string>("")
@@ -36,6 +101,9 @@ const App: React.FC = () => {
     const [prefix, setPrefix] = useState<string>('')
     const [get_callcenter, setGet_callcenter] = useState<boolean>(false)
     const [scriptDir, setScriptDir] = useState<"inbound" | "outbound" >("inbound")
+    const [editScript, setEditScript] = useState<string>("")
+    const [editProject, setEditProject] = useState<string>("")
+
 
     const socket = initSocket();
     const {
@@ -45,6 +113,17 @@ const App: React.FC = () => {
         worker     = '',
     } = store.getState().credentials;
 
+    useEffect(() => {
+        console.log("selected: ", selectedCall)
+        if (selectedCall && !selectedCall.call_reason) {
+            setEditScript(selectedCall.total_direction)
+            setEditProject(selectedCall.project_name || "")
+        }
+        if (!selectedCall) {
+            setEditScript("")
+            setEditProject("")
+        }
+    },[selectedCall])
 
 
     const dispatch = useDispatch();
@@ -60,6 +139,9 @@ const App: React.FC = () => {
         if (first.uuid !== "" && first.cid_num !== "" && !get_callcenter && !outboundCall){
             setGet_callcenter(true)
             setScriptDir("inbound")
+            setSelectedCall(null)
+            setEditProject('')
+            setEditScript('')
             socket.emit('get_callcenter_queues', {
                 'fs_server':fsServer,
                 'room_id':roomId,
@@ -81,6 +163,8 @@ const App: React.FC = () => {
         if (!activeCall && !postActive) {
             setActiveProjectName('');
             setSelectedCall(null);
+            setEditProject('')
+            setEditScript('')
             setOutboundCall(false);
             setOutActivePhone(null);
             setGet_callcenter(false)
@@ -117,12 +201,16 @@ const App: React.FC = () => {
         const getOuboundProject = (msg:any) => {
             setActiveProjectName(msg.project_name)
             setScriptDir("outbound")
+            setSelectedCall(null)
+            setEditProject('')
+            setEditScript('')
         }
         socket.on('get_out_start', getOuboundProject);
         return () => {
             socket.off('get_out_start', getOuboundProject);
         };
     },[])
+
     useEffect(()=> {
         if (postActive) {
             socket.emit('get_fs_report', {
@@ -166,6 +254,7 @@ const App: React.FC = () => {
         };
 
     },[socket])
+
     useEffect(() => {
         const handleFsStatus = (msg: any) => {
             dispatch(setFsStatus(msg));
@@ -245,22 +334,30 @@ const App: React.FC = () => {
 
             <div className="row my-3">
                 <div className="col-12 col-md-7">
-                    {showScriptPanel || (activeCalls[0] && Object.keys(activeCalls[0]).length > 0 && activeCalls[0].uuid && activeProjectName) || activeCall || (postActive && activeProjectName)  ? (
+                    {showScriptPanel || (activeCalls[0] && Object.keys(activeCalls[0]).length > 0 && activeCalls[0].uuid && activeProjectName) || activeCall || (postActive && activeProjectName) ? (
                         <ScriptPanel
                             direction={scriptDir}
                             projectName={activeProjectName}
                             onClose={() => setShowScriptPanel(false)}
                         />
-                    ) : (
-                        <CallsDashboard
-                            setSelectedCall={setSelectedCall}
-                            selectedCall={selectedCall}
-                            currentPage={currentPage}
-                            setCurrentPage={setCurrentPage}
-                            isLoading={isLoading}
-                            setIsLoading={setIsLoading}
-                        />
-                    )}
+                    ) :
+                        selectedCall && !selectedCall.call_reason && editProject ?
+                            <ScriptPanel
+                                direction={editScript}
+                                projectName={editProject}
+                                selectedCall={selectedCall}
+                                onClose={() => setSelectedCall(null)}
+                            />
+                            :
+                            <CallsDashboard
+                                setSelectedCall={setSelectedCall}
+                                selectedCall={selectedCall}
+                                currentPage={currentPage}
+                                setCurrentPage={setCurrentPage}
+                                isLoading={isLoading}
+                                setIsLoading={setIsLoading}
+                            />
+                    }
                 </div>
 
                 <div className="col-12 col-md-5">

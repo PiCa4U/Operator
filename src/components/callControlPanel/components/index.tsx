@@ -28,6 +28,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
         onChange?.(newValues);
     };
 
+
     return (
         <div>
             {visibleParams.map(param => {
@@ -78,17 +79,26 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
 
                         {param.field_type === 'select' && (() => {
                             const raw = param.field_vals || '';
-                            // если есть специальный маркер, split по нему, иначе — по запятой
                             const splitVals = raw.includes('|_|_|')
                                 ? raw.split('|_|_|')
                                 : raw.split(',');
-                            const opts = splitVals.map(s => s.trim()).filter(Boolean);
-                            // добавляем пустой вариант для очистки
+                            let opts = splitVals.map(s => s.trim()).filter(Boolean);
+
+                            // 🔽 нормализуем текущее значение
+                            const normalizedValue = currentValue.includes('|_|_|')
+                                ? currentValue.split('|_|_|')[0].trim()
+                                : currentValue;
+
+                            // 🔁 добавляем текущее значение, если его нет в опциях
+                            if (normalizedValue && !opts.includes(normalizedValue)) {
+                                opts = [...opts, normalizedValue];
+                            }
+
                             const options = [{ id: '', name: '' }, ...opts.map(o => ({ id: o, name: o }))];
 
                             return (
                                 <SearchableSelect
-                                    value={currentValue}
+                                    value={normalizedValue}
                                     onChange={val => handleChange(param.field_id, val)}
                                     options={options}
                                     placeholder="Выберите..."

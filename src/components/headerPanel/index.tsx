@@ -106,7 +106,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const projectPoolForCall = useMemo(() => {
         return projectPool.filter(project => (project.out_active && project.active)).map(project => project.project_name);
     }, [projectPool]);
-    const projectGateawayPrefix = projectPool.length && projectPool.filter(project => (project.out_active && project.active))[0].out_gateways[2].prefix
 
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
     const activeCalls = useMemo(() => {
@@ -252,13 +251,14 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         const s_dot = worker.indexOf('.');
         const s_login = worker.slice(s_dot + 1);
 
-        socket.emit('monitor_fs', {
-            login: s_login,
-            room_id: roomId,
-            fs_server: fsServer,
-            action: 'get_projects'
-        });
-
+        if (roomId !== "default_room") {
+            socket.emit('monitor_fs', {
+                login: s_login,
+                room_id: roomId,
+                fs_server: fsServer,
+                action: 'get_projects'
+            });
+        }
     }, [worker, roomId, fsServer]);
 
 

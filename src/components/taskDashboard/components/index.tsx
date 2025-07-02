@@ -211,16 +211,16 @@ const GroupActionModal: React.FC<Props> = ({
 
     // загрузка данных при открытии
     useEffect(() => {
-        if (!isOpen || !preset) return;
+        if (!isOpen) return;
         setLoading(true);
         fetch('http://45.145.66.28:8000/api/v1/get_grouped_phones', {
             method: 'POST',
             headers: { 'Content-Type':'application/json' },
             body: JSON.stringify({
                 glagol_parent: glagolParent,
-                group_by: preset.group_by,
+                group_by: preset?.group_by,
                 filter_by: { project: ['IN', projectNames] },
-                group_table: preset.group_table,
+                group_table: preset?.group_table,
                 role
             })
         })
@@ -277,7 +277,7 @@ const GroupActionModal: React.FC<Props> = ({
                 onClick={e => e.stopPropagation()}
             >
                 <div className={stylesModal.header}>
-                    <h2>Совершить действие: «{action?.action_name}»</h2>
+                    <h2>Совершить действие: «{action?.action_name ?? "сохранить"}»</h2>
                     <h4>Кол-во контактов: {rawRows.length}</h4>
                 </div>
 

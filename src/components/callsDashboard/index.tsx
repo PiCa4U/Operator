@@ -55,7 +55,7 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
 
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
-    const forbiddenProjects = ['outbound', 'api_call', 'no_project_out'];
+    const forbiddenProjects = ['api_call', 'no_project_out'];
 
     // Пагинация
     // const [currentPage, setCurrentPage] = useState(1);
@@ -100,16 +100,24 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
     }, []);
 
     useEffect(() => {
+        const formatDate = (date: Date): string => {
+            const year  = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day   = String(date.getDate()).padStart(2, '0');
+            return `${year}.${month}.${day}`;
+        };
+
         let dateRangeString = '';
         if (searchParams.start) {
-            const startStr = searchParams.start.toLocaleDateString('ru-RU');
+            const startStr = formatDate(searchParams.start);
             if (searchParams.end) {
-                const endStr = searchParams.end.toLocaleDateString('ru-RU');
+                const endStr = formatDate(searchParams.end);
                 dateRangeString = `${startStr} - ${endStr}`;
             } else {
                 dateRangeString = startStr;
             }
         }
+
         setIsLoading(true);
         socket.emit('get_fs_report', {
             worker,
@@ -121,10 +129,32 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
         });
     }, [searchParams, currentPage, worker, sessionKey, sipLogin, roomId]);
 
+    function cleanProjectName(name: string): string {
+        console.log("nameOriginal:",name)
+
+        console.log("name:",name.replace(/\s*\(.*?\)\s*$/, '').trim())
+        return name.replace(/\s*\(.*?\)\s*$/, '').trim();
+    }
+
     useEffect(() => {
         if (!fsReport || !Array.isArray(fsReport)) return;
-        const toFill = fsReport.filter(call => !call.call_reason && !call.call_result);
-        const filled = fsReport.filter(call => call.call_reason || call.call_result);
+
+        const toFill = fsReport.filter(call => {
+            const keys = call.projects ? Object.keys(call.projects) : [];
+            if (keys.length === 0) return false;
+
+            const proj = call.projects[keys[0]];  // proj: Project
+            return proj.call_reason == null && proj.call_result == null;
+        });
+
+        const filled = fsReport.filter(call => {
+            const keys = call.projects ? Object.keys(call.projects) : [];
+            if (keys.length === 0) return false;
+
+            const proj = call.projects[keys[0]];
+            return Boolean(proj.call_reason) || Boolean(proj.call_result);
+        });
+
         setCallsToFill(toFill);
         setCallsFilled(filled);
         setIsLoading(false);
@@ -178,6 +208,7 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
 
     const handleDateChange = (dates: [Date | null, Date | null]) => {
         const [start, end] = dates;
+        console.log("dates: ", dates)
         setStartDate(start);
         setEndDate(end);
     };

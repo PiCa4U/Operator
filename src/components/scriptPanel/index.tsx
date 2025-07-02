@@ -73,7 +73,7 @@ function renderEditorJsData(data: any) {
 interface ScriptButton {
     Text: string;
     NextNumber: number;
-    Keynote: string;       // Определяет цвет кнопки (0..4)
+    Keynote: string;
     BlockResultId?: number;
 }
 
@@ -297,16 +297,16 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     };
 
     return (
-        <div className="card border-info p-3 ml-3 mr-3 w-100" style={{ backgroundColor: '#fff' }}>
+        <div className="card border-info p-3  w-99" style={{ backgroundColor: '#fff', marginLeft: "25px" }}>
             <div className="d-flex justify-content-between align-items-center mb-2">
                 <h5 className="mb-0 text-dark">
                     {blockName || 'Приветствие'}
                 </h5>
-                <button onClick={onClose} className="btn btn-outline-light text text-dark">
-                    <span className="material-icons" style={{marginTop: 4}}>
-                        close
-                    </span>
-                </button>
+                {/*<button onClick={onClose} className="btn btn-outline-light text text-dark">*/}
+                {/*    <span className="material-icons" style={{marginTop: 4}}>*/}
+                {/*        close*/}
+                {/*    </span>*/}
+                {/*</button>*/}
             </div>
 
             <div className="mb-3" style={{ fontSize: '1rem', lineHeight: '1.5' }}>

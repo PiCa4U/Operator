@@ -1,20 +1,21 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, {useState, useMemo, useEffect, useRef} from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { setRoomId } from './redux/roomSlice';
-import HeaderPanel, {OutActivePhone, Project} from './components/headerPanel';
+import HeaderPanel, {Project} from './components/headerPanel';
 import CallControlPanel, {ActiveCall, CallData} from './components/callControlPanel';
 import CallsDashboard from './components/callsDashboard';
 import ScriptPanel from './components/scriptPanel';
 import { socket } from "./socket";
 import { getCookies, makeId } from "./utils";
-import {setActiveCalls, setFsStatus, setUserStatuses} from './redux/operatorSlice';
+import {makeSelectFullProjectPool, setActiveCalls, setFsStatus, setUserStatuses} from './redux/operatorSlice';
 import {RootState, store} from './redux/store';
-import TasksDashboard, {ApiRow, OptionType} from "./components/taskDashboard";
-import {first} from "lodash";
+import TasksDashboard, {ApiRow, OptionType, Preset} from "./components/taskDashboard";
+import stylesButton from './components/callControlPanel/index.module.css';
 
 
 
 export interface ModuleData {
+    start_modes: string[];
     filename: string;
     id: number;
     kwargs: any;
@@ -34,7 +35,7 @@ const App: React.FC = () => {
     const [postActive, setPostActive] = useState<boolean>(false);
     const [currentPage, setCurrentPage] = useState(1);
     const [outboundCall, setOutboundCall] = useState<boolean>(false)
-    const [outActivePhone, setOutActivePhone] = useState<OutActivePhone | null>(null);
+    const [outActivePhone, setOutActivePhone] = useState<string | null>(null);
     const [outActiveProjectName, setOutActiveProjectName] = useState('');
     const [assignedKey, setAssignedKey] = useState('');
     const [isLoading,    setIsLoading]    = useState(false);
@@ -44,22 +45,34 @@ const App: React.FC = () => {
     const [monoModules, setMonoModules] = useState<MonoProjectsModuleData>({})
     const [scriptProject, setScriptProject] = useState<string>("")
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
+    const [expressCall, setExpressCall] = useState<boolean>(false)
 
+    const momoProjectRepo = useRef<boolean>(false)
+    const startModulesRanRef = useRef<boolean>(false);
+
+    useEffect(() => {
+        console.log("TESTMODmonoModules: ", monoModules)
+        console.log("TESTMODmodules: ", modules)
+
+    },[modules, monoModules])
     const [prefix, setPrefix] = useState<string>('')
     const [get_callcenter, setGet_callcenter] = useState<boolean>(false)
     const [scriptDir, setScriptDir] = useState<"inbound" | "outbound" >("inbound")
     const [tuskMode, setTuskMode] = useState<boolean>(false)
+    const [presets, setPresets] = useState<OptionType[]>([]);
+
     const { monitorUsers } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
+    useEffect(() => console.log("postActive: ", postActive),[postActive])
+
     const {
         sipLogin   = '',
         worker     = '',
     } = store.getState().credentials;
 
     const role =
-        // monitorUsers[sipLogin]?.type === "operator" ? "worker" : monitorUsers[sipLogin]?.type ||
-            "manager";
+        monitorUsers[sipLogin]?.type || "operator"
 
     const [outboundID, setOutboundID] = useState<number | null>(null)
     const [selectedPreset, setSelectedPreset] = useState<OptionType | null>(null);
@@ -73,7 +86,7 @@ const App: React.FC = () => {
     });
 
     useEffect(()=> {
-        if (showTasksDashboard) {
+        if (showTasksDashboard && !momoProjectRepo.current) {
             setSelectedCall(null)
         }
     },[showTasksDashboard])
@@ -83,38 +96,97 @@ const App: React.FC = () => {
     const [GroupIDs, setGroupIDs] = useState<any[]>([])
     useEffect(() => console.log("outboundCall: ", outboundCall),[outboundCall])
     useEffect(() => console.log("openedGroup: ", openedGroup),[openedGroup])
+    useEffect(() => console.log("GroupIDs: ", GroupIDs),[GroupIDs])
 
+    const selectFullProjectPool3 = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
+    // Вызываем useSelector для получения «полных» проектов
+    const projectPool2 = useSelector(selectFullProjectPool3) || [];
+    const projectPoolForCall = useMemo(() => {
+        return projectPool2
+            // .filter(project => (project.out_active && project.active))
+            .map(project => project.project_name);
+    }, [projectPool2]);
+
+    useEffect(() => {
+        if(!showTasksDashboard) {
+            setOpenedGroup([])
+            setPhonesData([])
+            setOpenedPhones([])
+            setGroupIDs([])
+        }
+        // if(!postActive && !activeCall) {
+        //     setOpenedGroup([])
+        //     setPhonesData([])
+        //     setOpenedPhones([])
+        //     setGroupIDs([])
+        // }
+    },[showTasksDashboard, postActive])
     useEffect(() => console.log("openedPhones: ", openedPhones),[openedPhones])
     useEffect(() => console.log("phonesData: ", phonesData),[phonesData])
 
+    const groupProjects = useMemo(() =>
+            Array.from(new Set(openedPhones.map(p => p.project))),
+        [openedPhones]
+    );
+
+    const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
+    const projectPool = useSelector(selectFullProjectPool) || [];
+
+    const projectColors = useMemo(() => {
+        const palette = [
+            '#4c78a8', '#f58518', '#54a24b', '#e45756',
+            '#b279a2', '#9d755d', '#bab0ac', '#72b7b2',
+            '#f2cf5b', '#7b4173',
+        ];
+        return groupProjects.reduce<Record<string,string>>((acc, proj, i) => {
+            acc[proj] = palette[i % palette.length];
+            return acc;
+        }, {});
+    }, [groupProjects]);
+
     useEffect(() => {
-        if(!tuskMode) {
-            setOpenedPhones([])
-            setPhonesData([])
-            setOpenedGroup([])
+        if (groupProjects.length > 0) {
+            setScriptProject(groupProjects[0]);
+        } else {
+            setScriptProject(''); // или null
         }
-    },[tuskMode])
+    }, [groupProjects]);
+
+    // useEffect(() => {
+    //     if(!showTasksDashboard) {
+    //         setOpenedPhones([])
+    //         setPhonesData([])
+    //         setOpenedGroup([])
+    //     }
+    // },[showTasksDashboard])
     useEffect(() => {
-        if (openedGroup.length > 0 && phonesData.length > 0 && !outboundCall && !outboundID) {
-            const matched = phonesData.filter(phone =>
-                openedGroup.includes(phone.id)
-            );
-            setOpenedPhones(matched);
-        } else if (GroupIDs?.length > 0 && outboundCall && phonesData.length > 0 && outboundID) {
-            const matchedGroup = GroupIDs.find(group => group.includes(outboundID));
-            if (matchedGroup) {
+        // 🗂 Работает только если TasksDashboard активен И нет активного outbound вызова И нет выбранного outboundID
+        if (showTasksDashboard && !outboundCall && !outboundID) {
+            if (openedGroup.length > 0 && phonesData.length > 0) {
                 const matched = phonesData.filter(phone =>
-                    matchedGroup.includes(phone.id)
+                    openedGroup.includes(phone.id)
                 );
-                console.log("matched: ", matched)
                 setOpenedPhones(matched);
             } else {
-                setOpenedPhones([]);
+                setOpenedPhones([]); // Если группу очистили вручную
             }
-        } else {
-            setOpenedPhones([]);
         }
-    }, [openedGroup, phonesData, outboundID, GroupIDs, outboundCall]);
+
+        // 🚀 Работает только если именно outbound режим и есть outboundID
+        // if (showTasksDashboard && outboundCall && outboundID && GroupIDs.length > 0 && phonesData.length > 0) {
+        //     const matchedGroup = GroupIDs.find(group => group.includes(outboundID));
+        //     if (matchedGroup) {
+        //         const matched = phonesData.filter(phone =>
+        //             matchedGroup.includes(phone.id)
+        //         );
+        //         setOpenedPhones(matched);
+        //     } else {
+        //         setOpenedPhones([]);
+        //     }
+        // }
+
+        // В остальных случаях — НЕ ТРОГАТЬ
+    }, [openedGroup, phonesData, outboundID, GroupIDs, outboundCall, showTasksDashboard]);
 
 
     useEffect(()=> console.log("activeProjectName: ", activeProjectName),[activeProjectName])
@@ -133,22 +205,36 @@ const App: React.FC = () => {
     const activeCalls: any[] = useMemo(() => {
         return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
     }, [rawActiveCalls]);
-    useEffect(()=> console.log("activeCall: ", activeCall),[activeCall])
+
+    useEffect(() => {
+        // TODO fix check_express
+        // if (activeCalls.length > 0) {
+        //     socket.emit('check_express', {
+        //         phone,
+        //         project_name,
+        //         session_key,
+        //         worker
+        //     })
+        // }
+        console.log("activeCalls: ", activeCalls)
+    },[activeCalls])
+
     const { sessionKey } = store.getState().operator
 
     useEffect(()=> {
-        if (!activeCall && !postActive && modules.length) {
+        if (!activeCall && !postActive && (modules.length || Object.keys(monoModules).length) && !openedPhones.length) {
             console.log("1234delete")
             setModules([])
             setMonoModules({})
         }
-    },[activeCall, modules.length, postActive])
+    },[activeCall, modules.length, monoModules, openedPhones.length, postActive])
 
     useEffect(() => {
         if (!activeCall && !postActive) {
             setActiveProjectName('');
             setSelectedCall(null);
             setOutboundCall(false);
+            setOutboundID(null)
             setOutActivePhone(null);
             setGet_callcenter(false);
             setOutActiveProjectName('');
@@ -156,6 +242,11 @@ const App: React.FC = () => {
         }
     }, [activeCall, postActive]);
 
+    useEffect(() => {
+        if(openedPhones.length === 0) {
+            momoProjectRepo.current = false
+        }
+    },[openedPhones])
     useEffect(()=> {
         if (!activeCall && postActive && sessionKey) {
             socket.emit('get_fs_report', {
@@ -205,24 +296,195 @@ const App: React.FC = () => {
 
     useEffect(() => {
         const handleFsDiaDes = (msg: any) => {
-            // if (!outboundCall) {
-            //     if (msg.out_extensions[0]?.prefix) {
-            //         setPrefix(msg.out_extensions[0]?.prefix || '')
-            //     }
-                setActiveProjectName(msg.project_name);
-                socket.emit('get_fs_reasons', {
+            // ✅ Ставим активный проект
+            setActiveProjectName(msg.project_name);
+
+            // ✅ Проверяем express по активному номеру
+            if (activeCalls[0]?.cid_num) {
+                socket.emit('check_express', {
+                    phone: activeCalls[0].cid_num,
                     project_name: msg.project_name,
                     session_key: sessionKey,
-                    worker
-                })
-            // }
+                    worker,
+                });
+            }
+
+            // ✅ Запрашиваем FS причины
+            socket.emit('get_fs_reasons', {
+                project_name: msg.project_name,
+                session_key: sessionKey,
+                worker,
+            });
+        };
+
+        const handleCheckExpress = (check: any) => {
+            console.log("check_express response:", check);
+            if (check.express === true && check.assigned_key) {
+                setShowTasksDashboard(true)
+                setAssignedKey(check.assigned_key);
+                setExpressCall(check.express)
+                setOutActiveProjectName(activeProjectName)
+                // ✅ Запрашиваем phone_line
+                setOutActivePhone(activeCalls[0].cid_num)
+                socket.emit('get_phone_line', {
+                    worker,
+                    session_key: sessionKey,
+                    project_name: activeProjectName,
+                    phones: [activeCalls[0].cid_num],
+                });
+            }
+        };
+
+        const handleGetPhoneLine = (msg: any) => {
+            console.log("get_phone_line response:", msg);
+
+            // ✅ Если приходит массив phone_line, берем special_key
+            if (msg.phone_line[0]?.special_key) {
+                setSpecialKey(msg.phone_line[0].special_key);
+                if (assignedKey && msg.phone_line[0].special_key) {
+                    socket.emit('outbound_call_update', {
+                        worker,
+                        session_key: sessionKey,
+                        assigned_key: assignedKey,
+                        log_status: 'ringing',
+                        phone_status: 'ringing',
+                        special_key: msg.phone_line[0].special_key,
+                    });
+
+                }
+            }
         };
 
         socket.on('get_callcenter_queues', handleFsDiaDes);
+        socket.on('check_express', handleCheckExpress);
+        socket.on('get_out_start', handleGetPhoneLine);
+
         return () => {
             socket.off('get_callcenter_queues', handleFsDiaDes);
+            socket.off('check_express', handleCheckExpress);
+            socket.off('get_out_start', handleGetPhoneLine);
         };
-    }, [outboundCall]);
+    }, [outboundCall, sessionKey, worker, activeCalls, assignedKey, activeProjectName]);
+
+    function extractPhoneGroups(obj: any): any[][] {
+        const groups: any[][] = [];
+        function recurse(node: any) {
+            if (Array.isArray(node)) {
+                if (node.length && typeof node[0] === 'object' && 'phone' in node[0]) {
+                    groups.push(node); // нашли массив телефонов
+                }
+            } else if (typeof node === 'object' && node !== null) {
+                Object.values(node).forEach(recurse);
+            }
+        }
+        recurse(obj);
+        return groups;
+    }
+
+    useEffect(() => {
+        if (!selectedCall) return;
+
+        const projNames = Object.keys(selectedCall?.projects)
+        const projNamesSaved = projNames[0] === "outbound" && projNames.length === 1 ? [selectedCall.variable_last_arg] : projNames
+        console.log("projNames: ", projNames)
+        if (projNames.length < 2 && projNames[0] !== "outbound") return;
+
+        const fetchPresetsAndCheckPhone = async () => {
+            try {
+                let myPresets = presets;
+                if (presets.length === 0) {
+                    const resp = await fetch('http://45.145.66.28:8000/api/v1/get_preset_list', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            glagol_parent: "fs.at.glagol.ai",
+                            worker,
+                            projects: projectPoolForCall,
+                            role
+                        }),
+                    });
+                    if (!resp.ok) throw new Error(resp.statusText);
+                    const data: Preset[] = await resp.json();
+                    myPresets = data.map(p => ({ value: p.id, label: p.preset_name, preset: p }));
+                    setPresets(myPresets);
+                }
+
+                const matchedPreset = myPresets.find(p =>
+                    p.preset.projects.includes(projNamesSaved[0])
+                );
+                if (!matchedPreset) {
+                    console.log('Нет пресета под проект:', projNamesSaved[0]);
+                    return;
+                } else {
+                    console.log("matchedPreset:", matchedPreset);
+                    setSelectedPreset(matchedPreset);
+                }
+
+                const respProjectIds = await fetch('http://45.145.66.28:8000/api/v1/get_grouped_phones', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        glagol_parent: projectPool[0].scheme || '',
+                        group_by: matchedPreset.preset.group_by,
+                        filter_by: { project: ['IN', matchedPreset.preset.projects] },
+                        group_table: matchedPreset.preset.group_table,
+                        role
+                    }),
+                });
+                if (!respProjectIds.ok) throw new Error(respProjectIds.statusText);
+
+                const projectIdData = await respProjectIds.json();
+                console.log("OUT1121projectIdData:", projectIdData);
+
+                // ✅ Используем рекурсивный обход для сбора всех массивов телефонов
+                const allGroups = extractPhoneGroups(projectIdData);
+                console.log("OUT1121allGroups:", allGroups);
+
+                // ✅ Все телефоны одним списком
+                const flatPhones = allGroups.flat();
+                console.log('OUT1121flatPhones:', flatPhones);
+
+                const phoneNumber = selectedCall.b_line_num;
+                if (!phoneNumber) return;
+
+                // ✅ Фильтруем группы, где хотя бы один телефон совпадает
+                const matchedGroups = allGroups.filter(group =>
+                    group.some(item => item.phone === phoneNumber)
+                );
+                console.log("matchedGroups:", matchedGroups);
+
+                if (matchedGroups.length > 0) {
+                    setShowTasksDashboard(true);
+
+                    const matchedGroupIDs = Array.from(
+                        new Set(matchedGroups.flat().map(item => item.id))
+                    );
+                    console.log("OUTmatchedGroup:", matchedGroupIDs);
+                    const openedPhones = matchedGroups.flat()
+                    console.log("OUTopenedPhones:", openedPhones);
+
+                    const groupIDs = allGroups.map(group => group.map(item => item.id));
+
+                    setGroupIDs(groupIDs);
+                    setPhonesData(flatPhones);
+                    setOpenedGroup(matchedGroupIDs);
+                    setOpenedPhones(openedPhones);
+
+                    momoProjectRepo.current=true
+
+                } else {
+                    console.log("Номер не найден → tuskMode OFF");
+                    setShowTasksDashboard(false);
+                }
+
+            } catch (err) {
+                console.error('Ошибка при проверке пресетов:', err);
+            }
+        };
+
+        fetchPresetsAndCheckPhone();
+    }, [selectedCall]);
+
     useEffect(() => {
         const handleFsStatus = (msg: any) => {
             dispatch(setFsStatus(msg));
@@ -235,7 +497,6 @@ const App: React.FC = () => {
 
         const handleFsCalls = (msg: any) => {
             const callsArray: any[] = Object.values(msg);
-            console.log("callsArray123: ", callsArray)
             dispatch(setActiveCalls(callsArray));
         };
 
@@ -262,6 +523,9 @@ const App: React.FC = () => {
     useEffect(() => {
         if (!(activeCalls[0] && Object.keys(activeCalls[0]).length > 0)) return
         const first = activeCalls[0]
+        if (first.direction === "inbound") {
+            setShowTasksDashboard(false)
+        }
         console.log("first: ", first)
         if (first.uuid !== "" && first.cid_num !== "" && !get_callcenter && !outboundCall){
             setGet_callcenter(true)
@@ -287,6 +551,14 @@ const App: React.FC = () => {
     //         phone_search: '',
     //     });
     // });
+
+    const findNameProject = (projectName: string)=> {
+        if (!projectName) return "";
+        const found = projectPool.find(
+            (proj) => proj.project_name === projectName
+        );
+        return found ? found.glagol_name : projectName;
+    }
 
     return (
         <div className="container-fluid">
@@ -315,13 +587,21 @@ const App: React.FC = () => {
                 setPrefix={setPrefix}
                 tuskMode={tuskMode}
                 setOutboundID={setOutboundID}
+                setOpenedGroup={setOpenedGroup}
+                setGroupIDs={setGroupIDs}
+                setOpenedPhones={setOpenedPhones}
+                setPhonesData={setPhonesData}
+                setSelectedPreset={setSelectedPreset}
+                role={role}
+                expressCall={expressCall}
+                groupProjects={groupProjects}
             />
 
             {/* Основной контент */}
             {showTasksDashboard ? (
                 <>
                     {/* Показываем Dashboard, если нет активного звонка */}
-                    {!(activeCall || postActive) &&
+                    {!(activeCall || postActive) && openedPhones.length === 0 && (
                         <TasksDashboard
                             openedGroup={openedGroup}
                             setOpenedGroup={setOpenedGroup}
@@ -332,6 +612,7 @@ const App: React.FC = () => {
                             setSelectedPreset={setSelectedPreset}
                             role={role}
                         />
+                        )
                     }
                     <div className="row my-3">
                         {fullWidthCard ? (
@@ -358,6 +639,7 @@ const App: React.FC = () => {
                                             prefix={prefix}
                                             outboundCall={outboundCall}
                                             tuskMode={showTasksDashboard}
+                                            setTuskMode={setShowTasksDashboard}
                                             fullWidthCard={fullWidthCard}
                                             setFullWidthCard={setFullWidthCard}
                                             openedPhones={openedPhones}
@@ -369,10 +651,60 @@ const App: React.FC = () => {
                                             postCallData={postCallData}
                                             setPostCallData={setPostCallData}
                                             role={role}
+                                            setOpenedGroup={setOpenedGroup}
+                                            setPhonesData={setPhonesData}
+                                            momoProjectRepo={momoProjectRepo}
+                                            startModulesRanRef={startModulesRanRef}
                                         />
                                     )}
                                 </div>
                                 {/* ScriptPanel под ней на всю ширину */}
+                                {!postActive && !activeCall && openedPhones.length > 0 &&(
+                                    <div style={{marginLeft: 13, marginRight: 14}}>
+                                        {/* 1) Кнопки выбора проекта */}
+                                        {groupProjects.length > 1 && (
+
+                                            <div style={{
+                                                display: "flex",
+                                                gap: "8px",
+                                                marginBottom: "6px",
+                                                marginLeft: "25px"
+                                            }}>
+                                                {groupProjects.map(proj => {
+                                                    const isActive = scriptProject === proj;
+                                                    return (
+                                                        <button
+                                                            key={proj}
+                                                            className={`${stylesButton.projectButton} ${isActive ? stylesButton.active : ''}`}
+                                                            style={{
+                                                                color: isActive ? '#fff' : projectColors[proj],
+                                                                backgroundColor: isActive ? projectColors[proj] : 'transparent',
+                                                                borderColor: projectColors[proj]
+                                                            }}
+                                                            onClick={() => setScriptProject(proj)}
+                                                        >
+                                                            {findNameProject(proj)}
+                                                        </button>
+                                                    )
+
+                                                })}
+                                            </div>
+                                        )}
+
+                                        {/* 2) Собственно панель со скриптом */}
+                                        {scriptProject && (
+                                            <ScriptPanel
+                                                key={scriptProject}
+                                                projectName={scriptProject}
+                                                onClose={() => setShowScriptPanel(false)}
+                                                direction={scriptDir}
+                                                uuid={postCallData?.uuid}
+                                                bUuid={postCallData?.b_uuid}
+                                                tuskMode={showTasksDashboard}
+                                            />
+                                        )}
+                                    </div>
+                                )}
                                 <div className="col-12">
                                     {(activeCall || postActive) &&
                                         <ScriptPanel
@@ -389,20 +721,76 @@ const App: React.FC = () => {
                             </>
                         ) : (
                             <>
-                                {/* Обычная компоновка: слева ScriptPanel… */}
+                                {/* Левая колонка: ScriptPanel */}
                                 <div className="col-12 col-md-7">
-                                    {(activeCall || postActive) &&
+                                    {/* 1) Если есть открытые карточки и мы не в звонке/посте — показываем кнопки выбора проекта + ScriptPanel */}
+                                    {!postActive && !activeCall && openedPhones.length > 0 && (
+                                        <div style={{ marginLeft: 13, marginRight: 14 }}>
+                                            {/* Кнопки выбора проекта */}
+                                            {groupProjects.length > 1 && (
+                                                <div
+                                                    style={{
+                                                        display: "flex",
+                                                        gap: "8px",
+                                                        marginBottom: "6px",
+                                                        marginLeft: "25px",
+                                                    }}
+                                                >
+                                                    {groupProjects.map((proj) => {
+                                                        const isActive = scriptProject === proj;
+                                                        return (
+                                                            <button
+                                                                key={proj}
+                                                                className={`${stylesButton.projectButton} ${
+                                                                    isActive ? stylesButton.active : ""
+                                                                }`}
+                                                                style={{
+                                                                    color: isActive ? "#fff" : projectColors[proj],
+                                                                    backgroundColor: isActive
+                                                                        ? projectColors[proj]
+                                                                        : "transparent",
+                                                                    borderColor: projectColors[proj],
+                                                                }}
+                                                                onClick={() => setScriptProject(proj)}
+                                                            >
+                                                                {findNameProject(proj)}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                            {/* Панель со скриптом для выбранного проекта */}
+                                            {scriptProject && (
+                                                <ScriptPanel
+                                                    key={scriptProject}
+                                                    projectName={scriptProject}
+                                                    onClose={() => setShowScriptPanel(false)}
+                                                    direction={scriptDir}
+                                                    uuid={postCallData?.uuid}
+                                                    bUuid={postCallData?.b_uuid}
+                                                    tuskMode={showTasksDashboard}
+                                                />
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* 2) Если сейчас активный звонок или постобработка — обычный ScriptPanel */}
+                                    {(activeCall || postActive) && (
                                         <ScriptPanel
                                             key={scriptProject}
                                             projectName={scriptProject}
                                             onClose={() => setShowScriptPanel(false)}
                                             tuskMode={showTasksDashboard}
+                                            direction={scriptDir}
+                                            uuid={postCallData?.uuid}
+                                            bUuid={postCallData?.b_uuid}
                                         />
-                                    }
+                                    )}
                                 </div>
-                                {/* …справа CallControlPanel */}
+
+                                {/* Правая колонка: CallControlPanel */}
                                 <div className="col-12 col-md-5">
-                                    {(openedPhones.length || activeCall || postActive) && (
+                                    {(openedPhones.length > 0 || activeCall || postActive) && (
                                         <CallControlPanel
                                             call={selectedCall}
                                             hasActiveCall={activeCall}
@@ -422,6 +810,7 @@ const App: React.FC = () => {
                                             prefix={prefix}
                                             outboundCall={outboundCall}
                                             tuskMode={showTasksDashboard}
+                                            setTuskMode={setShowTasksDashboard}
                                             fullWidthCard={fullWidthCard}
                                             setFullWidthCard={setFullWidthCard}
                                             openedPhones={openedPhones}
@@ -433,6 +822,10 @@ const App: React.FC = () => {
                                             postCallData={postCallData}
                                             setPostCallData={setPostCallData}
                                             role={role}
+                                            setOpenedGroup={setOpenedGroup}
+                                            setPhonesData={setPhonesData}
+                                            momoProjectRepo={momoProjectRepo}
+                                            startModulesRanRef={startModulesRanRef}
                                         />
                                     )}
                                 </div>
@@ -484,6 +877,7 @@ const App: React.FC = () => {
                             tuskMode={showTasksDashboard}
                             postCallData={postCallData}
                             setPostCallData={setPostCallData}
+                            startModulesRanRef={startModulesRanRef}
                         />
                     )}
                 </div>

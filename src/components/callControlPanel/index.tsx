@@ -1,21 +1,34 @@
 import React, {useState, useEffect, useRef, useMemo} from 'react';
 import { socket } from '../../socket';
-import { getCookies } from '../../utils';
+import PhoneProjectSelect from './components/PhoneProjectSelect';
 import { useSelector } from "react-redux";
 import {RootState, store} from "../../redux/store";
 import Swal from "sweetalert2";
 import EditableFields from "./components";
 import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
-import {OutActivePhone} from "../headerPanel";
 import SearchableSelect from "./components/select";
 import {ModuleData, MonoProjectsModuleData} from "../../App";
 import styles from "../taskDashboard/components/checkbox.module.css";
 import GroupActionModal from "../taskDashboard/components";
-import {OptionType} from "../taskDashboard";
+import {OptionType, Preset} from "../taskDashboard";
 import stylesButton from './index.module.css';
 
 
 // Типы (упрощённые — оставьте свои)
+
+interface Project {
+    base_fields: {
+        [field: string]: any;
+    };
+    // …any other props on each project
+}
+
+type ProjectsMap = Record<string, Project>;
+
+declare const call: {
+    projects: ProjectsMap;
+};
+
 export interface ReasonItem {
     id: string;
     name: string;
@@ -42,6 +55,7 @@ export interface FieldDefinition {
 }
 
 export interface CallData {
+    variable_last_arg: string;
     destination_id: string
     caller_id: string ;
     id: number;
@@ -58,7 +72,7 @@ export interface CallData {
     total_direction?: string;    // 'inbound' | 'outbound'
     special_key_call: string;
     special_key_conn: string;
-    // ... и т. д.
+    projects: ProjectsMap
 }
 export interface ActiveCall {
     accountcode: string;
@@ -170,7 +184,7 @@ interface CallControlPanelProps {
     setPostActive: (postActive: boolean) => void;
     currentPage: number;
     hasActiveCall: boolean
-    outActivePhone: OutActivePhone | null
+    outActivePhone: string | null
     outActiveProjectName: string
     assignedKey: string
     isLoading: boolean
@@ -181,6 +195,7 @@ interface CallControlPanelProps {
     prefix: string
     outboundCall: boolean
     tuskMode:boolean
+    setTuskMode?: (tuskMode:boolean) => void
     fullWidthCard?: boolean
     setFullWidthCard?: (fullWidthCard: boolean) => void
     openedPhones?: any[]
@@ -191,9 +206,20 @@ interface CallControlPanelProps {
     selectedPreset?: OptionType | null
     postCallData: ActiveCall | null
     setPostCallData: (postCallData: ActiveCall | null) => void
-    role?: string
+    role?: string,
+    setOpenedGroup?: (group: any[]) => void
+    setPhonesData?: (group: any[]) => void
+    momoProjectRepo?: React.MutableRefObject<boolean>;
+    startModulesRanRef: React.MutableRefObject<boolean>;
 }
 
+type PhoneGroup = {
+    phone: string;
+    entries: Array<{
+        project: string;
+        contact_info: Record<string, string>;
+    }>;
+};
 
 const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                specialKey,
@@ -214,6 +240,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                prefix,
                                                                outboundCall,
                                                                tuskMode,
+                                                               setTuskMode,
                                                                fullWidthCard,
                                                                setFullWidthCard,
                                                                openedPhones,
@@ -224,7 +251,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                selectedPreset,
                                                                postCallData,
                                                                setPostCallData,
-                                                               role
+                                                               role,
+                                                               setOpenedGroup,
+                                                               setPhonesData,
+                                                               momoProjectRepo,
+                                                               startModulesRanRef
                                                            }) => {
     // Из cookies
     const { sessionKey } = store.getState().operator
@@ -238,9 +269,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // Состояния для формы
     const fsReasons = useSelector((state: RootState) => state.operator.fsReasons);
 
-    const [callReason, setCallReason] = useState(call?.call_reason || '');
-    const [callResult, setCallResult] = useState(call?.call_result || '');
-    const [comment,   setComment]     = useState(call?.user_comment || '');
+    const [callReason, setCallReason] = useState('');
+    const [callResult, setCallResult] = useState('');
+    const [comment,   setComment]     = useState('')
     const [baseFieldValues, setBaseFieldValues] = useState<{ [fieldId: string]: string }>(
         call?.base_fields || {}
     );
@@ -255,12 +286,18 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [mergedFields, setMergedFields] = useState<MergedField[]>([]);
     const [values, setValues] = useState<GroupFieldValues>({});
     const [basicFields, setBasicFields] = useState<any[]>([])
+    useEffect(() => console.log("values: ", values), [values])
 
+    useEffect(() => console.log("mergedFields: ", mergedFields), [mergedFields])
     // Состояние для списка модулей, полученных с сервера
     // const [modules, setModules] = useState<ModuleData[]>([]);
     const [isParams, setIsParams] = useState<boolean>(true)
     const [groupSelectedIds, setGroupSelectedIds] = useState<number[]>([]);
     const [expressStates, setExpressStates] = useState<Record<string, ExpressState>>({});
+
+    const [selectedPhoneByField, setSelectedPhoneByField] = useState<
+        Record<string, { phone: string; project: string }>
+    >({});
 
     const [expressConfig, setExpressConfig] = useState<Record<string, any>>({});
 
@@ -277,6 +314,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     };
 
     const groupProjects = useMemo(() => {
+        console.log("openedPhonesMEMO: ", openedPhones)
         if (!openedPhones) return [];
         return Array.from(new Set(openedPhones.map(p => p.project)));
     }, [openedPhones]);
@@ -286,10 +324,25 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const idProjectMap = useMemo(() =>
             openedPhones?.map(ph => ({ id: ph.id, project_name: ph.project })) || [],
         [openedPhones]);
+    useEffect(() => console.log("444groupProjects: ", groupProjects),[groupProjects])
+    useEffect(() => console.log("444selectedProjects: ", selectedProjects),[selectedProjects])
 
     useEffect(() => {
-        setSelectedProjects(groupProjects)
-    },[groupProjects])
+        if (groupProjects.length === 0 && activeProject) {
+            setSelectedProjects([activeProject])
+        } else if (call && call.project_name) {
+            if(Object.keys(call?.projects).length   > 1 ) {
+                setSelectedProjects(Object.keys(call?.projects))
+            } else if (call.project_name === "outbound") {
+                console.log("FUCK!@#")
+                setSelectedProjects([cleanProjectName(call.variable_last_arg)])
+            } else {
+                setSelectedProjects([cleanProjectName(call.project_name)])
+            }
+        } else {
+            setSelectedProjects(groupProjects)
+        }
+    },[activeProject, call, groupProjects])
 
     const projectColors = useMemo(() => {
         const palette = [
@@ -340,16 +393,14 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [postSeconds, setPostSeconds] = useState(POST_LIMIT);
     useEffect(() => console.log("postCall: ", postCallData),[postCallData])
 
-    const forbiddenProjects = ['outbound', 'api_call', 'no_project_out'];
+    const forbiddenProjects = ['api_call', 'no_project_out'];
     const project = call?.project_name || '';
     const hideReportFields = forbiddenProjects.includes(project);
 
     const prevCallRef = useRef<ActiveCall | null>(null);
 
-    const startModulesRanRef = useRef(false);
-
     useEffect(() => {
-        if (openedPhones){
+        if (openedPhones && tuskMode){
             const projects = Array.from(new Set(openedPhones.map(p => p.project)));
             // const projects = ["group_project_2", "group_project_1"];
 
@@ -358,9 +409,48 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 session_key: sessionKey,
                 worker
             })
+        } if (activeCalls[0]?.direction === "inbound" && activeProject) {
+            socket.emit("get_project_fields",{
+                projects: [activeProject],
+                session_key: sessionKey,
+                worker
+            })
+
+        } if (!hasActiveCall && !postActive && call?.project_name) {
+            const projectNames = Object.keys(call.projects).map((proj => cleanProjectName(proj)))
+            if(projectNames.length === 1) {
+
+            } else {
+            }
+            socket.emit("get_project_fields",{
+                projects: projectNames,
+                session_key: sessionKey,
+                worker
+            })
+
+            console.log("projectNames: ", projectNames)
+            const projectName = projectNames[0];
+            const projectDataArray = Object.values(call.projects) as Array<{
+                call_reason: number;
+                call_result: number;
+                comment: string;
+                base_fields: Record<string, string>;
+            }>;
+            setValues({ [projectName]: {} });
+            const firstProjectData = projectDataArray[0];
+            const baseFields = firstProjectData?.base_fields || {};
+            console.log("baseFieldsbaseFieldsbaseFieldsbaseFields: ", baseFields)
+            const sanitized: Record<string, string> = {};
+            Object.entries(baseFields).forEach(([fid, val]) => {
+                if (!fid.startsWith("AS_")) return;
+                sanitized[fid] = String(val);
+            });
+
+            setValues({ [projectName]: sanitized });
+            console.log("valueanotherOneTRADE1")
         }
 
-    },[openedPhones])
+    },[call, openedPhones, activeProject, activeCalls, tuskMode, hasActiveCall, postActive, sessionKey, worker])
 
     useEffect(() => {
         if (role === "manager" && openedPhones?.length) {
@@ -406,8 +496,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         call_results: ResultItem[];
         group_instructions: any
     }) => {
+        //TODO TEST
         // Если включён tuskMode, собираем mergedFields (вне зависимости от hasActiveCall)
-        if (tuskMode) {
+        // if (tuskMode) {
             const map = new Map<string, MergedField>();
             setGroup_instructions(data.group_instructions || null)
             Object.entries(data.as_is_dict).forEach(([projName, fields]) => {
@@ -443,15 +534,47 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
             // Записали объединённые поля для tuskMode
             const merged = Array.from(map.values());
+            console.log("merged: ", merged)
             setMergedFields(merged);
 
             // Инициализируем пустые значения сразу для всех выбранных проектов
-            const init: GroupFieldValues = {};
+            const init: GroupFieldValues = { ...values }; // не пустой, а текущий
             selectedProjects.forEach(p => {
-                init[p] = {};
+                if (!init[p]) init[p] = {};
             });
-            setValues(init);
+            console.log("initValues: ", values)
+            console.log("init: ", init)
+            console.log("TEST123call: ",call)
+            console.log("TEST123momoProjectRepo: ",momoProjectRepo)
 
+            if (call && momoProjectRepo && momoProjectRepo.current) {
+                    // “InitKwargs” is a map from exactly the same keys
+                    // to only that project’s `base_fields`
+                    type InitKwargs = {
+                        [K in keyof ProjectsMap]: ProjectsMap[K]['base_fields']
+                    };
+
+                    const initKwargs = Object.entries(call.projects).reduce<InitKwargs>(
+                        (acc, [key, project]) => {
+                            // now TS knows `key` is one of the keys of ProjectsMap
+                            // and `project` is a Project
+                            acc[key] = project.base_fields;
+                            return acc;
+                        },
+                        {} as InitKwargs
+                    );
+                    console.log("initKwargs: ", initKwargs)
+                    setValues(initKwargs);
+                } else {
+                    setValues(init);
+                }
+
+
+        //TODO TEST
+            // if (!call && !postActive) {
+            //     setValues(init);
+            //
+            // }
             // Причины/результаты (тоже фильтруем по selectedProjects)
             setCallReasons(
                 data.call_reasons.filter(r => selectedProjects.includes(r.project_name))
@@ -465,52 +588,53 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             setBasicFields(merged);
         }
         // Если tuskMode выключен, работаем только с basicFields
-        else {
-            const map = new Map<string, MergedField>();
-
-            Object.entries(data.as_is_dict).forEach(([projName, fields]) => {
-                if (!selectedProjects.includes(projName)) return;
-                fields.forEach(f => {
-                    const key = [
-                        f.field_name,
-                        f.field_type,
-                        f.field_vals || "",
-                        (f as any).spatial_group || "",
-                    ].join("|");
-                    if (!map.has(key)) {
-                        map.set(key, {
-                            id: key,
-                            label: f.field_name,
-                            type: f.field_type,
-                            values: f.field_vals,
-                            projects: [projName],
-                            fieldIds: { [projName]: f.field_id },
-                            spatialGroup: (f as any).spatial_group,
-                        });
-                    } else {
-                        const e = map.get(key)!;
-                        if (!e.projects.includes(projName)) {
-                            e.projects.push(projName);
-                            e.fieldIds[projName] = f.field_id;
-                        }
-                    }
-                });
-            });
-
-            // Только basicFields, без mergedFields и без инициализации значений
-            setBasicFields(Array.from(map.values()));
-        }
-    };
+        // else {
+        //     const map = new Map<string, MergedField>();
+        //
+        //     Object.entries(data.as_is_dict).forEach(([projName, fields]) => {
+        //         if (!selectedProjects.includes(projName)) return;
+        //         fields.forEach(f => {
+        //             const key = [
+        //                 f.field_name,
+        //                 f.field_type,
+        //                 f.field_vals || "",
+        //                 (f as any).spatial_group || "",
+        //             ].join("|");
+        //             if (!map.has(key)) {
+        //                 map.set(key, {
+        //                     id: key,
+        //                     label: f.field_name,
+        //                     type: f.field_type,
+        //                     values: f.field_vals,
+        //                     projects: [projName],
+        //                     fieldIds: { [projName]: f.field_id },
+        //                     spatialGroup: (f as any).spatial_group,
+        //                 });
+        //             } else {
+        //                 const e = map.get(key)!;
+        //                 if (!e.projects.includes(projName)) {
+        //                     e.projects.push(projName);
+        //                     e.fieldIds[projName] = f.field_id;
+        //                 }
+        //             }
+        //         });
+        //     });
+        //
+        //     // Только basicFields, без mergedFields и без инициализации значений
+        //     setBasicFields(Array.from(map.values()));
+    //     }
+    // };
+// ✅ Правильная инициализация значений:
 
     useEffect(() => console.log("setBasicFields: ", basicFields),[basicFields])
     useEffect(() => {
-        if (!tuskMode) return;
+        // if (!tuskMode) return;
 
         socket.on("project_fields", handleProjectFields);
         return () => {
             socket.off("project_fields", handleProjectFields);
         };
-    }, [tuskMode, groupProjects, sessionKey, worker, activeCalls, openedPhones, handleProjectFields]);
+    }, [tuskMode, groupProjects, sessionKey, worker, activeCalls, openedPhones, handleProjectFields,call]);
 
     useEffect(() => {
         const handleReports = (msg: any) => {
@@ -569,42 +693,58 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         );
         return found ? found.glagol_name : projectName;
     }
+    function cleanProjectName(name: string = ''): string {
+        return name.replace(/\s*\(.*?\)\s*$/, '').trim();
+    }
+
 
     useEffect(() => {
-        if(!hasActiveCall && !postActive){
-            setCallReason(call?.call_reason || '');
-            setCallResult(call?.call_result || '');
-            setComment(call?.user_comment || '');
-            setBaseFieldValues(call?.base_fields || {});
-        }
-    }, [call]);
+        if (!hasActiveCall && !postActive && call) {
+            const projectName = cleanProjectName(call.project_name!);
 
-    useEffect(() => {
-        if(!tuskMode){
-            const handleFsReasons = (data: {
-                call_reasons:  ReasonItem[];
-                call_results:  ResultItem[];
-                as_is_dict:    FieldDefinition[];
-            } | null) => {
-                if (!isParams || postActive) return
-                if (data && !hasActiveCall && !postActive) {
-                    setCallReasons(data.call_reasons.filter(r => r.project_name === call?.project_name || r.project_name === `${call?.project_name}@default`));
-                    setCallResults(data.call_results.filter(r => r.project_name === call?.project_name || r.project_name === `${call?.project_name}@default`));
-                    setParams(data.as_is_dict.filter(p => p.project_name === call?.project_name || p.project_name === `${call?.project_name}@default`));
-                } else if (data && (hasActiveCall || postActive)) {
-                    setCallReasons(data.call_reasons.filter(r => r.project_name === activeProject || r.project_name === `${activeProject}@default`));
-                    setCallResults(data.call_results.filter(r => r.project_name === activeProject || r.project_name === `${activeProject}@default`));
-                    setParams(data.as_is_dict.filter(p => p.project_name === activeProject || p.project_name === `${activeProject}@default`));
-                } else {
-                    setCallReasons([]);
-                    setCallResults([]);
-                    setParams([]);
-                }
-            };
-            handleFsReasons(fsReasons)
-        }
+            const projectDataArray = Object.values(call.projects) as Array<{
+                call_reason: number;
+                call_result: number;
+                comment: string;
+                base_fields: Record<string, string>;
+            }>;
 
-    }, [call, activeProject, fsReasons, hasActiveCall, isParams]);
+            const firstProjectData = projectDataArray[0];
+            if (firstProjectData && projectDataArray.length < 2) {
+                setCallReason(String(firstProjectData.call_reason) !== "null" ? String(firstProjectData.call_reason) : "");
+                setCallResult(String(firstProjectData.call_result) !== "null" ? String(firstProjectData.call_result) : "");
+                setComment(firstProjectData.comment || "");
+                // setValues({ [projectName]: firstProjectData.base_fields || {}})
+            }
+        }
+    }, [call, hasActiveCall, postActive]);
+
+    // useEffect(() => {
+    //     if(!tuskMode){
+    //         const handleFsReasons = (data: {
+    //             call_reasons:  ReasonItem[];
+    //             call_results:  ResultItem[];
+    //             as_is_dict:    FieldDefinition[];
+    //         } | null) => {
+    //             if (!isParams || postActive) return
+    //             if (data && !hasActiveCall && !postActive) {
+    //                 setCallReasons(data.call_reasons.filter(r => r.project_name === call?.project_name || r.project_name === `${call?.project_name}@default`));
+    //                 setCallResults(data.call_results.filter(r => r.project_name === call?.project_name || r.project_name === `${call?.project_name}@default`));
+    //                 setParams(data.as_is_dict.filter(p => p.project_name === call?.project_name || p.project_name === `${call?.project_name}@default`));
+    //             } else if (data && (hasActiveCall || postActive)) {
+    //                 setCallReasons(data.call_reasons.filter(r => r.project_name === activeProject || r.project_name === `${activeProject}@default`));
+    //                 setCallResults(data.call_results.filter(r => r.project_name === activeProject || r.project_name === `${activeProject}@default`));
+    //                 setParams(data.as_is_dict.filter(p => p.project_name === activeProject || p.project_name === `${activeProject}@default`));
+    //             } else {
+    //                 setCallReasons([]);
+    //                 setCallResults([]);
+    //                 setParams([]);
+    //             }
+    //         };
+    //         handleFsReasons(fsReasons)
+    //     }
+    //
+    // }, [call, activeProject, fsReasons, hasActiveCall, isParams]);
 
 
     // ***** МОДУЛИ *****
@@ -635,9 +775,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     useEffect(() => {
         // setModules([]);
         startModulesRanRef.current = false;
-
-        if (!hasActiveCall) return;
-
+        console.log()
+        if (!hasActiveCall && !openedPhones?.length) return;
+        console.log("it's working")
         const handleModules = (data: any) => {
             // if (data.project !== activeProject) return;
 
@@ -651,6 +791,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         };
 
         socket.on('get_modules', handleModules);
+
         if (tuskMode) {
             socket.emit('get_modules', {
                 worker,
@@ -676,9 +817,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             // setModules([]);
         };
 
-}, [hasActiveCall, activeProject, worker, sessionKey, setModules, tuskMode, setMonoModules, selectedProjects]);
+    }, [openedPhones, hasActiveCall, activeProject, worker, sessionKey, setModules, tuskMode, setMonoModules, selectedProjects]);
 
-    const handleModuleRun = (mod: ModuleData) => {
+    const handleModuleRun = (mod: ModuleData, common_code?: false) => {
         if (tuskMode && mod.common_code === true && monoModules) {
             // Найдём все проекты, в которых есть этот модуль
             const projectList = Object.entries(monoModules)
@@ -686,11 +827,20 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 .map(([project]) => project);
 
             projectList.forEach(project => {
+                // ==== NEW: вместо mod.kwargs берем kwargs из модуля конкретного проекта ====
+                const projectMod = monoModules[project].find(m => m.filename === mod.filename);
+                if (!projectMod) {
+                    console.warn(`Не нашли общий модуль ${mod.filename} в проекте ${project}`);
+                    return;
+                }
+                const specKwargs = projectMod.kwargs || {};
+
+                // берем значения из values для этого проекта
                 const fieldMap = values[project] || {};
+                const kwargsPayload: Record<string,string> = {};
 
-                const kwargsPayload: Record<string, string> = {};
-
-                Object.entries(mod.kwargs || {}).forEach(([inputName, spec]: [string, any]) => {
+                // проходим по спецификации именно этого projectMod
+                Object.entries(specKwargs).forEach(([inputName, spec]: [string, any]) => {
                     const sourceKey: string = spec.source;
                     let value = '';
 
@@ -698,16 +848,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         case 'operator_id':
                             value = sipLogin;
                             break;
-                        case 'call_reason': {
-                            const reasonItem = callReasons.find(r => String(r.id) === String(callReason));
-                            value = reasonItem?.name || '';
+                        case 'call_reason':
+                            value = callReasons.find(r => String(r.id) === String(callReason))?.name || '';
                             break;
-                        }
-                        case 'call_result': {
-                            const resultItem = callResults.find(r => String(r.id) === String(callResult));
-                            value = resultItem?.name || '';
+                        case 'call_result':
+                            value = callResults.find(r => String(r.id) === String(callResult))?.name || '';
                             break;
-                        }
                         case 'phone':
                             value = activeCalls[0]?.direction === 'outbound'
                                 ? activeCalls[0]?.b_dest
@@ -717,7 +863,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             value = activeCalls[0]?.uuid || postCallData?.uuid || '';
                             break;
                         case 'b_uuid':
-                            value = activeCalls[0]?.b_uuid || postCallData?.uuid || '';
+                            value = activeCalls[0]?.b_uuid || postCallData?.b_uuid || '';
                             break;
                         case 'datetime_start':
                             value = activeCalls[0]?.created || '';
@@ -741,11 +887,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 moduleProjectMapRef.current[mod.id] = project;
 
                 const payload = {
-                    filename: mod.filename,
+                    filename: projectMod.filename,
                     project_name: project,
                     session_key: sessionKey,
-                    uuid: activeCalls[0]?.uuid || postCallData?.uuid || '',
-                    b_uuid: activeCalls[0]?.b_uuid || postCallData?.uuid || '',
+                    //TODO common_code
+                    common_code: projectMod.common_code,
+                    uuid: activeCalls[0]?.uuid   || postCallData?.uuid   || '',
+                    b_uuid: activeCalls[0]?.b_uuid|| postCallData?.b_uuid || '',
                     worker,
                     kwargs: kwargsPayload,
                 };
@@ -753,7 +901,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 socket.emit('run_module', payload);
             });
 
-            return; // завершаем, т.к. общий модуль уже отработал по всем проектам
+            return;
         }
 
         // Обычный запуск для одиночного project-модуля
@@ -948,6 +1096,79 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         setValues
     ]);
 
+    const startModules = useMemo<ModuleData[]>(() => {
+        if (tuskMode && monoModules) {
+            // flatten всех модулей из monoModules
+            return Object.values(monoModules)
+                .flat()
+                .filter(mod =>
+                    Array.isArray(mod.start_modes) &&
+                    mod.start_modes.includes('start')
+                );
+        } else {
+            return modules.filter(mod =>
+                Array.isArray(mod.start_modes) &&
+                mod.start_modes.includes('start')
+            );
+        }
+    }, [tuskMode, monoModules, modules]);
+
+    useEffect(() => console.log("startModules: ", startModules),[startModules])
+// ручные модули — всё, что не стартовое
+    const manualModules = useMemo<ModuleData[]>(() => {
+        if (tuskMode && monoModules) {
+            return Object.values(monoModules)
+                .flat()
+                .filter(mod =>
+                    !Array.isArray(mod.start_modes) ||
+                    !mod.start_modes.includes('start')
+                );
+        } else {
+            return modules.filter(mod =>
+                !Array.isArray(mod.start_modes) ||
+                !mod.start_modes.includes('start')
+            );
+        }
+    }, [tuskMode, monoModules, modules]);
+
+    useEffect(() => {
+        // если уже запустили — не запускаем снова
+        if (startModulesRanRef.current) return;
+        console.log("START")
+
+        // 1) активный звонок
+        if (startModules.length && hasActiveCall) {
+            console.log("ACTIVESTART")
+            startModules.forEach(mod => handleModuleRun(mod));
+            startModulesRanRef.current = true;
+            return;
+        }
+
+        // 2) таск-мод: карточка открыта (есть openedPhones), но колл не активен и не в пост-моде
+        const countPhones = openedPhones?.length ?? 0;
+        if (startModules.length && tuskMode && countPhones > 0 && !postActive) {
+            console.log("TUSKMODESTART")
+
+            startModules.forEach(mod => handleModuleRun(mod));
+            startModulesRanRef.current = true;
+        }
+    }, [
+        hasActiveCall,
+        tuskMode,
+        // смотрим на сам массив, а не на length — тогда зависимость сработает и при смене проекта
+        openedPhones,
+        postActive,
+        startModules,
+        handleModuleRun,
+    ]);
+
+// когда звонок кончается — сбрасываем флаг, чтобы при следующем звонке стартеры снова сработали
+//     useEffect(() => {
+//         if (!hasActiveCall) {
+//             startModulesRanRef.current = false;
+//         }
+//     }, [hasActiveCall]);
+
     // Логика постобработки (если звонок завершён)
     useEffect(() => {
         const prevCall = prevCallRef.current;
@@ -960,7 +1181,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             })
             setIsParams(false)
             setPostActive(true);
-            setPostSeconds(POST_LIMIT);
+            setPostSeconds(POST_LIMIT)
         }
         if (hasActiveCall) {
             setIsParams(true)
@@ -1036,11 +1257,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             level: 0,
         });
         if (callSection === 1) {
-            socket.emit('fs_post_started', {
-                session_key: sessionKey,
-                sip_login: sipLogin,
-                worker
-            })
+            // socket.emit('fs_post_started', {
+            //     session_key: sessionKey,
+            //     sip_login: sipLogin,
+            //     worker
+            // })
             setIsParams(false)
             setPostActive(true)
             setPostSeconds(POST_LIMIT);
@@ -1113,6 +1334,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             setGroupModalOpen(true);
             return;
         }
+        const post_time = POST_LIMIT - postSeconds
 
         const selectedContacts = getPhonesByIds(groupSelectedIds);
         const statusText = callResults.find(r => String(r.id) === String(callResult))?.name || '';
@@ -1172,6 +1394,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             session_key: sessionKey,
             worker,
             projects: projectsPayload,
+            post_time
         });
         socket.emit("change_state_fs", {
             sip_login: sipLogin,
@@ -1181,6 +1404,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             reason: "manual_return",
             page: "online",
         });
+        socket.emit("get_fs_report", {
+            worker,
+            session_key: sessionKey,
+            sip_login: sipLogin,
+            level: 0,
+        });
+
         setIsLoading(true);
         setOpenedPhones?.([])
         setPostActive(false);
@@ -1196,6 +1426,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             });
             return;
         }
+        const post_time = POST_LIMIT - postSeconds
         if(tuskMode) {
             handleGroupSave()
         } else {
@@ -1227,15 +1458,17 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             socket.emit("edit_call_fs", {
                 b_uuid,
                 uuid,
-                project_name: activeProject,
-                call_reason: reasonNumber,
-                call_result: resultNumber,
-                comment,
+                projects: {
+                    [activeProject]: {
+                        call_reason: reasonNumber,
+                        call_result: resultNumber,
+                        comment,
+                        base_fields: values[activeProject],
+                    },
+                },
+                post_time,
                 session_key: sessionKey,
                 worker,
-                base_fields: sanitizedBaseFields,
-                // reason_text: reasonText,
-                // result_text: resultText,
             });
             // socket.emit('edit_call_fs', {
             //     b_uuid: call?.special_key_call ,
@@ -1434,77 +1667,156 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         );
     };
 
-    const renderGroupPhones = () => {
-        if (!openedPhones?.length) return null;
+    // Группируем телефоны: phoneGroups
+    const phoneGroups = useMemo(() => {
+        const map = new Map<string, { phone: string; entries: Array<{ project: string; contact_info: any }> }>();
+        (openedPhones || []).forEach(ph => {
+            if (!map.has(ph.phone)) {
+                map.set(ph.phone, { phone: ph.phone, entries: [] });
+            }
+            map.get(ph.phone)!.entries.push({
+                project: ph.project,
+                contact_info: ph.contact_info || {},
+            });
+        });
+        return Array.from(map.values());
+    }, [openedPhones]);
 
-        const byPhone = openedPhones.reduce<Record<string, Set<string>>>((acc, ph) => {
-            const { phone, project } = ph;
-            if (!acc[phone]) acc[phone] = new Set();
-            acc[phone].add(project);
-            return acc;
-        }, {});
-        const grouped = Object.entries(byPhone).map(([phone, projectsSet]) => ({
-            phone,
-            projects: Array.from(projectsSet),
-        }));
+// Строим карту вариантов для каждого поля
+    const contactInfoVariants = useMemo(() => {
+        const result: Record<string, Set<string>> = {};
+        phoneGroups.forEach(group => {
+            group.entries.forEach(entry => {
+                Object.entries(entry.contact_info || {}).forEach(([fieldId, value]) => {
+                    if (!result[fieldId]) result[fieldId] = new Set();
+                    result[fieldId].add(String(value));
+                });
+            });
+        });
+        return result;
+    }, [phoneGroups]);
 
-        const allProjects = getGroupProjects(openedPhones);
+
+
+    const renderContactInfoSelector = (
+        phone: string,
+        fieldId: string,
+        entries: Array<{ project: string; contact_info: Record<string, any> }> = []
+    ) => {
+        const variants = (entries || [])
+            .map(e => ({
+                project: e.project,
+                value: e.contact_info[fieldId] || '',
+            }))
+            .filter(v => v.value !== '');
+
+        const unique = Array.from(new Set(variants.map(v => v.value)));
+        if (unique.length <= 1) return null;
+
         return (
-            <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start"}}>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    {grouped.map(({ phone, projects }) => (
+            <select
+                style={{ marginBottom: 4 }}
+                onChange={e => {
+                    const val = e.target.value;
+                    selectedProjects.forEach(proj => {
+                        setValues(prev => ({
+                            ...prev,
+                            [proj]: {
+                                ...prev[proj],
+                                [fieldId]: val
+                            }
+                        }));
+                    });
+                }}
+            >
+                <option value="">Выберите значение</option>
+                {variants.map((v, idx) => (
+                    <option key={idx} value={v.value}>
+                        {v.value} ({findNameProject(v.project)})
+                    </option>
+                ))}
+            </select>
+        );
+    };
+
+    const renderGroupPhones = () => {
+        if (!phoneGroups.length) return null;
+
+        return (
+            <div
+                style={{
+                    position: 'relative',      // для абсолютного позиционирования кнопки
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 12,
+                    marginBottom: 16,
+                }}
+            >
+                {/* Кнопка «Закрыть» */}
+                <button
+                    onClick={() => {
+                        setOpenedPhones?.([])
+                        setOpenedGroup?.([])
+                        setPhonesData?.([])
+                        if(momoProjectRepo && momoProjectRepo.current && setTuskMode) {
+                            setTuskMode(false)
+                            onClose()
+                    }}}
+                    className="btn btn-outline-light text text-dark"
+                    style={{
+                        position: 'absolute',
+                        top: 0,
+                        right: 0,
+                        padding: '4px 8px',
+                        fontSize: 14,
+                        lineHeight: 1,
+                        zIndex: 1,
+                    }}
+                >
+                    <span className="material-icons" style={{marginTop: 4}}>
+                        close
+                    </span>
+                </button>
+
+                {phoneGroups.map(group => (
+                    <div
+                        key={group.phone}
+                        style={{
+                            border: '1px solid #ddd',
+                            borderRadius: 6,
+                            padding: 8,
+                            minWidth: 180,        // поменьше, чем было
+                            maxWidth: 240,        // и не даём расти слишком
+                            flex: '0 1 auto',     // «авто»-размер вместо 1 1 auto
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                            background: '#fff',
+                        }}
+                    >
                         <div
-                            key={phone}
                             style={{
-                                display: "flex",
-                                flexDirection: "row",
-                                gap: 8,
-                                alignItems: "center",
+                                fontSize: 14,
+                                fontWeight: 600,
+                                marginBottom: 6,
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
                             }}
                         >
-                            <div style={{ fontSize: 16, fontWeight: 600 }}>
-                                {phone}
-                            </div>
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                {projects.length === 1
-                                    ? (
-                                        <button
-                                            className="btn btn-sm btn-outline-success"
-                                            onClick={() => callFromCard(projects[0], phone)}
-                                        >
-                                            Вызов
-                                        </button>
-                                    ) : (
-                                        projects.map(proj => (
-                                            <button
-                                                key={proj}
-                                                className="btn btn-sm btn-outline-success"
-                                                onClick={() => callFromCard(proj, phone)}
-                                            >
-                                                Вызов {findNameProject(proj)}
-                                            </button>
-                                        ))
-                                    )}
-                            </div>
+                            {group.phone}
                         </div>
-                    ))}
-                    <div style={{display: "flex", flexDirection: "row", fontSize:"16px", fontWeight: "600", gap: 8}}>
-                        Проекты:
-                        <div style={{display: "flex", flexDirection: "row", gap: 4}}>
-                            {allProjects.map(proj => (
-                                <div>{findNameProject(proj)}</div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
 
-                <button
-                    onClick={() => setOpenedPhones?.([])}
-                    className="btn btn-outline-light text-dark"
-                    style={{  height: 44 }}
-                >
-                    <span className="material-icons" style={{marginTop: 4, marginLeft: 2}}>close</span>
-                </button>
+                        {group.entries.map(entry => (
+                            <button
+                                key={entry.project}
+                                className="btn btn-sm btn-outline-success"
+                                style={{ marginRight: 4, marginBottom: 4 }}
+                                onClick={() => callFromCard(entry.project, group.phone)}
+                            >
+                                Вызов {findNameProject(entry.project)}
+                            </button>
+                        ))}
+                    </div>
+                ))}
             </div>
         );
     };
@@ -1534,7 +1846,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     {mainActiveCall.direction === 'outbound' ? 'logout' : 'login'}
                   </span>
                     <strong className="ml-2" style={{ fontSize: 16, fontWeight: 600}}>
-                        {mainActiveCall.direction === 'outbound' ? mainActiveCall.callee_num || extractSuffix(mainActiveCall.cid_num) : extractSuffix(mainActiveCall.cid_num)}
+                        {mainActiveCall.direction === 'outbound' && mainActiveCall.application !== 'uuid_bridge'?
+                            // mainActiveCall.callee_num ||
+                            extractSuffix(mainActiveCall.b_callee_num) : extractSuffix(mainActiveCall.cid_num)}
                         {' | '}
                         {new Date(mainActiveCall.created).toLocaleString()}
                     </strong>
@@ -1559,7 +1873,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         const iconColor = postCallData?.direction === 'outbound' ? '#f26666' : '#7cd420';
         const iconName = postCallData?.direction === 'outbound' ? 'logout' : 'login';
-        const phoneNumber = postCallData?.direction === 'outbound' ? postCallData.b_dest : postCallData?.cid_num;
+        const phoneNumber = postCallData?.direction === 'outbound' && postCallData?.application !== 'uuid_bridge' ? postCallData.b_callee_num : postCallData?.cid_num;
         const startDate = new Date(postCallData?.b_created || "0").toLocaleString();
 
         return (
@@ -1571,7 +1885,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     <strong className="ml-2" style={{ whiteSpace: 'nowrap', fontWeight: 600, fontSize: 16 }}>{phoneNumber} | {startDate}</strong>
                 </div>
                 {!tuskMode && <label className="mt-3"
-                        style={{whiteSpace: 'nowrap', marginTop: "4px", fontWeight: 600, fontSize: 16}}>
+                                     style={{whiteSpace: 'nowrap', marginTop: "4px", fontWeight: 600, fontSize: 16}}>
                     {`Проект: ${findNameProject(activeProject)}`}
                 </label>}
             </div>
@@ -1677,19 +1991,24 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return result;
     }, [monoModules, commonModules]);
     const renderModules = () => {
-        if (!hasActiveCall && !postActive) {
-            return null
-        };
+        if (!hasActiveCall && !postActive && !openedPhones?.length) {
+            return null;
+        }
 
-        // console.log("renderModules: ", modules)
-        if ((!tuskMode && modules.length === 0) || (tuskMode && monoModules && Object.values(monoModules).flat().length === 0)) {
-            return null
-        };
+        // если совсем нет модулей
+        const allCount = tuskMode
+            ? Object.values(monoModules || {}).flat().length
+            : modules.length;
+        if (allCount === 0) {
+            return null;
+        }
+
+        // обычный режим — только ручные из modules
         if (!tuskMode) {
             return (
-                <div style={{display: "flex", flexDirection: "row", gap: 8, alignItems: "center", marginLeft:20, marginBottom: 10}}>
-                    <div style={{fontWeight: 600, fontSize: 16}}>Модули: </div>
-                    {modules.map((mod, idx) => (
+                <div style={{ display: "flex", gap: 8, margin: "0 0 10px 20px", alignItems: "center" }}>
+                    <div style={{ fontWeight: 600, fontSize: 16 }}>Модули:</div>
+                    {manualModules.map((mod, idx) => (
                         <button
                             key={idx}
                             onClick={() => handleModuleRun(mod)}
@@ -1700,39 +2019,66 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     ))}
                 </div>
             );
-        } else if (monoModules) {
-            return (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginLeft: 20, marginBottom: 10 }}>
-                    {commonModules.map((mod, idx) => (
-                        <button
-                            key={`common-${mod.filename}-${idx}`}
-                            onClick={() => handleModuleRun(mod)}
-                            className="btn btn-outline-dark"
-                        >
-                            {mod.filename}
-                        </button>
-                    ))}
+        }
 
-                    {/* Проектные модули с цветами проекта */}
-                    {Object.entries(projectModules).map(([proj, mods]) =>
-                        mods.map((mod, idx) => (
+        // tuskMode — ручные общие + ручные проектные
+        if (monoModules) {
+            return (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "0 0 10px 20px" }}>
+                    {/* ручные общие модули */}
+                    {commonModules
+                        .filter(mod => !mod.start_modes?.includes("start"))
+                        .map((mod, idx) => (
                             <button
-                                key={`${proj}-${mod.filename}-${idx}`}
+                                key={`common-${mod.filename}-${idx}`}
                                 onClick={() => handleModuleRun(mod)}
-                                className="btn"
-                                style={{
-                                    border: `1px solid ${projectColors[proj]}`,
-                                    color: projectColors[proj]
-                                }}
+                                className="btn btn-outline-dark"
                             >
                                 {mod.filename}
                             </button>
                         ))
+                    }
+
+                    {/* ручные проектные модули */}
+                    {Object.entries(projectModules).map(([proj, mods]) =>
+                        mods
+                            .filter(mod => !mod.start_modes?.includes("start"))
+                            .map((mod, idx) => (
+                                <button
+                                    key={`${proj}-${mod.filename}-${idx}`}
+                                    onClick={() => handleModuleRun(mod)}
+                                    className="btn"
+                                    style={{
+                                        border: `1px solid ${projectColors[proj]}`,
+                                        color: projectColors[proj],
+                                    }}
+                                >
+                                    {mod.filename}
+                                </button>
+                            ))
                     )}
                 </div>
             );
         }
+
+        return null;
     };
+
+
+    const phoneProjectOptions = useMemo(() => {
+        const result: Array<{ phone: string; project: string }> = [];
+        const seen = new Set<string>();
+
+        (openedPhones || []).forEach(ph => {
+            const key = `${ph.phone}|${ph.project}`;
+            if (!seen.has(key)) {
+                seen.add(key);
+                result.push({ phone: ph.phone, project: ph.project });
+            }
+        });
+
+        return result;
+    }, [openedPhones]);
 
     const renderSelectedCallHeader = () => {
         return(
@@ -1777,7 +2123,102 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             </div>
         )
     }
+// в начале компонента
+// map: fieldId → массив всех найденных { phone, project, value }
+    const contactInfoOptions = useMemo(() => {
+        const result: Record<string, Array<{ phone: string; project: string; value: string }>> = {};
+        (openedPhones || []).forEach(ph => {
+            Object.entries(ph.contact_info || {}).forEach(([fieldId, value]) => {
+                if (!result[fieldId]) result[fieldId] = [];
+                result[fieldId].push({
+                    phone: ph.phone,
+                    project: ph.project,
+                    value: String(value),
+                });
+            });
+        });
+        return result;
+    }, [openedPhones]);
 
+// вот этот эффект надо добавить **после** объявления contactInfoOptions и перед return(...)
+    useEffect(() => {
+        // 1) сброс
+        // setValues({});
+
+        // если ничего не открыто — дальше не инициализируем
+        if (!openedPhones?.length) return;
+
+        // 2) заполняем заново
+        const next: GroupFieldValues = {};
+        // у нас selectedProjects уже содержит нужный набор проектов
+        selectedProjects.forEach(proj => {
+            next[proj] = {};
+        });
+
+        // для каждого поля смотрим, есть ли ровно одна уникальная value
+        Object.entries(contactInfoOptions).forEach(([fieldId, opts]) => {
+            const uniq = Array.from(new Set(opts.map(o => o.value).filter(v => v !== '')));
+            if (uniq.length === 1) {
+                // единственный вариант — распихиваем по всем проектам
+                selectedProjects.forEach(proj => {
+                    next[proj][fieldId] = uniq[0];
+                });
+            }
+        });
+
+        setValues(next);
+    }, [openedPhones, contactInfoOptions, selectedProjects]);
+
+    useEffect(() => {
+        if (!openedPhones?.length) return;
+        const next: GroupFieldValues = { ...values };
+
+        // для каждого поля и каждого проекта смотрим, есть ли в contactInfoOptions ровно одно значение
+        mergedFields.forEach(f => {
+            f.projects.forEach(proj => {
+                const fieldId = f.fieldIds[proj];
+                // собрать все значения именно для этого проекта
+                const vals = (contactInfoOptions[fieldId] || [])
+                    .filter(o => o.project === proj)
+                    .map(o => o.value);
+                const uniq = Array.from(new Set(vals));
+                if (uniq.length === 1) {
+                    next[proj] = { ...next[proj], [fieldId]: uniq[0] };
+                }
+            });
+        });
+
+        setValues(next);
+    }, [contactInfoOptions, selectedProjects, openedPhones]);
+
+    // Делаем ТОЛЬКО если у нас уже есть openedPhones и выбранные проекты
+// вверху компонента, рядом с другими useEffects
+    useEffect(() => {
+        // если нет телефонов – ничего не делаем
+        if (!openedPhones?.length) return;
+
+        // клонируем текущее состояние, чтобы не затирать старые данные
+        const nextValues: GroupFieldValues = { ...values };
+
+        // пройдём по всем полям, для которых есть contact_info
+        Object.entries(contactInfoOptions).forEach(([fieldId, opts]) => {
+            // отфильтруем только те варианты, у которых value непустая строка
+            const vals = opts.map(o => o.value).filter(v => v !== '');
+            const uniq = Array.from(new Set(vals));
+
+            // если для этого fieldId ровно 1 вариант – подставляем его во все проекты
+            if (uniq.length === 1) {
+                const single = uniq[0];
+                selectedProjects.forEach(proj => {
+                    // инициализируем подпроект, если ещё нет
+                    if (!nextValues[proj]) nextValues[proj] = {};
+                    nextValues[proj][fieldId] = single;
+                });
+            }
+        });
+
+        setValues(nextValues);
+    }, [openedPhones, contactInfoOptions, selectedProjects]);
 
     const commonFields = mergedFields.filter(f => f.projects.length > 1);
 
@@ -1798,98 +2239,100 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     return (
         <div style={{marginTop: 20}}>
             {renderModules()}
-        <div className="col ml-2 pr-0 mr-0">
-            <div className="card col ml-0">
-                <div className="card-body">
-                    {hasActiveCall && renderActiveCallHeader(activeCalls[0])}
-                    {!hasActiveCall && postActive && renderPostCallHeader()}
-                    {tuskMode && !hasActiveCall && !postActive && role === 'worker' && renderGroupPhones()}
-                    {tuskMode && !hasActiveCall && !postActive && role === 'manager' && renderExpressCards()}
+            <div className="col ml-2 pr-0 mr-0 mr-1">
+                <div className="card col ml-0">
+                    <div className="card-body">
+                        {hasActiveCall && renderActiveCallHeader(activeCalls[0])}
+                        {!hasActiveCall && postActive && renderPostCallHeader()}
+                        {tuskMode && !hasActiveCall && !postActive && renderGroupPhones()}
+                        {tuskMode && !hasActiveCall && !postActive && role === 'manager' && renderExpressCards()}
 
-                    <div>
+                        <div>
                             {!tuskMode && !hasActiveCall && !postActive && (
                                 renderSelectedCallHeader()
                             )}
-                        {shouldShowMeta && fullWidthCard ? (
-                            <div
-                                style={{
-                                    display: 'flex',
-                                    gap: 12,
-                                    marginBottom: 8,
-                                    flexWrap: 'wrap'
-                                }}
-                            >
-                                {[{
-                                    label: 'Причина звонка',
-                                    value: callReason,
-                                    onChange: setCallReason,
-                                    options: callReasons
-                                }, {
-                                    label: 'Результат звонка',
-                                    value: callResult as number,
-                                    onChange: setCallResult,
-                                    options: callResults
-                                }].map(({ label, value, onChange, options }, idx) => (
-                                    <div
-                                        key={idx}
-                                        className="form-group"
-                                        style={{
-                                            flex: '1 1 calc(50% - 6px)', // 50% - половина gap
-                                            minWidth: 0,
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            gap: 4
-                                        }}
-                                    >
-                                        <label style={{ fontWeight: 400, fontSize: 16 }}>
-                                            {label}: <span style={{ color: 'red' }}>*</span>
-                                        </label>
-                                        <SearchableSelect
-                                            options={options}
-                                            value={value}
-                                            onChange={onChange}
-                                            placeholder={`Выберите ${label.toLowerCase()}...`}
-                                            augmentSaved={!hasActiveCall && !postActive}
-                                        />
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <>
-                                {shouldShowMeta && (
-                                    <div className="form-group d-flex align-items-center" style={compact ? { flex: '1 1 calc(50% - 12px)', minWidth: 0 } : { flex: '1 1 0%', minWidth: 0 }}>
-                                        <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
-                                            Причина звонка: <span style={{ color: 'red' }}>*</span>
-                                        </label>
-                                        <SearchableSelect
-                                            options={callReasons}
-                                            value={callReason}
-                                            onChange={setCallReason}
-                                            placeholder="Выберите причину..."
-                                            augmentSaved={!hasActiveCall && !postActive}
-                                        />
-                                    </div>
-                                )}
+                            {shouldShowMeta && fullWidthCard ? (
+                                <div
+                                    style={{
+                                        display: 'flex',
+                                        gap: 12,
+                                        marginBottom: 8,
+                                        flexWrap: 'wrap'
+                                    }}
+                                >
+                                    {[{
+                                        label: 'Причина звонка',
+                                        value: callReason,
+                                        onChange: setCallReason,
+                                        options: callReasons
+                                    }, {
+                                        label: 'Результат звонка',
+                                        value: callResult,
+                                        onChange: setCallResult,
+                                        options: callResults
+                                    }].map(({ label, value, onChange, options }, idx) => (
+                                        <div
+                                            key={idx}
+                                            className="form-group"
+                                            style={{
+                                                flex: '1 1 calc(50% - 6px)',
+                                                minWidth: 0,
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: 4
+                                            }}
+                                        >
+                                            <label style={{ fontWeight: 400, fontSize: 16 }}>
+                                                {label}: <span style={{ color: 'red' }}>*</span>
+                                            </label>
+                                            <SearchableSelect
+                                                options={options}
+                                                value={value}
+                                                onChange={onChange}
+                                                placeholder={`Выберите ${label.toLowerCase()}...`}
+                                                augmentSaved={!hasActiveCall && !postActive}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <>
+                                    {shouldShowMeta && (
+                                        <div className="form-group d-flex align-items-center" style={compact ? { flex: '1 1 calc(50% - 12px)', minWidth: 0 } : { flex: '1 1 0%', minWidth: 0 }}>
+                                            <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
+                                                Причина звонка: <span style={{ color: 'red' }}>*</span>
+                                            </label>
+                                            <SearchableSelect
+                                                options={callReasons}
+                                                value={callReason}
+                                                onChange={setCallReason}
+                                                placeholder="Выберите причину..."
+                                                augmentSaved={!hasActiveCall && !postActive}
+                                            />
+                                        </div>
+                                    )}
 
-                                {shouldShowMeta && (
-                                    <div className="form-group d-flex align-items-center" style={compact ? { flex: '1 1 calc(50% - 22px)', minWidth: 0 } : { flex: '1 1 0%', minWidth: 0 }}>
-                                        <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
-                                            Результат звонка: <span style={{ color: 'red' }}>*</span>
-                                        </label>
-                                        <SearchableSelect
-                                            options={callResults}
-                                            value={callResult as number}
-                                            onChange={setCallResult}
-                                            placeholder="Выберите результат..."
-                                            augmentSaved={!hasActiveCall && !postActive}
-                                        />
-                                    </div>
-                                )}
-                            </>
-                        )}
+                                    {shouldShowMeta && (
+                                        <div className="form-group d-flex align-items-center" style={compact ? { flex: '1 1 calc(50% - 22px)', minWidth: 0 } : { flex: '1 1 0%', minWidth: 0 }}>
+                                            <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
+                                                Результат звонка: <span style={{ color: 'red' }}>*</span>
+                                            </label>
+                                            <SearchableSelect
+                                                options={callResults}
+                                                value={callResult}
+                                                onChange={setCallResult}
+                                                placeholder="Выберите результат..."
+                                                augmentSaved={!hasActiveCall && !postActive}
+                                            />
+                                        </div>
+                                    )}
+                                </>
+                            )}
 
-                        {(tuskMode && (hasActiveCall || postActive)) && (
-                            <div style={{ padding:1}}>
+                        {/*{(tuskMode && (hasActiveCall || postActive)) && (*/}
+                            {mergedFields.length > 0 && (
+
+                                <div style={{ padding:1}}>
                                 <div style={{ display: "flex", gap: 8 }}>
                                     {groupProjects
                                         .filter(proj => typeof proj === 'string' && proj.trim() !== '' && proj !== "0")
@@ -1913,245 +2356,295 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                             );
                                         })}
                                 </div>
+                                    {commonFields.length > 0 && (
+                                        <div style={{ marginTop: 8, marginBottom: 8 }}>
+                                            <div style={{ border: `2px solid black`, borderRadius: 4, padding: 8 }}>
+                                                {commonFields.map(f => {
+                                                    // собираем набор всех телефонов|проектов для этого общего поля
+                                                    const uniquePhones = Array.from(
+                                                        new Set(
+                                                            f.projects.flatMap(p => {
+                                                                const id = f.fieldIds[p];
+                                                                return (contactInfoOptions[id] || [])
+                                                                    .filter(o => o.project === p)
+                                                                    .map(o => `${o.phone}|${o.project}`);
+                                                            })
+                                                        )
+                                                    ).map(key => {
+                                                        const [phone, project] = key.split('|');
+                                                        return { phone, project };
+                                                    });
 
-                                {commonFields.length > 0 && <div style={{marginTop: 8, marginBottom: 8}}>
-                                    <div style={{
-                                        border: `2px solid black`,
-                                        borderRadius: 4,
-                                        padding: 8
-                                    }}>
-                                        {commonFields.map(f => (
-                                            <div key={f.id}>
-                                                <EditableFields
-                                                    params={[{
-                                                        field_id: f.id,
-                                                        field_name: f.label,
-                                                        field_type: f.type,
-                                                        field_vals: f.values,
-                                                        editable: true,
-                                                        must_have: false,
-                                                        project_name: ''
-                                                    }]}
-                                                    initialValues={{[f.id]: values[f.projects[0]][f.fieldIds[f.projects[0]]] || ''}}
-                                                    onChange={nv => {
-                                                        const v = nv[f.id] || '';
-                                                        setValues(cur => {
-                                                            const copy = {...cur};
-                                                            f.projects.forEach(proj => {
-                                                                copy[proj] = {...copy[proj], [f.fieldIds[proj]]: v};
-                                                            });
-                                                            return copy;
-                                                        });
-                                                    }}
-                                                />
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>}
+                                                    const showSelector = uniquePhones.length > 1;
+                                                    // для initialValues берём первое не-null значение из всех проектов
+                                                    const fieldValue = f.projects.reduce<string | null>((acc, p) => {
+                                                        const id = f.fieldIds[p];
+                                                        return acc ?? values[p]?.[id] ?? null;
+                                                    }, null);
 
-                                {/* 2) УНИКАЛЬНЫЕ поля по проектам */}
-                                <div style={{ marginTop: 4, marginBottom: 4 }}>
-                                    {selectedProjects.map(proj => {
-                                        const fields = uniqueFieldsByProject[proj];
-                                        if (!fields.length) return null;
-
-                                        const validGroupIds = new Set(
-                                            (group_instructions[proj]?.groups || []).map((g: any) => g.id)
-                                        );
-                                        (group_instructions[proj]?.groups || []).forEach((group: any) => {
-                                            console.log('>>> group.id:', group.id);
-                                            const matching = fields.filter(f => f.group_id === group.id);
-                                            console.log(`>>>Group ${group.id} matched fields:`, matching);
-                                        });
-
-
-                                        const groupedFields = (group_instructions[proj]?.groups || [])
-                                            .slice()
-                                            .sort((a: any, b: any) => a.position - b.position)
-                                            .map((group: any) => {
-                                                const fieldsInGroup = fields
-                                                    .filter(f => f.group_id === group.id)
-                                                    .sort((a, b) => (a.group_position ?? 0) - (b.group_position ?? 0));
-                                                return { group, fields: fieldsInGroup };
-                                            })
-                                            .filter(({ fields }: any) => fields.length > 0);
-
-                                        const orphanFields = fields.filter(
-                                            f => f.group_id == null || !validGroupIds.has(f.group_id)
-                                        );
-
-                                        return (
-                                            <div
-                                                key={proj}
-                                                style={{
-                                                    border: `2px solid ${projectColors[proj]}`,
-                                                    borderRadius: 4,
-                                                    padding: 8,
-                                                    marginBottom: 12
-                                                }}
-                                            >
-                                                <div
-                                                    style={{
-                                                        display: 'flex',
-                                                        flexWrap: 'wrap',
-                                                        gap: 16,
-                                                        marginBottom: 16
-                                                    }}
-                                                >
-                                                    {groupedFields.map(({ group, fields }: any) => (
-                                                        <div
-                                                            key={group.id}
-                                                            style={{
-                                                                border: '1px solid #ccc',
-                                                                borderRadius: 4,
-                                                                padding: 8,
-                                                                width: group.width === 0.5 ? 'calc(50% - 8px)' : '100%',
-                                                                minWidth: 0
-                                                            }}
-                                                        >
-                                                            <div style={{ fontWeight: 600, marginBottom: 8 }}>{group.group_name}</div>
-                                                            {fields.map((f: any) => (
-                                                                <EditableFields
-                                                                    key={f.id}
-                                                                    params={[{
-                                                                        field_id: f.id,
-                                                                        field_name: f.label,
-                                                                        field_type: f.type,
-                                                                        field_vals: f.values,
-                                                                        editable: true,
-                                                                        must_have: false,
-                                                                        project_name: proj
-                                                                    }]}
-                                                                    initialValues={{
-                                                                        [f.id]: values[proj][f.fieldIds[proj]] || ''
-                                                                    }}
-                                                                    onChange={nv => {
-                                                                        const v = nv[f.id] || '';
-                                                                        setValues(cur => ({
-                                                                            ...cur,
-                                                                            [proj]: { ...cur[proj], [f.fieldIds[proj]]: v }
-                                                                        }));
-                                                                    }}
-                                                                />
-                                                            ))}
-                                                        </div>
-                                                    ))}
-
-                                                    {orphanFields.length > 0 && (
-                                                        <div style={{ flex: '1 1 100%' }}>
-                                                            {orphanFields.map(f => (
-                                                                <EditableFields
-                                                                    key={f.id}
-                                                                    params={[{
-                                                                        field_id: f.id,
-                                                                        field_name: f.label,
-                                                                        field_type: f.type,
-                                                                        field_vals: f.values,
-                                                                        editable: true,
-                                                                        must_have: false,
-                                                                        project_name: proj
-                                                                    }]}
-                                                                    initialValues={{
-                                                                        [f.id]: values[proj][f.fieldIds[proj]] || ''
-                                                                    }}
-                                                                    onChange={nv => {
-                                                                        const v = nv[f.id] || '';
-                                                                        setValues(cur => ({
-                                                                            ...cur,
-                                                                            [proj]: { ...cur[proj], [f.fieldIds[proj]]: v }
-                                                                        }));
-                                                                    }}
-                                                                />
-                                                            ))}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-
-                            </div>
-                        )}
-                        {tuskMode && !(hasActiveCall || postActive) && role === "worker" && (
-                            <div
-                                style={{
-                                    display: "grid",
-                                    gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-                                    gap: 16,
-                                    marginTop: 24,
-                                }}
-                            >
-                                {openedPhones?.map(phone => (
-                                    <div
-                                        key={phone.id}
-                                        style={{
-                                            border: "1px solid #ddd",
-                                            borderRadius: 8,
-                                            boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
-                                            padding: 16,
-                                            display: "flex",
-                                            flexDirection: "column",
-                                        }}
-                                    >
-                                        {/* Шапка карточки */}
-                                        <div
-                                            style={{
-                                                display: "flex",
-                                                justifyContent: "space-between",
-                                                alignItems: "center",
-                                                marginBottom: 12,
-                                            }}
-                                        >
-                                            <div style={{ fontSize: 18, fontWeight: 600 }}>{phone.phone}</div>
-                                        </div>
-
-                                        {/* Тело карточки: contact_info */}
-                                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                            {phone.contact_info &&
-                                                Object.entries(phone.contact_info).map(([fieldId, value]) => {
-                                                    const fieldDef = basicFields.find(
-                                                        f => f.fieldIds[phone.project] === fieldId
-                                                    );
-                                                    const label = fieldDef ? fieldDef.label : fieldId;
                                                     return (
-                                                        <div
-                                                            key={fieldId}
-                                                            style={{ display: "flex", fontSize: 14, color: "#333" }}
-                                                        >
-                                                            <div style={{ width: "40%", fontWeight: 500 }}>{label}:</div>
-                                                            <div style={{ width: "60%" }}>{String(value)}</div>
+                                                        <div key={f.id} style={{ marginBottom: 16 }}>
+                                                            {showSelector && (
+                                                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                    <label style={{ fontWeight: 500 }}>
+                                                                        Выберите телефон для «{f.label}»:
+                                                                    </label>
+                                                                    <PhoneProjectSelect
+                                                                        value={
+                                                                            selectedPhoneByField[f.id]
+                                                                                ? `${selectedPhoneByField[f.id].phone}|${selectedPhoneByField[f.id].project}`
+                                                                                : ''
+                                                                        }
+                                                                        onChange={val => {
+                                                                            const [phone, project] = val.split('|');
+                                                                            // найдём все записи с этим телефоном
+                                                                            const entries = (openedPhones || []).filter(
+                                                                                ent => ent.phone === phone && ent.project === project
+                                                                            );
+                                                                            const id = f.fieldIds[project];
+                                                                            const val0 = entries[0]?.contact_info[id] || '';
+
+                                                                            // обновляем сразу все проекты, где есть это общее поле
+                                                                            setValues(cur => {
+                                                                                const next = { ...cur };
+                                                                                f.projects.forEach(proj => {
+                                                                                    const fid = f.fieldIds[proj];
+                                                                                    next[proj] = { ...next[proj], [fid]: val0 };
+                                                                                });
+                                                                                return next;
+                                                                            });
+
+                                                                            // сохраняем выбор селекта
+                                                                            setSelectedPhoneByField(cur => ({
+                                                                                ...cur,
+                                                                                [f.id]: { phone, project }
+                                                                            }));
+                                                                        }}
+                                                                        options={uniquePhones.map(opt => ({
+                                                                            id: `${opt.phone}|${opt.project}`,
+                                                                            name: `${opt.phone} (${findNameProject(opt.project)})`
+                                                                        }))}
+                                                                        placeholder="— выберите телефон —"
+                                                                    />
+                                                                </div>
+                                                            )}
+
+
+                                                            <EditableFields
+                                                                params={[
+                                                                    {
+                                                                        field_id: f.id,
+                                                                        field_name: f.label,
+                                                                        field_type: f.type,
+                                                                        field_vals: f.values,
+                                                                        editable: true,
+                                                                        must_have: false,
+                                                                        project_name: '' // не используется для common
+                                                                    }
+                                                                ]}
+                                                                initialValues={{ [f.id]: fieldValue || '' }}
+                                                                onChange={nv => {
+                                                                    const v = nv[f.id] || '';
+                                                                    setValues(cur => {
+                                                                        const copy = { ...cur };
+                                                                        // при любом ручном вводе тоже обновляем сразу во всех проектах
+                                                                        f.projects.forEach(proj => {
+                                                                            const id = f.fieldIds[proj];
+                                                                            copy[proj] = { ...copy[proj], [id]: v };
+                                                                        });
+                                                                        return copy;
+                                                                    });
+                                                                }}
+                                                            />
                                                         </div>
                                                     );
                                                 })}
-                                            <div style={{ fontSize: 14, color: "#333", marginTop: 4, fontWeight: 500 }}>
-                                                Проект: <span style={{ fontWeight: 500 }}>{findNameProject(phone.project)}</span>
                                             </div>
                                         </div>
+                                    )}
+
+                                    <div style={{ marginTop: 4, marginBottom: 4 }}>
+                                        {selectedProjects.map(proj => {
+                                            const fields = uniqueFieldsByProject[proj];
+                                            if (!fields.length) return null;
+
+                                            const validGroupIds = new Set(
+                                                (group_instructions[proj]?.groups || []).map((g: any) => g.id)
+                                            );
+                                            (group_instructions[proj]?.groups || []).forEach((group: any) => {
+                                                console.log('>>> group.id:', group.id);
+                                                const matching = fields.filter(f => f.group_id === group.id);
+                                                console.log(`>>>Group ${group.id} matched fields:`, matching);
+                                            });
+
+
+                                            const groupedFields = (group_instructions[proj]?.groups || [])
+                                                .slice()
+                                                .sort((a: any, b: any) => a.position - b.position)
+                                                .map((group: any) => {
+                                                    const fieldsInGroup = fields
+                                                        .filter(f => f.group_id === group.id)
+                                                        .sort((a, b) => (a.group_position ?? 0) - (b.group_position ?? 0));
+                                                    return { group, fields: fieldsInGroup };
+                                                })
+                                                .filter(({ fields }: any) => fields.length > 0);
+
+                                            const orphanFields = fields.filter(
+                                                f => f.group_id == null || !validGroupIds.has(f.group_id)
+                                            );
+
+                                            return (
+                                                <div
+                                                    key={proj}
+                                                    style={{
+                                                        border: `2px solid ${projectColors[proj]}`,
+                                                        borderRadius: 4,
+                                                        padding: 8,
+                                                        marginBottom: 12
+                                                    }}
+                                                >
+                                                    <div
+                                                        style={{
+                                                            display: 'flex',
+                                                            flexWrap: 'wrap',
+                                                            gap: 16,
+                                                            marginBottom: 16
+                                                        }}
+                                                    >
+                                                        {groupedFields.map(({ group, fields }:{group: any, fields: any}) => (
+                                                            <div
+                                                                key={group.id}
+                                                                style={{
+                                                                    border: '1px solid #ccc',
+                                                                    borderRadius: 4,
+                                                                    padding: 8,
+                                                                    width: fullWidthCard && group.width === 0.5 ? 'calc(50% - 8px)' : '100%',
+                                                                    minWidth: 0
+                                                                }}
+                                                            >
+                                                                <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                                                                    {group.group_name}
+                                                                </div>
+                                                                {fields.map((f: any) => {
+                                                                    const fieldId = f.fieldIds[proj];
+                                                                    // берём только варианты из текущего проекта
+                                                                    const opts = (contactInfoOptions[fieldId] || []).filter(
+                                                                        o => o.project === proj
+                                                                    );
+                                                                    const uniquePhones = Array.from(
+                                                                        new Set(opts.map(o => `${o.phone}|${o.project}`))
+                                                                    ).map(key => {
+                                                                        const [phone, project] = key.split('|');
+                                                                        return { phone, project };
+                                                                    });
+
+                                                                    const showSelector = uniquePhones.length > 1;
+                                                                    const picked = selectedPhoneByField[fieldId];
+
+                                                                    return (
+                                                                        <div key={f.id} style={{ marginBottom: 16 }}>
+                                                                            {showSelector && (
+                                                                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                                    <label style={{ fontWeight: 500 }}>
+                                                                                        Выберите телефон для «{f.label}»:
+                                                                                    </label>
+                                                                                    <PhoneProjectSelect
+                                                                                        value={
+                                                                                            selectedPhoneByField[fieldId]
+                                                                                                ? `${selectedPhoneByField[fieldId].phone}|${selectedPhoneByField[fieldId].project}`
+                                                                                                : ''
+                                                                                        }
+                                                                                        onChange={val => {
+                                                                                            const [phone, project] = val.split('|');
+                                                                                            const found = openedPhones?.find(p => p.phone === phone && p.project === project);
+                                                                                            if (!found) return;
+                                                                                            setValues(cur => ({
+                                                                                                ...cur,
+                                                                                                [proj]: { ...cur[proj], [fieldId]: found.contact_info[fieldId] || '' }
+                                                                                            }));
+                                                                                            setSelectedPhoneByField(cur => ({
+                                                                                                ...cur,
+                                                                                                [fieldId]: { phone, project }
+                                                                                            }));
+                                                                                        }}
+                                                                                        options={uniquePhones.map(opt => ({
+                                                                                            id: `${opt.phone}|${opt.project}`,
+                                                                                            name: `${opt.phone} (${findNameProject(opt.project)})`
+                                                                                        }))}
+                                                                                        placeholder="— выберите телефон —"
+                                                                                    />
+                                                                                </div>
+                                                                            )}
+
+                                                                            <EditableFields
+                                                                                params={[{
+                                                                                    field_id: f.id,
+                                                                                    field_name: f.label,
+                                                                                    field_type: f.type,
+                                                                                    field_vals: f.values,
+                                                                                    editable: true,
+                                                                                    must_have: false,
+                                                                                    project_name: proj
+                                                                                }]}
+                                                                                initialValues={{
+                                                                                    [f.id]: values[proj]?.[fieldId] || ''
+                                                                                }}
+                                                                                onChange={nv => {
+                                                                                    const v = nv[f.id] || '';
+                                                                                    setValues(cur => ({
+                                                                                        ...cur,
+                                                                                        [proj]: { ...cur[proj], [fieldId]: v }
+                                                                                    }));
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        ))}
+
+                                                        {orphanFields.length > 0 && (
+                                                            <div style={{ flex: '1 1 100%' }}>
+                                                                {orphanFields.map(f => {
+                                                                    const fieldId = f.fieldIds[proj];
+                                                                    return (
+                                                                        <div key={f.id} style={{ marginBottom: 16 }}>
+                                                                            {/* аналогичный селект для orphans, если нужно */}
+                                                                            <EditableFields
+                                                                                params={[{
+                                                                                    field_id: f.id,
+                                                                                    field_name: f.label,
+                                                                                    field_type: f.type,
+                                                                                    field_vals: f.values,
+                                                                                    editable: true,
+                                                                                    must_have: false,
+                                                                                    project_name: proj
+                                                                                }]}
+                                                                                initialValues={{
+                                                                                    [f.id]: values[proj]?.[fieldId] || ''
+                                                                                }}
+                                                                                onChange={nv => {
+                                                                                    const v = nv[f.id] || '';
+                                                                                    setValues(cur => ({
+                                                                                        ...cur,
+                                                                                        [proj]: { ...cur[proj], [fieldId]: v }
+                                                                                    }));
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
-                                ))}
-                            </div>
-                        )}
 
-                        {/* Дополнительные поля */}
-                            <div
-                                style={
-                                    compact
-                                        ? { flex: '1 1 100%', minWidth: 0 }
-                                        : {}
-                                }
-                            >
-                                <EditableFields
-                                    params={params}
-                                    initialValues={baseFieldValues}
-                                    onChange={setBaseFieldValues}
-                                    augmentSaved={!hasActiveCall && !postActive}
-                                    compact={tuskMode && fullWidthCard}
-                                />
-                            </div>
-
-                            {/* Комментарий */}
-                            {shouldShowMeta && (
+                                </div>
+                            )}
+                            {(shouldShowMeta || tuskMode) && (
                                 <div
                                     className="form-group"
                                     style={
@@ -2172,7 +2665,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         </div>
 
                         {/* Кнопка «Сохранить» для обычного режима */}
-                        {(shouldShowMeta && !tuskMode) && (
+                        {(shouldShowMeta && !tuskMode && !hasActiveCall && !postActive) && (
                             <div className="card-footer d-flex justify-content-end">
                                 <button className="btn btn-outline-success" onClick={handleSave}>
                                     Сохранить
@@ -2193,20 +2686,20 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 </button>
                             </div>
                         )}
-                    {(tuskMode) &&
-                        <div className="d-flex justify-end mb-3">
-                            <label style={{ cursor: 'pointer', fontWeight: 500, display: "flex", gap: 8, marginTop: 8}}>
-                                <input
-                                    type="checkbox"
-                                    checked={fullWidthCard}
-                                    className={styles.customCheckbox}
-                                    onChange={() => setFullWidthCard ? setFullWidthCard(!fullWidthCard) : console.log("nan")}
-                                />
-                                <div style={{ marginTop: 2}}>
-                                    На всю ширину
-                                </div>
-                            </label>
-                        </div>}
+                        {(tuskMode) &&
+                            <div className="d-flex justify-end mb-3">
+                                <label style={{ cursor: 'pointer', fontWeight: 500, display: "flex", gap: 8, marginTop: 8}}>
+                                    <input
+                                        type="checkbox"
+                                        checked={fullWidthCard}
+                                        className={styles.customCheckbox}
+                                        onChange={() => setFullWidthCard ? setFullWidthCard(!fullWidthCard) : console.log("nan")}
+                                    />
+                                    <div style={{ marginTop: 2}}>
+                                        На всю ширину
+                                    </div>
+                                </label>
+                            </div>}
                     </div>
                 </div>
             </div>
@@ -2239,7 +2732,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 preset={selectedPreset?.preset ?? null}
                 ids={memoizedIds}
                 glagolParent="fs.at.glagol.ai"
-                role="admin"
+                role={role || "operator"}
                 idProjectMap={idProjectMap}
                 onSelectionChange={setGroupSelectedIds}
                 handleGroupSave={handleGroupSave}

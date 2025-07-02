@@ -24,7 +24,7 @@ interface Action {
     action_type: string;
     code_filename: string;
 }
-interface Preset {
+export interface Preset {
     id: number;
     preset_name: string;
     group_table: string;
@@ -334,28 +334,30 @@ const PresetSelectorTable: React.FC<Props> = ({
         Swal.fire('Готово', 'Операции отправлены на сервер', 'success');
     };
 
-    // обработка нажатия кнопки «Обработать»
 
     // --- 3) поиск + сортировка + пагинация вычисляются мемоизированно ---
     const processedRows = useMemo(() => {
         if (!selectedPreset) return [];
 
-        // 3.1 фильтрация
+        const term = searchTerm.toLowerCase();
+
         let result = tableData.filter(row => {
-            const term = searchTerm.toLowerCase();
             return Object.keys(selectedPreset.preset.structure).some(colKey => {
-                const cell = row[colKey] as ColumnCell;
+                const cell = row[colKey] as ColumnCell | undefined;
+                if (!cell || !cell.value) return false;
                 return cell.value.join(' ').toLowerCase().includes(term);
             });
         });
 
-        // 3.2 сортировка
         if (sortConfig) {
             result = [...result].sort((a, b) => {
-                const aCell = (a[sortConfig.key] as ColumnCell).value.join(' ');
-                const bCell = (b[sortConfig.key] as ColumnCell).value.join(' ');
-                if (aCell < bCell) return sortConfig.direction === 'asc' ? -1 : 1;
-                if (aCell > bCell) return sortConfig.direction === 'asc' ? 1 : -1;
+                const aCell = a[sortConfig.key] as ColumnCell | undefined;
+                const bCell = b[sortConfig.key] as ColumnCell | undefined;
+                const aStr = aCell?.value?.join(' ') ?? '';
+                const bStr = bCell?.value?.join(' ') ?? '';
+
+                if (aStr < bStr) return sortConfig.direction === 'asc' ? -1 : 1;
+                if (aStr > bStr) return sortConfig.direction === 'asc' ? 1 : -1;
                 return 0;
             });
         }
@@ -363,6 +365,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         return result;
     }, [tableData, searchTerm, sortConfig, selectedPreset]);
 
+    useEffect( () => console.log("processedRows: ",processedRows),[processedRows] )
     // 3.3 разбиваем на страницы
     const totalPages = Math.max(1, Math.ceil(processedRows.length / ROWS_PER_PAGE));
     const paginatedRows = processedRows.slice(

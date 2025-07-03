@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useRef} from 'react';
+import React, {useState, useEffect, useRef, MutableRefObject} from 'react';
 import Swal from 'sweetalert2';
 import {initSocket} from '../../socket';
 import { useSelector } from "react-redux";
@@ -92,7 +92,9 @@ interface ScriptPanelProps {
     uuid?: string;
     bUuid?: string;
     onClose: () => void;
-    selectedCall?: CallRecord
+    selectedCall?: CallRecord | null
+    setScriptFlag?: (scriptFlag: boolean) => void
+    setScriptAnotherID?: (scriptFlag: string) => void
 }
 
 const ScriptPanel: React.FC<ScriptPanelProps> = ({
@@ -101,7 +103,9 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
                                                      uuid = '',
                                                      bUuid = '',
                                                      onClose,
-                                                     selectedCall
+                                                     selectedCall,
+                                                     setScriptFlag,
+                                                     setScriptAnotherID
                                                  }) => {
     const {
         sessionKey = '',
@@ -139,6 +143,11 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
         setSelectedQuestion(q);
     };
 
+    useEffect(() => {
+        if (!scriptId && setScriptFlag) {
+            setScriptFlag(true);
+        }
+    },[setScriptFlag, scriptId])
     useEffect(() => console.log("111editScript: ",direction),[direction])
     useEffect(() => console.log("111editProject: ",projectName),[projectName])
 
@@ -190,6 +199,9 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
 
     useEffect(() => {
         function handleStartScript(msg: any) {
+            if (setScriptAnotherID) {
+                setScriptAnotherID(msg.script_id || '')
+            }
             setScriptId(msg.script_id || '');
             setScriptMode(msg.script_mode || '');
             setCommentMode(msg.comment_mode || '');

@@ -61,6 +61,7 @@ export interface OutActivePhone {
     phone?: string;
     special_key?: string;
     status?: string;
+    contact_info:{ [fieldId: string]: string }
     // другие поля, если нужно
 }
 
@@ -455,7 +456,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         };
     }, [allProjects, assignedKey, fsServer, outActivePhone?.special_key, outActiveProjectName, projectPoolForCall, roomId, sessionKey, sipLogin, worker]);
 
-    // Автодозвон (раз в 30 секунд)
+    // Автодозвон (раз в 15 секунд)
     useEffect(() => {
         const interval = setInterval(() => {
             if (
@@ -475,7 +476,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     action: 'get_phone_to_call'
                 });
             }
-        }, 3000);
+        }, 15000);
         return () => clearInterval(interval);
     }, [hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, fsServer, projectPoolForCall, fsStatus.state, fsStatus.status]);
 

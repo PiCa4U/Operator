@@ -19,6 +19,12 @@ const {
     worker: rawWorker,
 } = container.dataset as Partial<Record<string, string>>;
 
+//TODO TEST MOCKs
+// const sessionKey = rawSessionKey || 'fdsakr2349fnewrnk23le0fw8er';
+// const sipLogin   = rawSipLogin   || '1003';
+// const fsServer   = rawFsServer   || '158.160.64.67';
+// const worker     = rawWorker     || '10.lotus.at.glagol.ai';
+
 const sessionKey = rawSessionKey || 'fdsakr2349fnewrnk23le0fw8er';
 const sipLogin   = rawSipLogin   || '1012';
 const fsServer   = rawFsServer   || '85.193.89.178';

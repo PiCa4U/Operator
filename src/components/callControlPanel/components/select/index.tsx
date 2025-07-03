@@ -28,6 +28,8 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
         width: '100%',
         minWidth: 0,
         boxSizing: 'border-box',
+        fontWeight: 500,
+        fontSize: 18
     }),
     control: (base, { isFocused }) => ({
         ...base,
@@ -89,6 +91,8 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
         backgroundColor: isFocused ? '#f8f9fa' : 'white',
         color: '#212529',
         cursor: 'pointer',
+        fontWeight: 500,
+        fontSize: 20
     }),
 };
 

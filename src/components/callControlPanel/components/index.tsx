@@ -58,7 +58,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             style={{
                                 whiteSpace: 'nowrap',
                                 fontWeight: '400',
-                                fontSize: '16px',
+                                fontSize: '20px',
                                 marginRight: '8px'
                             }}
                         >
@@ -71,11 +71,11 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             {param.must_have && <span style={{ color: 'red' }}> *</span>}:
                         </label>
 
-                        {param.field_type === 'regular' && <input type="text" {...commonProps} />}
-                        {param.field_type === 'number' && <input type="number" {...commonProps} />}
-                        {param.field_type === 'date' && <input type="date" {...commonProps} />}
-                        {param.field_type === 'time' && <input type="time" {...commonProps} />}
-                        {param.field_type === 'textarea' && <textarea {...commonProps} />}
+                        {param.field_type === 'regular' && <input type="text" style={{fontSize: 18, fontWeight: 500}} {...commonProps} />}
+                        {param.field_type === 'number' && <input type="number" style={{fontSize: 18, fontWeight: 500}} {...commonProps} />}
+                        {param.field_type === 'date' && <input type="date" style={{fontSize: 18, fontWeight: 500}} {...commonProps} />}
+                        {param.field_type === 'time' && <input type="time" style={{fontSize: 18, fontWeight: 500}} {...commonProps} />}
+                        {param.field_type === 'textarea' && <textarea style={{fontSize: 18, fontWeight: 500}} {...commonProps} />}
 
                         {param.field_type === 'select' && (() => {
                             const raw = param.field_vals || '';
@@ -108,13 +108,14 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         })()}
 
                         {param.field_type === 'checkbox' && (
-                            <div className="form-check" style={{ marginLeft: '8px' }}>
+                            <div className="form-check" style={{ marginLeft: '8px', fontSize: 18}}>
                                 <input
                                     type="checkbox"
                                     className="form-check-input"
                                     id={`checkbox_${param.id}`}
                                     checked={currentValue === 'true'}
                                     disabled={!param.editable}
+                                    style={{fontSize: 18, fontWeight: 500}}
                                     onChange={e =>
                                         handleChange(
                                             param.field_id,
@@ -125,6 +126,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                 <label
                                     className="form-check-label"
                                     htmlFor={`checkbox_${param.id}`}
+                                    style={{fontSize: 18, fontWeight: 500}}
                                 >
                                     {param.field_vals || 'Выбрать'}
                                 </label>
@@ -150,8 +152,10 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                             onChange={e =>
                                                 handleChange(param.field_id, e.target.value)
                                             }
+                                            style={{fontSize: 18, fontWeight: 500}}
                                         />
                                         <label
+                                            style={{fontSize: 18, fontWeight: 500}}
                                             className="form-check-label"
                                             htmlFor={`radio_${param.id}_${idx}`}
                                         >
@@ -185,6 +189,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                                     id={`many_${param.id}_${idx}`}
                                                     value={opt}
                                                     checked={isChecked}
+                                                    style={{fontSize: 18, fontWeight: 500}}
                                                     disabled={!param.editable}
                                                     onChange={e => {
                                                         const values = currentValue
@@ -200,6 +205,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                                 <label
                                                     className="form-check-label"
                                                     htmlFor={`many_${param.id}_${idx}`}
+                                                    style={{fontSize: 18, fontWeight: 500}}
                                                 >
                                                     {opt}
                                                 </label>
@@ -215,6 +221,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                 className="form-control"
                                 value={currentValue}
                                 readOnly
+                                style={{fontSize: 18, fontWeight: 500}}
                             />
                         )}
                     </div>

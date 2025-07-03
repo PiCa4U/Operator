@@ -48,7 +48,7 @@ export interface CallData {
     call_result?: string | number;
     user_comment?: string;
     project_name?: string;
-    total_direction?: string;    // 'inbound' | 'outbound'
+    total_direction?: string;   // 'inbound' | 'outbound'
     // ... и т. д.
 }
 export interface ActiveCall {
@@ -176,6 +176,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [baseFieldValues, setBaseFieldValues] = useState<{ [fieldId: string]: string }>(
         call?.base_fields || {}
     );
+    useEffect(() => console.log("baseFieldValues: ", baseFieldValues),[baseFieldValues])
     // Списки причин, результатов и полей для заполнения
     const [callReasons, setCallReasons] = useState<ReasonItem[]>([]);
     const [callResults, setCallResults] = useState<ResultItem[]>([]);
@@ -198,7 +199,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // const hasActiveCall = Array.isArray(activeCalls) ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
 
     // Логика «постобработки»
-    const POST_LIMIT = worker.includes('fs.at.akc24.ru') ? 120 : 15;
+    const POST_LIMIT = worker.includes('fs.at.akc24.ru') ? 120 : 120;
     const [postSeconds, setPostSeconds] = useState(POST_LIMIT);
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
     const fsReport = useSelector((state: RootState) => state.operator.fsReport);
@@ -211,12 +212,28 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const startModulesRanRef = useRef(false);
 
+    // после всех useState...
+    useEffect(() => {
+
+        if (
+            hasActiveCall &&
+            !postActive &&
+            activeCalls.length === 1 &&
+            Boolean(activeCalls[0].application) &&
+            outActivePhone?.contact_info ) {
+            const info = outActivePhone.contact_info;
+            console.log("info: ", info)
+
+            setBaseFieldValues(info);
+        }
+    }, [hasActiveCall, outActivePhone, activeCalls, postActive, activeProject]);
+
     useEffect(() => {
         if (hasActiveCall) {
             setCallReason('');
             setCallResult('');
             setComment('');
-            setBaseFieldValues({});
+            // setBaseFieldValues({});
 
         }
     },[hasActiveCall])
@@ -710,7 +727,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
 
     const handleSave = () => {
-        if (!callReason || !callResult) {
+        if (!callResult) {
             Swal.fire({ title: "Ошибка", text: "Проверьте заполнение обязательных полей", icon: "error" });
             return;
         }
@@ -749,7 +766,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     // useEffect(()=> console.log("outboundCall: ", outboundCall),[outboundCall])
     const handlePostSave = () => {
-        if (!callReason || !callResult) {
+        if (!callResult) {
             Swal.fire({
                 title: "Ошибка",
                 text: "Проверьте заполнение обязательных полей",
@@ -902,22 +919,22 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                   <span className="material-icons" style={{ color: iconColor }}>
                     {activeCall.direction === 'outbound' ? 'logout' : 'login'}
                   </span>
-                    <strong className="ml-2" style={{ fontSize: 16, fontWeight: 600}}>
+                    <strong className="ml-2" style={{ fontSize: 20, fontWeight: 600}}>
                         {activeCall.direction === 'outbound' ? activeCall.callee_num || extractSuffix(activeCall.cid_num) : extractSuffix(activeCall.cid_num)}
                         {' | '}
                         {new Date(activeCall.created).toLocaleString()}
                     </strong>
                 </div>
-                <div className="mt-2 mb-2">
+                <div className="mt-2 mb-2" style={{fontSize: 20, fontWeight: 600}}>
                     <strong style={{
-                        fontSize: 16,
+                        fontSize: 20,
                         fontWeight: 600,
                         color: isHeld ? "#cba200" : "#0BB918"
                     }}
                     >
                         {isHeld ? 'На удержании' : 'Вызов активен'}:</strong> {formatDuration(callDuration)}
                 </div>
-                <strong style={{ whiteSpace: 'nowrap', marginTop: "4px", fontWeight: 600, fontSize: 16 }}>
+                <strong style={{ whiteSpace: 'nowrap', marginTop: "4px", fontWeight: 600, fontSize: 20 }}>
                     {`Проект: ${findNameProject(activeProject)}`}
                 </strong>
             </div>
@@ -935,9 +952,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             <div className="mb-3">
                 <div className="d-flex align-items-center">
                     <span className="material-icons" style={{ color: iconColor }}>{iconName}</span>
-                    <strong className="ml-2" style={{ whiteSpace: 'nowrap', fontWeight: 600, fontSize: 16 }}>{phoneNumber} | {startDate}</strong>
+                    <strong className="ml-2" style={{ whiteSpace: 'nowrap', fontWeight: 600, fontSize: 20 }}>{phoneNumber} | {startDate}</strong>
                 </div>
-                <label className="mt-3" style={{ whiteSpace: 'nowrap', marginTop: "4px", fontWeight: 600, fontSize: 16 }}>
+                <label className="mt-3" style={{ whiteSpace: 'nowrap', marginTop: "4px", fontWeight: 600, fontSize: 20 }}>
                     {`Проект: ${findNameProject(activeProject)}`}
                 </label>
                 {postCallRecord && postCallRecord.record_name && !isLoading && (
@@ -987,14 +1004,14 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                               >
                                 {sc.direction === 'outbound' ? 'logout' : 'login'}
                               </span>
-                                <strong className="ml-2" style={{ fontSize: 16, fontWeight: 600}}>
+                                <strong className="ml-2" style={{ fontSize: 20, fontWeight: 600}}>
                                     {sc.direction === 'outbound' ? sc.callee_num  : extractSuffix(sc.cid_num)}
                                     {' | '}
                                     {new Date(sc.created).toLocaleString()}
                                 </strong>
                             </div>
                             <div className="mt-2 mb-2">
-                                <strong style={{ fontSize: 16, fontWeight: 400 }}>
+                                <strong style={{ fontSize: 20, fontWeight: 400 }}>
                                     {isHeld ? 'На удержании' : 'Вызов активен'}:
                                 </strong>{' '}
                                 {formatDuration(secondCallDuration)}
@@ -1037,7 +1054,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 marginLeft: 20,
                 marginBottom: 10
             }}>
-                <div style={{ fontWeight: 600, fontSize: 16 }}>Модули: </div>
+                <div style={{ fontWeight: 600, fontSize: 20 }}>Модули: </div>
                 {manualModules.map((mod, idx) => (
                     <button
                         key={idx}
@@ -1066,7 +1083,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                     <span className="material-icons" style={{ color: iconCol }}>
                                       {call?.total_direction === 'outbound' ? 'logout' : 'login'}
                                     </span>
-                                        <strong className="ml-2" style={{ fontSize: 16, fontWeight: 600}}>
+                                        <strong className="ml-2" style={{ fontSize: 20, fontWeight: 600}}>
                                             {call?.total_direction === 'outbound' ? call?.b_line_num || call.caller_id || '—' : call?.a_line_num || call?.destination_id || call?.caller_id || '—'}
                                             {' | '}
                                             {new Date(call?.datetime_start || "0").toLocaleString()}
@@ -1090,7 +1107,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                 whiteSpace: 'nowrap',
                                                 marginTop: "4px",
                                                 fontWeight: 600,
-                                                fontSize: 16
+                                                fontSize: 20
                                             }}
                                         >
                                             Проект:&nbsp;
@@ -1103,7 +1120,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             )}
                             {((hasActiveCall || postActive) || !hideReportFields) && (
                                 <div className="form-group d-flex align-items-center" style={{ flex: '1 1 0%', minWidth: 0, gap: '8px' }}>
-                                    <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
+                                    <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 20 }}>
                                         Причина звонка: <span style={{ color: 'red' }}>*</span>
                                     </label>
                                     <SearchableSelect
@@ -1117,7 +1134,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             )}
                             {((hasActiveCall || postActive) || !hideReportFields) && (
                                 <div className="form-group d-flex align-items-center" style={{ flex: '1 1 0%', minWidth: 0, gap: '8px' }}>
-                                    <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
+                                    <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 20 }}>
                                         Результат звонка: <span style={{ color: 'red' }}>*</span>
                                     </label>
                                     <SearchableSelect
@@ -1136,18 +1153,19 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 augmentSaved={!hasActiveCall && !postActive && !call?.call_result}
                             />
                             {((hasActiveCall || postActive) || !hideReportFields) && (
-                                <div className="form-group d-flex align-items-center" style={{ flexWrap: 'nowrap', gap: '8px' }}>
+                                <div className="form-group d-flex align-items-center" style={{ flexWrap: 'nowrap', gap: '8px', fontSize: 18 }}>
                                     <textarea
                                         className="form-control"
                                         placeholder="Введите комментарий"
                                         value={comment}
+                                        style={{fontSize: 18}}
                                         onChange={e => setComment(e.target.value)}
                                     />
                                 </div>
                             )}
                             {!hasActiveCall && !postActive && !hideReportFields &&  (
                                 <div className="card-footer d-flex justify-content-end">
-                                    <button className="btn btn-outline-success" onClick={handleSave}>
+                                    <button className="btn btn-outline-success" style={{fontWeight: 500, fontSize: 18}} onClick={handleSave}>
                                         Сохранить
                                     </button>
                                 </div>
@@ -1156,11 +1174,16 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         </div>
 
                     {postActive && (
-                        <div>
+                        <div style={{fontWeight: 500, fontSize: 18}}>
                             <p>Постобработка: осталось {postSeconds} сек.</p>
-                            <button className="btn btn-outline-success" onClick={handlePostSave} disabled={!callId}>
-                                Сохранить и вернуться на линию
-                            </button>
+                            {callId &&
+                                <button className="btn btn-outline-success" style={{fontWeight: 500, fontSize: 18}} onClick={handlePostSave} disabled={!callId}>
+                                    Сохранить и вернуться на линию
+                                </button>
+                            }
+                            {/*<button className="btn btn-outline-success" style={{fontWeight: 500, fontSize: 18}} onClick={handlePostSave} disabled={!callId}>*/}
+                            {/*    Сохранить и вернуться на линию*/}
+                            {/*</button>*/}
                         </div>
                     )}
 

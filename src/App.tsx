@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, {useState, useMemo, useEffect, useRef} from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { setRoomId } from './redux/roomSlice';
 import HeaderPanel, {OutActivePhone, Project} from './components/headerPanel';
@@ -103,8 +103,13 @@ const App: React.FC = () => {
     const [scriptDir, setScriptDir] = useState<"inbound" | "outbound" >("inbound")
     const [editScript, setEditScript] = useState<string>("")
     const [editProject, setEditProject] = useState<string>("")
+    const [scriptAnotherID, setScriptAnotherID] = useState<string>("test")
+    const [scriptFlag, setScriptFlag] = useState<boolean>(false)
+    useEffect(() => console.log("outActivePhone: ", outActivePhone),[outActivePhone])
 
-
+    useEffect(() => {
+        setScriptAnotherID("test")
+    },[selectedCall])
     const socket = initSocket();
     const {
         sessionKey = '',
@@ -333,7 +338,7 @@ const App: React.FC = () => {
             />
 
             <div className="row my-3">
-                <div className="col-12 col-md-7">
+                <div className="col-12 col-md-6">
                     {showScriptPanel || (activeCalls[0] && Object.keys(activeCalls[0]).length > 0 && activeCalls[0].uuid && activeProjectName) || activeCall || (postActive && activeProjectName) ? (
                         <ScriptPanel
                             direction={scriptDir}
@@ -341,12 +346,14 @@ const App: React.FC = () => {
                             onClose={() => setShowScriptPanel(false)}
                         />
                     ) :
-                        selectedCall && !selectedCall.call_reason && editProject ?
+                        (selectedCall && !selectedCall.call_result && editProject) && (scriptAnotherID) ?
                             <ScriptPanel
                                 direction={editScript}
                                 projectName={editProject}
                                 selectedCall={selectedCall}
                                 onClose={() => setSelectedCall(null)}
+                                setScriptFlag={setScriptFlag}
+                                setScriptAnotherID={setScriptAnotherID}
                             />
                             :
                             <CallsDashboard
@@ -360,7 +367,7 @@ const App: React.FC = () => {
                     }
                 </div>
 
-                <div className="col-12 col-md-5">
+                <div className="col-12 col-md-6">
                     {(selectedCall || activeCall || postActive) && (
                         <CallControlPanel
                             call={selectedCall}

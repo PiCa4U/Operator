@@ -49,11 +49,13 @@ const App: React.FC = () => {
 
     const momoProjectRepo = useRef<boolean>(false)
     const startModulesRanRef = useRef<boolean>(false);
+    const { sessionKey } = store.getState().operator
 
-    useEffect(() => {
-        console.log("scriptProject: ", scriptProject)
+    // useEffect(() => {
+    //     if (selectedCall && )
+    //
+    // },[selectedCall])
 
-    },[scriptProject])
     const [prefix, setPrefix] = useState<string>('')
     const [get_callcenter, setGet_callcenter] = useState<boolean>(false)
     const [scriptDir, setScriptDir] = useState<"inbound" | "outbound" >("inbound")
@@ -101,20 +103,29 @@ const App: React.FC = () => {
         if (selectedCall) {
             console.log("scriptTestselectedCall112: ",Object.values(selectedCall?.projects)[0].call_result)
         }
+        if (selectedCall && Object.values(selectedCall.projects)[0].call_result === null) {
 
-        if(selectedCall && Object.values(selectedCall.projects)[0].call_result === null) {
-            console.log("script")
+        }
+        if (selectedCall && Object.values(selectedCall.projects)[0].call_result === null) {
+            // console.log("script")
             const scriptDirection = selectedCall.total_direction || "inbound"
             const scriptProj = Object.keys(selectedCall.projects)[0] !== "outbound" ?
                 Object.keys(selectedCall.projects)[0] :
                 selectedCall.variable_last_arg
-            console.log("scriptTestselectedCall333: ", scriptDirection)
-            console.log("scriptTestselectedCall444: ", cleanProjectName(scriptProj))
+            console.log("step")
+            socket.emit('get_modules', {
+                worker,
+                session_key: sessionKey,
+                projects: [cleanProjectName(scriptProj)],
+            });
+
+            // console.log("scriptTestselectedCall333: ", scriptDirection)
+            // console.log("scriptTestselectedCall444: ", cleanProjectName(scriptProj))
 
             setScriptDir(scriptDirection)
             setScriptProject(cleanProjectName(scriptProj))
         }
-    },[activeCalls.length, postActive, selectedCall])
+    },[activeCalls.length, postActive, selectedCall, sessionKey, worker])
 
     useEffect(()=> {
         if (showTasksDashboard && !momoProjectRepo.current) {
@@ -137,6 +148,14 @@ const App: React.FC = () => {
             // .filter(project => (project.out_active && project.active))
             .map(project => project.project_name);
     }, [projectPool2]);
+
+    // useEffect(() => {
+    //     socket.emit('get_modules', {
+    //         worker,
+    //         session_key: sessionKey,
+    //         projects: projectPoolForCall,
+    //     });
+    // },[projectPoolForCall, sessionKey, worker])
 
     useEffect(() => {
         if(!showTasksDashboard) {
@@ -246,15 +265,14 @@ const App: React.FC = () => {
         console.log("activeCalls: ", activeCalls)
     },[activeCalls])
 
-    const { sessionKey } = store.getState().operator
 
     useEffect(()=> {
-        if (!activeCall && !postActive && (modules.length || Object.keys(monoModules).length) && !openedPhones.length) {
+        if (!activeCall && !postActive && (modules.length || Object.keys(monoModules).length) && !openedPhones.length && !selectedCall) {
             console.log("1234delete")
             setModules([])
             setMonoModules({})
         }
-    },[activeCall, modules.length, monoModules, openedPhones.length, postActive])
+    },[activeCall, modules.length, monoModules, openedPhones.length, postActive, selectedCall])
 
     useEffect(() => {
         if (!activeCall && !postActive) {
@@ -867,7 +885,7 @@ const App: React.FC = () => {
                         <ScriptPanel
                             direction={scriptDir}
                             projectName={scriptProject}
-                            onClose={() => setShowScriptPanel(false)}
+                            onClose={() => setSelectedCall(null)}
                             tuskMode={tuskMode}
                             selectedCall={selectedCall}
                         />
@@ -920,6 +938,9 @@ const App: React.FC = () => {
                             postCallData={postCallData}
                             setPostCallData={setPostCallData}
                             startModulesRanRef={startModulesRanRef}
+                            monoModules={monoModules}
+                            setMonoModules={setMonoModules}
+
                         />
                     )}
                 </div>

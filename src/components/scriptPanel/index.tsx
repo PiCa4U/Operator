@@ -58,6 +58,7 @@ function renderEditorJsData(data: any) {
                             </table>
                         );
                     }
+
                     default:
                         return (
                             <div key={idx} className="text text-danger my-2">
@@ -303,11 +304,14 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
                 <h5 className="mb-0 text-dark">
                     {blockName || 'Приветствие'}
                 </h5>
-                {/*<button onClick={onClose} className="btn btn-outline-light text text-dark">*/}
-                {/*    <span className="material-icons" style={{marginTop: 4}}>*/}
-                {/*        close*/}
-                {/*    </span>*/}
-                {/*</button>*/}
+                {selectedCall && (
+                    <button onClick={onClose} className="btn btn-outline-light text text-dark">
+                    <span className="material-icons" style={{marginTop: 4}}>
+                        close
+                    </span>
+                    </button>
+                )}
+
             </div>
 
             <div className="mb-3" style={{ fontSize: '1rem', lineHeight: '1.5' }}>
@@ -315,11 +319,26 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
             </div>
 
             {instructions && (
-                <div className=" mb-3">
-                    <div  style={{display: "flex", flexDirection: "row", gap: 30}}>
-                        <span className="material-icons" style={{fontSize: 16, color: "#11a5ed", marginTop: 2}}>
+                <div className="mb-3 p-3" style={{
+                    backgroundColor: "#f7fafd",
+                    border: "1px solid #b6defb",
+                    borderRadius: 6
+                }}>
+                    <div className="d-flex align-items-center mb-2" style={{ gap: 8 }}>
+                        <span className="material-icons" style={{ fontSize: 18, color: "#11a5ed" }}>
                             info
                         </span>
+                        <span style={{ fontWeight: 600, color: "#0c4b85" }}>
+                            Инструкция:
+                        </span>
+                    </div>
+
+                    <div style={{
+                        wordBreak: "break-word",
+                        whiteSpace: "normal",
+                        overflowX: "auto",
+                        maxWidth: "100%"
+                    }}>
                         {renderEditorJsData(instructions)}
                     </div>
                 </div>

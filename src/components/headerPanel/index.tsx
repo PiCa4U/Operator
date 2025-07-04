@@ -204,15 +204,22 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     page: 'online',
                 });
             }
-            socket.emit('change_state_fs', {
+            // TODO Вадим сделает POST_STARTED
+            socket.emit("fs_post_started",{
+                session_key: sessionKey,
                 sip_login: sipLogin,
                 worker,
-                session_key: sessionKey,
-                action: 'available',
-                state: "idle",
-                reason: "postobrabotka",
-                page: 'online',
-            });
+                reason: "auto_call_reset"
+            })
+            // socket.emit('change_state_fs', {
+            //     sip_login: sipLogin,
+            //     worker,
+            //     session_key: sessionKey,
+            //     action: 'available',
+            //     state: "idle",
+            //     reason: "postobrabotka",
+            //     page: 'online',
+            // });
             setIsLoading(true)
             socket.emit('outbound_call_update', {
                 worker,

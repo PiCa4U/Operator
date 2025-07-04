@@ -9,6 +9,7 @@ import { getCookies } from "../../utils";
 import Swal from "sweetalert2";
 import {socket} from "../../socket";
 import {RootState, store} from "../../redux/store";
+import {ExpressState} from "../callControlPanel";
 
 // --- Типы данных ---
 interface ColumnCell {
@@ -74,7 +75,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                   setGroupIDs,
                                                   selectedPreset,
                                                   setSelectedPreset,
-    role
+                                                  role
                                               }) => {
 
     const { monitorUsers } = useSelector(
@@ -86,11 +87,15 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [tableData, setTableData] = useState<ApiRow[]>([]);
     const [loading, setLoading] = useState(false);
     const [idProjectMap, setIdProjectMap] = useState<{ id: number; project_name: string }[]>([]);
-    useEffect(()=> console.log("tableData: ", tableData),[tableData])
     const [searchTerm, setSearchTerm] = useState('');
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc'|'desc' }|null>(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+
+    const [expressStates, setExpressStates] = useState<Record<string, ExpressState>>({});
+    const [expressConfig, setExpressConfig] = useState<Record<string, any>>({});
+    useEffect(()=> console.log("expressStates: ", expressStates),[expressStates])
+    useEffect(()=> console.log("expressConfig: ", expressConfig),[expressConfig])
 
     const [modalOpen, setModalOpen] = useState(false);
     const [modalIds, setModalIds] = useState<number[]>([]);
@@ -115,6 +120,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         const list = tableData.map( group => group.id_list )
         setGroupIDs(list)
     },[tableData])
+
     useEffect(() => {
         const handler = (payload: Record<string, ModuleType[]>) => {
             // Собираем модули в flat-массив
@@ -146,6 +152,44 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     console.log("projectNames: ", projectNames)
     useEffect(()=> console.log("selectedRows: ", selectedRows))
+
+    useEffect(() => {
+        if (role === "manager" && selectedPreset) {
+            const projects = selectedPreset.preset.projects;
+
+            Promise
+                .allSettled(
+                    projects.map(projectName =>
+                        fetch(
+                            `http://45.145.66.28:8000/api/v1/express_configs?glagol_parent=fs.at.akc24.ru&project_name=${encodeURIComponent(projectName)}`,
+                            { method: 'GET', headers: { 'Accept': 'application/json' } }
+                        )
+                            .then(async res => {
+                                if (!res.ok) {
+                                    throw new Error(`Ошибка ${res.status}: ${res.statusText}`);
+                                }
+                                const data = await res.json();
+                                return { projectName, config: data };
+                            })
+                    )
+                )
+                .then(results => {
+                    const configMap: Record<string, any> = {};
+                    results.forEach(result => {
+                        if (result.status === 'fulfilled') {
+                            configMap[result.value.projectName] = result.value.config;
+                        } else {
+                            console.warn('Failed to load config for one project:', result.reason);
+                            // Optionally set a default or null
+                            // configMap[projects[index]] = null;
+                        }
+                    });
+                    setExpressConfig(configMap);
+                    console.log("expressConfig:", configMap);
+                });
+        }
+    }, [role, selectedPreset]);
+
     // 1) загрузка пресетов
     useEffect(() => {
         if (!role || projectNames.length === 0) return;
@@ -485,8 +529,117 @@ const PresetSelectorTable: React.FC<Props> = ({
         setSelectedRows(newSet);
     };
 
+    const findNameProject = (projectName: string)=> {
+        if (!projectName) return "";
+        const found = projectPool.find(
+            (proj) => proj.project_name === projectName
+        );
+        return found ? found.glagol_name : projectName;
+    }
+
+    const fetchStatuses = async () => {
+        const result: Record<string, ExpressState> = {};
+
+        await Promise.all(
+            Object.entries(expressConfig).map(async ([project, config]) => {
+                const express_id = config.express_config.id;
+
+                const [statusRes, agentsRes] = await Promise.all([
+                    fetch(`http://45.145.66.28:8000/api/v1/express_status?express_id=${express_id}`).then(r => r.json()),
+                    fetch(`http://45.145.66.28:8000/api/v1/express_agents?express_id=${express_id}`).then(r => r.json()),
+                ]);
+
+                result[project] = {
+                    project,
+                    express_id,
+                    active: statusRes.active,
+                    calls: statusRes.active_calls || 0,
+                    agents: agentsRes.operators,
+                };
+            })
+        );
+        console.log("result: ", result);
+        setExpressStates(result);
+    };
+
+    const handleStartExpress = async (project: string) => {
+        await fetch(`http://45.145.66.28:8000/api/v1/start_express`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                glagol_parent: 'fs.at.akc24.ru',
+                project_name: project
+            })
+        });
+
+        await fetchStatuses();
+    };
+
+    const handleStopExpress = async (project: string, express_id: number) => {
+        await fetch(`http://45.145.66.28:8000/api/v1/stop_express`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                glagol_parent: 'fs.at.akc24.ru',
+                project_name: project
+            })
+        });
+
+        await fetchStatuses();
+    };
+
+    useEffect(() => {
+        if (role !== 'manager' || !Object.keys(expressConfig).length) return;
+
+        // Сразу получаем первый раз
+        fetchStatuses();
+
+        // Запускаем интервал опроса каждые 15 секунд
+        const intervalId = setInterval(() => {
+            fetchStatuses();
+        }, 5000);
+
+        // Чистим интервал при размонтировании или изменении expressConfig/role
+        return () => clearInterval(intervalId);
+    }, [expressConfig, role]);
+
+    const renderExpressCards = () => (
+        <div className="d-flex flex-row flex-wrap gap-3 ps-3 ml-4">
+            {Object.entries(expressStates).map(([project, state]) => (
+                <div
+                    key={project}
+                    className="card p-3 flex-shrink-0"
+                    style={{ width: '220px' }}
+                >
+                    <div><strong>Проект:</strong> {findNameProject(project)}</div>
+                    <div><strong>Express активен:</strong> {state.active ? 'Да' : 'Нет'}</div>
+                    <div><strong>Операторов в ожидании:</strong> {state.agents.length}</div>
+                    <div><strong>Активных вызовов:</strong> {state.calls}</div>
+                    <div className="mt-2 d-flex gap-2">
+                        {state.active ? (
+                            <button
+                                className="btn btn-outline-danger"
+                                onClick={() => handleStopExpress(project, state.express_id)}
+                            >
+                                Остановить
+                            </button>
+                        ) : (
+                            <button
+                                className="btn btn-outline-success"
+                                onClick={() => handleStartExpress(project)}
+                            >
+                                Запустить
+                            </button>
+                        )}
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+
     return (
         <div>
+            {role === 'manager' && renderExpressCards()}
             <div className="card p-4 ml-4">
                 <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
                     {/* Пресеты */}

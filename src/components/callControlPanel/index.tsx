@@ -173,7 +173,7 @@ type GroupFieldValues = Record<
     Record<string/*field_id*/, string/*value*/>
 >;
 
-interface ExpressState {
+export interface ExpressState {
     project: string;
     express_id: number;
     active: boolean;
@@ -264,7 +264,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                            }) => {
     // Из cookies
     const { sessionKey } = store.getState().operator
-
+    useEffect(() => console.log("monoModulesCallControlPanel: ", monoModules),[monoModules])
+    console.log("startModulesRanRef: ", startModulesRanRef)
     const {
         sipLogin   = '',
         worker     = '',
@@ -291,26 +292,23 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [mergedFields, setMergedFields] = useState<MergedField[]>([]);
     const [values, setValues] = useState<GroupFieldValues>({});
     const [basicFields, setBasicFields] = useState<any[]>([])
-    useEffect(() => console.log("callReason: ", callReason), [callReason])
+    useEffect(() => console.log("values: ", values), [values])
 
     useEffect(() => console.log("mergedFields: ", mergedFields), [mergedFields])
     // Состояние для списка модулей, полученных с сервера
     // const [modules, setModules] = useState<ModuleData[]>([]);
     const [isParams, setIsParams] = useState<boolean>(true)
     const [groupSelectedIds, setGroupSelectedIds] = useState<number[]>([]);
-    const [expressStates, setExpressStates] = useState<Record<string, ExpressState>>({});
 
     const [selectedPhoneByField, setSelectedPhoneByField] = useState<
         Record<string, { phone: string; project: string }>
     >({});
 
-    const [expressConfig, setExpressConfig] = useState<Record<string, any>>({});
 
     const [groupModalOpen, setGroupModalOpen] = useState(false);
 
     const moduleProjectMapRef = useRef<Record<number, string>>({});
 
-    useEffect(() => console.log("expressConfig: ", expressConfig),[expressConfig])
 
     // const [projectsData, setProjectsData] = useState<ProjectFieldsResponse | null>(null);
 
@@ -460,42 +458,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     },[call, openedPhones, activeProject, activeCalls, tuskMode, hasActiveCall, postActive, sessionKey, worker])
 
-    useEffect(() => {
-        if (role === "manager" && openedPhones?.length) {
-            const projects = Array.from(new Set(openedPhones.map(p => p.project)));
-
-            Promise.all(
-                projects.map(projectName =>
-                    fetch(`http://45.145.66.28:8000/api/v1/express_configs?glagol_parent=fs.at.akc24.ru&project_name=${encodeURIComponent(projectName)}`, {
-                        method: 'GET',
-                        headers: {
-                            'Accept': 'application/json',
-                        },
-                    })
-                        .then(response => {
-                            if (!response.ok) {
-                                throw new Error(`Ошибка ${response.status}: ${response.statusText}`);
-                            }
-                            return response.json().then(data => ({
-                                projectName,
-                                config: data,
-                            }));
-                        })
-                )
-            )
-                .then(configs => {
-                    const configMap = configs.reduce<Record<string, any>>((acc, { projectName, config }) => {
-                        acc[projectName] = config;
-                        return acc;
-                    }, {});
-                    setExpressConfig(configMap);
-                    console.log("expressConfig: ", configMap);
-                })
-                .catch(err => {
-                    console.error("Ошибка при получении конфигов:", err);
-                });
-        }
-    }, [openedPhones]);
 // ────────────────────────────────────────────────────────────────────────────────
     const handleProjectFields = (data: {
         project_fields: string;
@@ -799,18 +761,22 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         // setModules([]);
         startModulesRanRef.current = false;
         console.log()
-        if (!hasActiveCall && !openedPhones?.length) return;
+        // if ((!hasActiveCall && (!openedPhones?.length || !call))) return;
         console.log("it's working")
         const handleModules = (data: any) => {
             // if (data.project !== activeProject) return;
 
-            if (tuskMode) {
+            // if (tuskMode) {
+            //     console.log("it's workingtuskMode")
                 if (data && typeof data === 'object' && setMonoModules) {
                     setMonoModules(data);
                 }
-            } else {
-                setModules(data[activeProject] || []);
-            }
+            // } else if (!tuskMode && call){
+            //     console.log("it's working!!!!!!!!!tuskMode")
+            //     if (setMonoModules) {
+            //         setMonoModules(data)
+            //     }
+            // }
         };
 
         socket.on('get_modules', handleModules);
@@ -824,7 +790,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 projects: selectedProjects,
             });
 
-        } else {
+        } else if (!tuskMode && activeProject){
             socket.emit('get_modules', {
                 worker,
                 // sip_login: sipLogin,
@@ -842,22 +808,30 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     }, [openedPhones, hasActiveCall, activeProject, worker, sessionKey, setModules, tuskMode, setMonoModules, selectedProjects]);
 
+    useEffect(() => console.log("activeProject: ", activeProject),[activeProject])
     const handleModuleRun = (mod: ModuleData, common_code?: false, proj?: string) => {
-        if (!tuskMode) {
-            console.warn('Запуск модулей вне tuskMode пока не поддерживается');
-            return;
-        }
+        // if (!tuskMode) {
+        //     console.warn('Запуск модулей вне tuskMode пока не поддерживается');
+        //     return;
+        // }
         if (!monoModules) {
             console.warn('Описание monoModules отсутствует');
             return;
         }
 
         // 1) Собираем список проектов, в которых нужно запустить модуль
-        const projectList: string[] = mod.common_code
+        const projectList: string[] = mod.common_code || tuskMode
             ? Object.entries(monoModules)
                 .filter(([_, mods]) => mods.some(m => m.filename === mod.filename))
                 .map(([project]) => project)
-            : [activeProject];
+            : activeProject
+                ? [activeProject]
+                : call && Object.keys(call.projects)[0] !== "outbound"
+                    ? [cleanProjectName(Object.keys(call.projects)[0])]
+                    : call
+                        ? [call.variable_last_arg]
+                        : [""]
+
 
         if (projectList.length === 0) {
             console.warn(`Не найдено ни одного проекта для модуля ${mod.filename}`);
@@ -958,11 +932,16 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 });
 
                 // 3) Новый групповой формат: { projectA: {...}, projectB: {...} }
-            } else if (tuskMode && Object.values(dataObj).every(v => typeof v === 'object')) {
+            } else if ( Object.values(dataObj).every(v => typeof v === 'object')) {
+                console.log("сработало")
                 // считаем, что dataObj — это сразу projectsPayload
                 Object.entries(dataObj).forEach(([project, result]) => {
                     Object.entries(result || {}).forEach(([fieldKey, value]) => {
                         const v = value == null ? '' : String(value);
+                        console.log("сработалоproject: ", project)
+                        console.log("сработалоfieldKey: ", fieldKey)
+                        console.log("сработалоv: ", v)
+
                         applyFieldUpdate(project, fieldKey, v);
                     });
                 });
@@ -1029,7 +1008,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 setComment(v);
                 break;
             default:
-                if (tuskMode) {
+                // if (tuskMode) {
                     setValues(prev => ({
                         ...prev,
                         [project]: {
@@ -1037,12 +1016,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             [fieldKey]: v
                         }
                     }));
-                } else {
-                    setBaseFieldValues(prev => ({
-                        ...prev,
-                        [fieldKey]: v
-                    }));
-                }
+                // } else {
+                //     setBaseFieldValues(prev => ({
+                //         ...prev,
+                //         [fieldKey]: v
+                //     }));
+                // }
         }
     }
 
@@ -1067,21 +1046,21 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     useEffect(() => console.log("startModules: ", startModules),[startModules])
 // ручные модули — всё, что не стартовое
     const manualModules = useMemo<ModuleData[]>(() => {
-        if (tuskMode && monoModules) {
+        if (monoModules && Object.keys(monoModules).length) {
             return Object.values(monoModules)
                 .flat()
                 .filter(mod =>
                     !Array.isArray(mod.start_modes) ||
-                    !mod.start_modes.includes('start')
+                    mod.start_modes.includes('manual')
                 );
         } else {
             return modules.filter(mod =>
                 !Array.isArray(mod.start_modes) ||
-                !mod.start_modes.includes('start')
+                mod.start_modes.includes('manual')
             );
         }
-    }, [tuskMode, monoModules, modules]);
-
+    }, [monoModules, modules]);
+    useEffect(() => console.log("manualModules: ", manualModules),[manualModules])
     useEffect(() => {
         // если уже запустили — не запускаем снова
         if (startModulesRanRef.current) return;
@@ -1089,7 +1068,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         // 1) активный звонок
         if (startModules.length && hasActiveCall) {
-            console.log("ACTIVESTART")
+            console.log("startModules")
             startModules.forEach(mod => handleModuleRun(mod));
             startModulesRanRef.current = true;
             return;
@@ -1447,6 +1426,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 sip_login: sipLogin,
                 worker,
                 session_key: sessionKey,
+
                 state: "waiting",
                 reason: "manual_return",
                 page: "online",
@@ -1528,101 +1508,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         // Извлекаем все project и убираем дубликаты
         const projectsSet = new Set(openedPhones.map(p => p.project));
         return Array.from(projectsSet);
-    };
-
-    // const findProjectPrefix = (projectName: string) => {
-    //     const project = projectPool.find(p => p.project_name === projectName);
-    //     return project.out_gateways[2].prefix
-    // }
-
-    const handleStartExpress = async (project: string) => {
-        await fetch(`http://45.145.66.28:8000/api/v1/start_express`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                glagol_parent: 'fs.at.akc24.ru',
-                project_name: project
-            })
-        });
-
-        // 🔁 Обнови статусы
-        await fetchStatuses();
-    };
-
-    const handleStopExpress = async (project: string, express_id: number) => {
-        await fetch(`http://45.145.66.28:8000/api/v1/stop_express`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                glagol_parent: 'fs.at.akc24.ru',
-                project_name: project
-            })
-        });
-
-        // 🔁 Обнови статусы
-        await fetchStatuses();
-    };
-
-    const fetchStatuses = async () => {
-        const result: Record<string, ExpressState> = {};
-
-        await Promise.all(
-            Object.entries(expressConfig).map(async ([project, config]) => {
-                const express_id = config.express_config.id;
-
-                const [statusRes, agentsRes] = await Promise.all([
-                    fetch(`http://45.145.66.28:8000/api/v1/express_status?express_id=${express_id}`).then(r => r.json()),
-                    fetch(`http://45.145.66.28:8000/api/v1/express_agents?express_id=${express_id}`).then(r => r.json()),
-                ]);
-
-                result[project] = {
-                    project,
-                    express_id,
-                    active: statusRes.active,
-                    calls: statusRes.active_calls || 0,
-                    agents: agentsRes.operators,
-                };
-            })
-        );
-        console.log("result: ", result);
-        setExpressStates(result);
-    };
-
-    useEffect(() => {
-        if (role !== 'manager' || !Object.keys(expressConfig).length) return;
-        fetchStatuses();
-    }, [expressConfig]);
-
-    const renderExpressCards = () => {
-        return (
-            <div className="d-flex flex-column gap-3">
-                {Object.entries(expressStates).map(([project, state]) => (
-                    <div key={project} className="card p-3">
-                        <div><strong>Проект:</strong> {findNameProject(project)}</div>
-                        <div><strong>Express активен:</strong> {state.active ? 'Да' : 'Нет'}</div>
-                        <div><strong>Операторов в ожидании:</strong> {state.agents.length}</div>
-                        <div><strong>Активных вызовов:</strong> {state.calls}</div>
-                        <div className="mt-2 d-flex gap-2">
-                            {state.active ? (
-                                <button
-                                    className="btn btn-outline-danger"
-                                    onClick={() => handleStopExpress(project, state.express_id)}
-                                >
-                                    Остановить
-                                </button>
-                            ) : (
-                                <button
-                                    className="btn btn-outline-success"
-                                    onClick={() => handleStartExpress(project)}
-                                >
-                                    Запустить
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                ))}
-            </div>
-        );
     };
 
     // Группируем телефоны: phoneGroups
@@ -1716,6 +1601,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         setOpenedPhones?.([])
                         setOpenedGroup?.([])
                         setPhonesData?.([])
+                        startModulesRanRef.current=false
                         if(momoProjectRepo && momoProjectRepo.current && setTuskMode) {
                             setTuskMode(false)
                             onClose()
@@ -1949,14 +1835,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return result;
     }, [monoModules, commonModules]);
     const renderModules = () => {
-        if (!hasActiveCall && !postActive && !openedPhones?.length) {
-            return null;
-        }
+        // if ((!hasActiveCall && !postActive) || (!openedPhones?.length || !call)) {
+        //     return null;
+        // }
 
         // если совсем нет модулей
-        const allCount = tuskMode
-            ? Object.values(monoModules || {}).flat().length
-            : modules.length;
+        const allCount =
+            // tuskMode ?
+                Object.values(monoModules || {}).flat().length
+        //     : modules.length;
         if (allCount === 0) {
             return null;
         }
@@ -1969,7 +1856,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     {manualModules.map((mod, idx) => (
                         <button
                             key={idx}
-                            onClick={() => handleModuleRun(mod,false)}
+                            onClick={() => handleModuleRun(mod)}
                             className="btn btn-outline-success"
                         >
                             {mod.filename}
@@ -2202,7 +2089,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         {hasActiveCall && renderActiveCallHeader(activeCalls[0])}
                         {!hasActiveCall && postActive && renderPostCallHeader()}
                         {tuskMode && !hasActiveCall && !postActive && renderGroupPhones()}
-                        {tuskMode && !hasActiveCall && !postActive && role === 'manager' && renderExpressCards()}
 
                         <div>
                             {!tuskMode && !hasActiveCall && !postActive && (

@@ -130,9 +130,6 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
     }, [searchParams, currentPage, worker, sessionKey, sipLogin, roomId]);
 
     function cleanProjectName(name: string): string {
-        console.log("nameOriginal:",name)
-
-        console.log("name:",name.replace(/\s*\(.*?\)\s*$/, '').trim())
         return name.replace(/\s*\(.*?\)\s*$/, '').trim();
     }
 

@@ -17,6 +17,9 @@ import stylesButton from './index.module.css';
 // Типы (упрощённые — оставьте свои)
 
 interface Project {
+    comment: string | null;
+    call_reason: number | null;
+    call_result: number | null
     base_fields: {
         [field: string]: any;
     };
@@ -69,7 +72,7 @@ export interface CallData {
     call_result?: string | number;
     user_comment?: string;
     project_name?: string;
-    total_direction?: string;    // 'inbound' | 'outbound'
+    total_direction?: 'inbound' | 'outbound'
     special_key_call: string;
     special_key_conn: string;
     projects: ProjectsMap
@@ -145,6 +148,8 @@ export interface ActiveCall {
 interface MergedField {
     /** внутренний ключ = name|type|opts|group */
     id: string;
+
+    editable: boolean;
     /** то, что покажем в заголовке поля */
     label: string;
     /** select | regular | multiselect и т.п. */
@@ -286,7 +291,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [mergedFields, setMergedFields] = useState<MergedField[]>([]);
     const [values, setValues] = useState<GroupFieldValues>({});
     const [basicFields, setBasicFields] = useState<any[]>([])
-    useEffect(() => console.log("values: ", values), [values])
+    useEffect(() => console.log("callReason: ", callReason), [callReason])
 
     useEffect(() => console.log("mergedFields: ", mergedFields), [mergedFields])
     // Состояние для списка модулей, полученных с сервера
@@ -418,16 +423,19 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         } if (!hasActiveCall && !postActive && call?.project_name) {
             const projectNames = Object.keys(call.projects).map((proj => cleanProjectName(proj)))
-            if(projectNames.length === 1) {
-
+            if(projectNames.length === 1 && projectNames[0] === "outbound") {
+                socket.emit("get_project_fields",{
+                    projects: [call.variable_last_arg],
+                    session_key: sessionKey,
+                    worker
+                })
             } else {
+                socket.emit("get_project_fields",{
+                    projects: projectNames,
+                    session_key: sessionKey,
+                    worker
+                })
             }
-            socket.emit("get_project_fields",{
-                projects: projectNames,
-                session_key: sessionKey,
-                worker
-            })
-
             console.log("projectNames: ", projectNames)
             const projectName = projectNames[0];
             const projectDataArray = Object.values(call.projects) as Array<{
@@ -516,6 +524,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             label: f.field_name,
                             type: f.field_type,
                             values: f.field_vals,
+                            editable: f.editable,
                             projects: [projName],
                             fieldIds: { [projName]: f.field_id },
                             spatialGroup: (f as any).spatial_group,
@@ -548,26 +557,40 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             console.log("TEST123momoProjectRepo: ",momoProjectRepo)
 
             if (call && momoProjectRepo && momoProjectRepo.current) {
-                    // “InitKwargs” is a map from exactly the same keys
-                    // to only that project’s `base_fields`
-                    type InitKwargs = {
-                        [K in keyof ProjectsMap]: ProjectsMap[K]['base_fields']
-                    };
+                // 1) InitKwargs — копируем base_fields всех проектов
+                type InitKwargs = {
+                    [K in keyof ProjectsMap]: ProjectsMap[K]['base_fields']
+                };
+                const initKwargs = Object.entries(call.projects).reduce<InitKwargs>(
+                    (acc, [projName, project]) => {
+                        acc[projName as keyof ProjectsMap] = project.base_fields;
+                        return acc;
+                    },
+                    {} as InitKwargs
+                );
+                setValues(initKwargs);
 
-                    const initKwargs = Object.entries(call.projects).reduce<InitKwargs>(
-                        (acc, [key, project]) => {
-                            // now TS knows `key` is one of the keys of ProjectsMap
-                            // and `project` is a Project
-                            acc[key] = project.base_fields;
-                            return acc;
-                        },
-                        {} as InitKwargs
-                    );
-                    console.log("initKwargs: ", initKwargs)
-                    setValues(initKwargs);
-                } else {
-                    setValues(init);
-                }
+                // 2) Берём первый проект, чтобы инициализировать причину/результат/комментарий
+                const firstProject   = Object.values(call.projects)[0];
+                const projNames = Object.keys(call.projects)
+                const rawReasonId    = firstProject.call_reason;
+                const rawResultId    = firstProject.call_result;
+                const rawComment     = firstProject.comment || '';
+
+                // 3) Находим в списках по id и project_name нужные объекты, достаём .name
+                const reasonItem = callReasons.find(r =>
+                    String(r.id) === String(rawReasonId)
+                );
+                const resultItem = callResults.find(r =>
+                    String(r.id) === String(rawResultId)
+                );
+
+                setComment(rawComment);
+                setCallReason(String(rawReasonId) || '');
+                setCallResult(String(rawResultId) || '');
+            } else {
+                setValues(init);
+            }
 
 
         //TODO TEST
@@ -819,169 +842,98 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     }, [openedPhones, hasActiveCall, activeProject, worker, sessionKey, setModules, tuskMode, setMonoModules, selectedProjects]);
 
-    const handleModuleRun = (mod: ModuleData, common_code?: false) => {
-        if (tuskMode && mod.common_code === true && monoModules) {
-            // Найдём все проекты, в которых есть этот модуль
-            const projectList = Object.entries(monoModules)
-                .filter(([_, mods]) => mods.some(m => m.filename === mod.filename))
-                .map(([project]) => project);
-
-            projectList.forEach(project => {
-                // ==== NEW: вместо mod.kwargs берем kwargs из модуля конкретного проекта ====
-                const projectMod = monoModules[project].find(m => m.filename === mod.filename);
-                if (!projectMod) {
-                    console.warn(`Не нашли общий модуль ${mod.filename} в проекте ${project}`);
-                    return;
-                }
-                const specKwargs = projectMod.kwargs || {};
-
-                // берем значения из values для этого проекта
-                const fieldMap = values[project] || {};
-                const kwargsPayload: Record<string,string> = {};
-
-                // проходим по спецификации именно этого projectMod
-                Object.entries(specKwargs).forEach(([inputName, spec]: [string, any]) => {
-                    const sourceKey: string = spec.source;
-                    let value = '';
-
-                    switch (sourceKey) {
-                        case 'operator_id':
-                            value = sipLogin;
-                            break;
-                        case 'call_reason':
-                            value = callReasons.find(r => String(r.id) === String(callReason))?.name || '';
-                            break;
-                        case 'call_result':
-                            value = callResults.find(r => String(r.id) === String(callResult))?.name || '';
-                            break;
-                        case 'phone':
-                            value = activeCalls[0]?.direction === 'outbound'
-                                ? activeCalls[0]?.b_dest
-                                : activeCalls[0]?.cid_num;
-                            break;
-                        case 'uuid':
-                            value = activeCalls[0]?.uuid || postCallData?.uuid || '';
-                            break;
-                        case 'b_uuid':
-                            value = activeCalls[0]?.b_uuid || postCallData?.b_uuid || '';
-                            break;
-                        case 'datetime_start':
-                            value = activeCalls[0]?.created || '';
-                            break;
-                        case 'dest':
-                            value = activeCalls[0]?.dest || '';
-                            break;
-                        case 'cid_num':
-                            value = activeCalls[0]?.cid_num || '';
-                            break;
-                        case 'comment':
-                            value = comment;
-                            break;
-                        default:
-                            value = fieldMap[sourceKey] || '';
-                    }
-
-                    kwargsPayload[sourceKey] = value;
-                });
-
-                moduleProjectMapRef.current[mod.id] = project;
-
-                const payload = {
-                    filename: projectMod.filename,
-                    project_name: project,
-                    session_key: sessionKey,
-                    //TODO common_code
-                    common_code: projectMod.common_code,
-                    uuid: activeCalls[0]?.uuid   || postCallData?.uuid   || '',
-                    b_uuid: activeCalls[0]?.b_uuid|| postCallData?.b_uuid || '',
-                    worker,
-                    kwargs: kwargsPayload,
-                };
-
-                socket.emit('run_module', payload);
-            });
-
+    const handleModuleRun = (mod: ModuleData, common_code?: false, proj?: string) => {
+        if (!tuskMode) {
+            console.warn('Запуск модулей вне tuskMode пока не поддерживается');
+            return;
+        }
+        if (!monoModules) {
+            console.warn('Описание monoModules отсутствует');
             return;
         }
 
-        // Обычный запуск для одиночного project-модуля
-        let project = activeProject;
-        let fieldMap = baseFieldValues;
+        // 1) Собираем список проектов, в которых нужно запустить модуль
+        const projectList: string[] = mod.common_code
+            ? Object.entries(monoModules)
+                .filter(([_, mods]) => mods.some(m => m.filename === mod.filename))
+                .map(([project]) => project)
+            : [activeProject];
 
-        if (tuskMode && monoModules) {
-            const foundEntry = Object.entries(monoModules).find(
-                ([_, mods]) => mods.includes(mod)
-            );
-            if (!foundEntry) {
-                console.warn("Не удалось определить проект модуля:", mod.filename);
-                return;
-            }
-            project = foundEntry[0];
-            fieldMap = values[project] || {};
+        if (projectList.length === 0) {
+            console.warn(`Не найдено ни одного проекта для модуля ${mod.filename}`);
+            return;
         }
 
-        const kwargsPayload: Record<string, string> = {};
+        // 2) Составляем для каждого проекта свой набор параметров
+        const projectsPayload: Record<string, Record<string, string>> = {};
 
-        Object.entries(mod.kwargs || {}).forEach(([inputName, spec]: [string, any]) => {
-            const sourceKey: string = spec.source;
-            let value = '';
+        projectList.forEach(project => {
+            // для общих модулей берём spec.kwargs из monoModules[project],
+            // для обычных — из самого mod
+            const projectMod = monoModules[project].find(m => m.filename === mod.filename) || mod;
+            const specKwargs = projectMod.kwargs || {};
+            const fieldMap   = values[project] || baseFieldValues;
+            const kw: Record<string,string> = {};
 
-            switch (sourceKey) {
-                case 'operator_id':
-                    value = sipLogin;
-                    break;
-                case 'call_reason': {
-                    const reasonItem = callReasons.find(r => String(r.id) === String(callReason));
-                    value = reasonItem?.name || '';
-                    break;
+            Object.entries(specKwargs).forEach(([inputName, spec]: [string, any]) => {
+                const key = spec.source;
+                let value = '';
+
+                switch (key) {
+                    case 'operator_id':
+                        value = sipLogin;
+                        break;
+                    case 'call_reason':
+                        value = callReasons.find(r => String(r.id) === String(callReason))?.name || '';
+                        break;
+                    case 'call_result':
+                        value = callResults.find(r => String(r.id) === String(callResult))?.name || '';
+                        break;
+                    case 'phone':
+                        value = activeCalls[0]?.direction === 'outbound'
+                            ? activeCalls[0].b_dest
+                            : activeCalls[0].cid_num || '';
+                        break;
+                    case 'uuid':
+                        value = activeCalls[0]?.uuid || postCallData?.uuid || '';
+                        break;
+                    case 'b_uuid':
+                        value = activeCalls[0]?.b_uuid || postCallData?.b_uuid || '';
+                        break;
+                    case 'datetime_start':
+                        value = activeCalls[0]?.created || '';
+                        break;
+                    case 'dest':
+                        value = activeCalls[0]?.dest || '';
+                        break;
+                    case 'cid_num':
+                        value = activeCalls[0]?.cid_num || '';
+                        break;
+                    case 'comment':
+                        value = comment;
+                        break;
+                    default:
+                        value = fieldMap[key] || '';
                 }
-                case 'call_result': {
-                    const resultItem = callResults.find(r => String(r.id) === String(callResult));
-                    value = resultItem?.name || '';
-                    break;
-                }
-                case 'phone':
-                    value = activeCalls[0]?.direction === 'outbound'
-                        ? activeCalls[0]?.b_dest
-                        : activeCalls[0]?.cid_num;
-                    break;
-                case 'uuid':
-                    value = activeCalls[0]?.uuid || postCallData?.uuid || '';
-                    break;
-                case 'b_uuid':
-                    value = activeCalls[0]?.b_uuid || postCallData?.uuid || '';
-                    break;
-                case 'datetime_start':
-                    value = activeCalls[0]?.created || '';
-                    break;
-                case 'dest':
-                    value = activeCalls[0]?.dest || '';
-                    break;
-                case 'cid_num':
-                    value = activeCalls[0]?.cid_num || '';
-                    break;
-                case 'comment':
-                    value = comment;
-                    break;
-                default:
-                    value = fieldMap[sourceKey] || '';
-            }
 
-            kwargsPayload[sourceKey] = value;
+                kw[key] = value;
+            });
+
+            projectsPayload[project] = kw;
         });
 
-        moduleProjectMapRef.current[mod.id] = project;
-
+        // 3) Формируем единый payload
         const payload = {
-            filename: mod.filename,
-            project_name: project,
+            filename:    mod.filename,
+            common_code: Boolean(mod.common_code),
             session_key: sessionKey,
-            uuid: activeCalls[0]?.uuid || postCallData?.uuid || '',
-            b_uuid: activeCalls[0]?.b_uuid || postCallData?.uuid || '',
+            uuid:        activeCalls[0]?.uuid   || postCallData?.uuid   || '',
+            b_uuid:      activeCalls[0]?.b_uuid || postCallData?.b_uuid || '',
             worker,
-            kwargs: kwargsPayload,
+            projects:    projectsPayload,
         };
 
+        // 4) Шлём один emit
         socket.emit('run_module', payload);
     };
 
@@ -989,43 +941,37 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 // Слушаем ответы от run_module и распределяем значения по проектам
     useEffect(() => {
         const handleModuleResult = (...args: any[]) => {
+            // 1) Найдём первый аргумент-объект
             const dataObj: Record<string, any> | undefined = args.find(
                 a => typeof a === 'object' && a !== null
             );
             if (!dataObj) return;
 
-            // Если приходит структура: { project_name, result: {...} }
+            // 2) Случай: { project_name, result: {...} }
             if ('project_name' in dataObj && 'result' in dataObj && tuskMode) {
                 const project = dataObj.project_name;
-                const result = dataObj.result || {};
+                const result  = dataObj.result || {};
 
                 Object.entries(result).forEach(([fieldKey, value]) => {
                     const v = value == null ? '' : String(value);
-
-                    switch (fieldKey) {
-                        case 'call_reason':
-                            setCallReason(v);
-                            break;
-                        case 'call_result':
-                            setCallResult(v);
-                            break;
-                        case 'comment':
-                            setComment(v);
-                            break;
-                        default:
-                            setValues(prev => ({
-                                ...prev,
-                                [project]: {
-                                    ...prev[project],
-                                    [fieldKey]: v
-                                }
-                            }));
-                    }
+                    applyFieldUpdate(project, fieldKey, v);
                 });
+
+                // 3) Новый групповой формат: { projectA: {...}, projectB: {...} }
+            } else if (tuskMode && Object.values(dataObj).every(v => typeof v === 'object')) {
+                // считаем, что dataObj — это сразу projectsPayload
+                Object.entries(dataObj).forEach(([project, result]) => {
+                    Object.entries(result || {}).forEach(([fieldKey, value]) => {
+                        const v = value == null ? '' : String(value);
+                        applyFieldUpdate(project, fieldKey, v);
+                    });
+                });
+
+                // 4) fallback — старый плоский формат без project_name
             } else {
-                // fallback — старый формат (без project_name)
                 let project = activeProject;
                 if (tuskMode) {
+                    // пытаемся угадать проект по ключам
                     const fieldKeys = Object.keys(dataObj);
                     const guess = fieldKeys.find(f =>
                         Object.entries(values).some(([proj, fields]) =>
@@ -1036,41 +982,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         const entry = Object.entries(values).find(([proj, fields]) =>
                             fields.hasOwnProperty(guess)
                         );
-                        if (entry) {
-                            project = entry[0];
-                        }
+                        if (entry) project = entry[0];
                     }
                 }
 
                 Object.entries(dataObj).forEach(([fieldKey, value]) => {
                     const v = value == null ? '' : String(value);
-
-                    switch (fieldKey) {
-                        case 'call_reason':
-                            setCallReason(v);
-                            break;
-                        case 'call_result':
-                            setCallResult(v);
-                            break;
-                        case 'comment':
-                            setComment(v);
-                            break;
-                        default:
-                            if (tuskMode) {
-                                setValues(prev => ({
-                                    ...prev,
-                                    [project]: {
-                                        ...prev[project],
-                                        [fieldKey]: v
-                                    }
-                                }));
-                            } else {
-                                setBaseFieldValues(prev => ({
-                                    ...prev,
-                                    [fieldKey]: v
-                                }));
-                            }
-                    }
+                    applyFieldUpdate(project, fieldKey, v);
                 });
             }
 
@@ -1089,12 +1007,45 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         activeProject,
         values,
         tuskMode,
-        setCallReason,
-        setCallResult,
-        setComment,
-        setBaseFieldValues,
-        setValues
+        callReasons,
+        callResults,
+        postCallData,
+        activeCalls,
     ]);
+
+    function applyFieldUpdate(
+        project: string,
+        fieldKey: string,
+        v: string
+    ) {
+        switch (fieldKey) {
+            case 'call_reason':
+                setCallReason(v);
+                break;
+            case 'call_result':
+                setCallResult(v);
+                break;
+            case 'comment':
+                setComment(v);
+                break;
+            default:
+                if (tuskMode) {
+                    setValues(prev => ({
+                        ...prev,
+                        [project]: {
+                            ...prev[project],
+                            [fieldKey]: v
+                        }
+                    }));
+                } else {
+                    setBaseFieldValues(prev => ({
+                        ...prev,
+                        [fieldKey]: v
+                    }));
+                }
+        }
+    }
+
 
     const startModules = useMemo<ModuleData[]>(() => {
         if (tuskMode && monoModules) {
@@ -1334,6 +1285,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             setGroupModalOpen(true);
             return;
         }
+        if (setOpenedGroup && setPhonesData && setOpenedPhones) {
+            setOpenedGroup([])
+            setPhonesData([])
+            setOpenedPhones([])
+        }
+
         const post_time = POST_LIMIT - postSeconds
 
         const selectedContacts = getPhonesByIds(groupSelectedIds);
@@ -1426,6 +1383,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             });
             return;
         }
+
         const post_time = POST_LIMIT - postSeconds
         if(tuskMode) {
             handleGroupSave()
@@ -2011,7 +1969,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     {manualModules.map((mod, idx) => (
                         <button
                             key={idx}
-                            onClick={() => handleModuleRun(mod)}
+                            onClick={() => handleModuleRun(mod,false)}
                             className="btn btn-outline-success"
                         >
                             {mod.filename}
@@ -2031,7 +1989,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         .map((mod, idx) => (
                             <button
                                 key={`common-${mod.filename}-${idx}`}
-                                onClick={() => handleModuleRun(mod)}
+                                onClick={() => handleModuleRun(mod, false,)}
                                 className="btn btn-outline-dark"
                             >
                                 {mod.filename}
@@ -2046,7 +2004,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             .map((mod, idx) => (
                                 <button
                                     key={`${proj}-${mod.filename}-${idx}`}
-                                    onClick={() => handleModuleRun(mod)}
+                                    onClick={() => handleModuleRun(mod, false, proj)}
                                     className="btn"
                                     style={{
                                         border: `1px solid ${projectColors[proj]}`,
@@ -2221,7 +2179,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     }, [openedPhones, contactInfoOptions, selectedProjects]);
 
     const commonFields = mergedFields.filter(f => f.projects.length > 1);
-
     const uniqueFieldsByProject: Record<string, MergedField[]> = {};
     selectedProjects.forEach(proj => {
         uniqueFieldsByProject[proj] =
@@ -2297,7 +2254,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 </div>
                             ) : (
                                 <>
-                                    {shouldShowMeta && (
+                                    {(shouldShowMeta || tuskMode) && (
                                         <div className="form-group d-flex align-items-center" style={compact ? { flex: '1 1 calc(50% - 12px)', minWidth: 0 } : { flex: '1 1 0%', minWidth: 0 }}>
                                             <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
                                                 Причина звонка: <span style={{ color: 'red' }}>*</span>
@@ -2312,7 +2269,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                         </div>
                                     )}
 
-                                    {shouldShowMeta && (
+                                    {(shouldShowMeta || tuskMode) && (
                                         <div className="form-group d-flex align-items-center" style={compact ? { flex: '1 1 calc(50% - 22px)', minWidth: 0 } : { flex: '1 1 0%', minWidth: 0 }}>
                                             <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
                                                 Результат звонка: <span style={{ color: 'red' }}>*</span>
@@ -2437,7 +2394,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                         field_name: f.label,
                                                                         field_type: f.type,
                                                                         field_vals: f.values,
-                                                                        editable: true,
+                                                                        editable: f.editable,
                                                                         must_have: false,
                                                                         project_name: '' // не используется для common
                                                                     }

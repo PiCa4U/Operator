@@ -486,206 +486,208 @@ const PresetSelectorTable: React.FC<Props> = ({
     };
 
     return (
-        <div className="card p-4 ml-4">
-            <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
-                {/* Пресеты */}
-                <div style={{ width: 250 }}>
-                    <SearchableSelect
-                        value={selectedPreset ? selectedPreset.preset.id : ''}
-                        isSearchable
-                        onChange={val => {
-                            const p = presets.find(x => String(x.preset.id) === val);
-                            setTableData([])
-                            setSelectedPreset(p || null);
-                        }}
-                        options={presets.map(p => ({
-                            id:   p.value,
-                            name: p.label,
-                        }))}
-                        placeholder="Выберите пресет..."
-                    />
+        <div>
+            <div className="card p-4 ml-4">
+                <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
+                    {/* Пресеты */}
+                    <div style={{ width: 250 }}>
+                        <SearchableSelect
+                            value={selectedPreset ? selectedPreset.preset.id : ''}
+                            isSearchable
+                            onChange={val => {
+                                const p = presets.find(x => String(x.preset.id) === val);
+                                setTableData([])
+                                setSelectedPreset(p || null);
+                            }}
+                            options={presets.map(p => ({
+                                id:   p.value,
+                                name: p.label,
+                            }))}
+                            placeholder="Выберите пресет..."
+                        />
+                    </div>
+
+                    {selectedPreset && (
+                        <>
+                            {/* Поиск */}
+                            <div style={{ width: 250 }}>
+                                <input
+                                    type="text"
+                                    placeholder="Поиск..."
+                                    value={searchTerm}
+                                    onChange={e => setSearchTerm(e.target.value)}
+                                    className="form-control"
+                                />
+                            </div>
+
+                            {/* Действия */}
+                            <div style={{ width: 250 }}>
+                                <SearchableSelect
+                                    value={selectedActionOption ? selectedActionOption.value : ''}
+                                    onChange={(val: string) => {
+                                        const found = actionOptions.find(opt => opt.value === val) ?? null;
+                                        setSelectedActionOption(found);
+                                    }}
+                                    isSearchable={false}
+                                    options={actionOptions.map(a => ({
+                                        id:   a.value,
+                                        name: a.label
+                                    }))}
+                                    placeholder="Выберите действие..."
+                                />
+                            </div>
+
+                            <button
+                                className="btn btn-outline-light text text-dark mx-1 ml-2"
+                                onClick={handleBulkProcess}
+                            >
+                                Обработать
+                            </button>
+                        </>
+                    )}
                 </div>
 
-                {selectedPreset && (
-                    <>
-                        {/* Поиск */}
-                        <div style={{ width: 250 }}>
-                            <input
-                                type="text"
-                                placeholder="Поиск..."
-                                value={searchTerm}
-                                onChange={e => setSearchTerm(e.target.value)}
-                                className="form-control"
-                            />
-                        </div>
+                {loading && <div>Загрузка данных...</div>}
 
-                        {/* Действия */}
-                        <div style={{ width: 250 }}>
-                            <SearchableSelect
-                                value={selectedActionOption ? selectedActionOption.value : ''}
-                                onChange={(val: string) => {
-                                    const found = actionOptions.find(opt => opt.value === val) ?? null;
-                                    setSelectedActionOption(found);
-                                }}
-                                isSearchable={false}
-                                options={actionOptions.map(a => ({
-                                    id:   a.value,
-                                    name: a.label
-                                }))}
-                                placeholder="Выберите действие..."
-                            />
-                        </div>
-
+                {selectedPreset && !loading && (
+                    <div >
+                    <div style={{ height: '70vh', overflowY: 'auto' }}>
+                        {/*<div className="overflow-y-auto" style={{height: "60vh"}}>*/}
+                            <table className="w-100 table-auto border-collapse">
+                                <thead>
+                                <tr>
+                                    <th className="border p-2 text-center">
+                                        <input
+                                            type="checkbox"
+                                            className={styles.customCheckbox}
+                                            checked={
+                                                paginatedRows.length > 0 &&
+                                                paginatedRows.every(r => selectedRows.has(r.id_list.join(',')))
+                                            }
+                                            style={{cursor: "pointer"}}
+                                            onChange={toggleSelectAll}
+                                        />
+                                    </th>
+                                    {Object.entries(selectedPreset.preset.structure)
+                                        .sort(([a], [b]) => Number(a) - Number(b))
+                                        .map(([colKey, cfg]) => (
+                                            <th
+                                                key={colKey}
+                                                className="border p-2 cursor-pointer select-none"
+                                                onClick={() => toggleSort(colKey)}
+                                                style={{ cursor: 'pointer' }}
+                                            >
+                                                {cfg.name}
+                                                {sortConfig?.key === colKey && (
+                                                    <span className="material-icons ml-1" style={{ fontSize: '18px' }}>
+                                                        {sortConfig.direction === 'asc'
+                                                            ? 'keyboard_arrow_up'
+                                                            : 'keyboard_arrow_down'}
+                                                    </span>
+                                                )}
+                                            </th>
+                                        ))}
+                                    <th className="border p-2">Действия</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                {paginatedRows.map(row => {
+                                    const key = row.id_list.join(',');
+                                    return (
+                                        <tr key={key}>
+                                            <td className="border p-2 text-center">
+                                                <input
+                                                    type="checkbox"
+                                                    className={styles.customCheckbox}
+                                                    checked={selectedRows.has(key)}
+                                                    onChange={() => toggleRow(key)}
+                                                    style={{cursor: "pointer"}}
+                                                />
+                                            </td>
+                                            {Object.keys(selectedPreset.preset.structure)
+                                                .sort((a, b) => Number(a) - Number(b))
+                                                .map(colKey => {
+                                                    const cell = row[colKey] as ColumnCell;
+                                                    const def = selectedPreset.preset.structure[colKey].default;
+                                                    return (
+                                                        <td key={colKey} className="border p-2 align-top">
+                                                            {Array.isArray(cell.value) && cell.value.length > 0 ? (
+                                                                cell.value.map((item, idx) => (
+                                                                    <div key={idx}>{item}</div>
+                                                                ))
+                                                            ) : (
+                                                                def
+                                                            )}
+                                                        </td>
+                                                    );
+                                                })}
+                                            <td className="border p-2 space-x-2">
+                                                <button
+                                                    className="btn btn-outline-light text text-dark mx-1 ml-2"
+                                                    onClick={() => setOpenedGroup(row.id_list)}
+                                                >
+                                                    Открыть
+                                                </button>
+                                                <button
+                                                    className="btn btn-outline-light text text-dark mx-1 ml-2"
+                                                    onClick={() => {
+                                                        setModalIds(row.id_list);
+                                                        setModalAction(selectedActionOption?.action ?? null);
+                                                        setModalOpen(true);
+                                                    }}
+                                                    disabled={!selectedActionOption} // disable if no action is selected
+                                                >
+                                                    Обработать
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                                </tbody>
+                            </table>
+                        {/*</div>*/}
+                    </div>
+                {/* Пагинация */}
+                    <div className="mt-4 flex justify-center items-center space-x-2 my-2" style={{position:"absolute", right:"48%", bottom: -50, zIndex: 10}}>
                         <button
+                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                            disabled={currentPage === 1}
                             className="btn btn-outline-light text text-dark mx-1 ml-2"
-                            onClick={handleBulkProcess}
+                            style={{padding: 0}}
                         >
-                            Обработать
+                            <span className="material-icons text-base text-gray-600">keyboard_arrow_left</span>
                         </button>
-                    </>
+                        <span className="text-sm text-gray-700 font-weight-bold" style={{fontSize: 16}}>
+                            {currentPage} / {totalPages}
+                        </span>
+                        <button
+                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                            disabled={currentPage === totalPages}
+                            className="btn btn-outline-light text text-dark mx-1 "
+                            style={{padding: 0}}
+                        >
+                            <span className="material-icons text-base text-gray-600">keyboard_arrow_right</span>
+                        </button>
+                    </div>
+                    </div>
                 )}
+
+                {!selectedPreset && !loading && <div>Пожалуйста, выберите пресет.</div>}
+                {selectedPreset && !loading && processedRows.length === 0 && (
+                    <div>Нет данных для выбранного пресета.</div>
+                )}
+                <GroupActionModal
+                    isOpen={modalOpen}
+                    onClose={() => setModalOpen(false)}
+                    preset={selectedPreset?.preset ?? null}
+                    action={modalAction!}
+                    ids={modalIds}
+                    idProjectMap={idProjectMap}
+                    glagolParent={glagolParent}
+                    role={role}
+                    modules={modules}
+                />
             </div>
-
-            {loading && <div>Загрузка данных...</div>}
-
-            {selectedPreset && !loading && (
-                <div >
-                <div style={{ height: '70vh', overflowY: 'auto' }}>
-                    {/*<div className="overflow-y-auto" style={{height: "60vh"}}>*/}
-                        <table className="w-100 table-auto border-collapse">
-                            <thead>
-                            <tr>
-                                <th className="border p-2 text-center">
-                                    <input
-                                        type="checkbox"
-                                        className={styles.customCheckbox}
-                                        checked={
-                                            paginatedRows.length > 0 &&
-                                            paginatedRows.every(r => selectedRows.has(r.id_list.join(',')))
-                                        }
-                                        style={{cursor: "pointer"}}
-                                        onChange={toggleSelectAll}
-                                    />
-                                </th>
-                                {Object.entries(selectedPreset.preset.structure)
-                                    .sort(([a], [b]) => Number(a) - Number(b))
-                                    .map(([colKey, cfg]) => (
-                                        <th
-                                            key={colKey}
-                                            className="border p-2 cursor-pointer select-none"
-                                            onClick={() => toggleSort(colKey)}
-                                            style={{ cursor: 'pointer' }}
-                                        >
-                                            {cfg.name}
-                                            {sortConfig?.key === colKey && (
-                                                <span className="material-icons ml-1" style={{ fontSize: '18px' }}>
-                                                    {sortConfig.direction === 'asc'
-                                                        ? 'keyboard_arrow_up'
-                                                        : 'keyboard_arrow_down'}
-                                                </span>
-                                            )}
-                                        </th>
-                                    ))}
-                                <th className="border p-2">Действия</th>
-                            </tr>
-                            </thead>
-                            <tbody>
-                            {paginatedRows.map(row => {
-                                const key = row.id_list.join(',');
-                                return (
-                                    <tr key={key}>
-                                        <td className="border p-2 text-center">
-                                            <input
-                                                type="checkbox"
-                                                className={styles.customCheckbox}
-                                                checked={selectedRows.has(key)}
-                                                onChange={() => toggleRow(key)}
-                                                style={{cursor: "pointer"}}
-                                            />
-                                        </td>
-                                        {Object.keys(selectedPreset.preset.structure)
-                                            .sort((a, b) => Number(a) - Number(b))
-                                            .map(colKey => {
-                                                const cell = row[colKey] as ColumnCell;
-                                                const def = selectedPreset.preset.structure[colKey].default;
-                                                return (
-                                                    <td key={colKey} className="border p-2 align-top">
-                                                        {Array.isArray(cell.value) && cell.value.length > 0 ? (
-                                                            cell.value.map((item, idx) => (
-                                                                <div key={idx}>{item}</div>
-                                                            ))
-                                                        ) : (
-                                                            def
-                                                        )}
-                                                    </td>
-                                                );
-                                            })}
-                                        <td className="border p-2 space-x-2">
-                                            <button
-                                                className="btn btn-outline-light text text-dark mx-1 ml-2"
-                                                onClick={() => setOpenedGroup(row.id_list)}
-                                            >
-                                                Открыть
-                                            </button>
-                                            <button
-                                                className="btn btn-outline-light text text-dark mx-1 ml-2"
-                                                onClick={() => {
-                                                    setModalIds(row.id_list);
-                                                    setModalAction(selectedActionOption?.action ?? null);
-                                                    setModalOpen(true);
-                                                }}
-                                                disabled={!selectedActionOption} // disable if no action is selected
-                                            >
-                                                Обработать
-                                            </button>
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                            </tbody>
-                        </table>
-                    {/*</div>*/}
-                </div>
-            {/* Пагинация */}
-                <div className="mt-4 flex justify-center items-center space-x-2 my-2" style={{position:"absolute", right:"48%", bottom: -50, zIndex: 10}}>
-                    <button
-                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                        disabled={currentPage === 1}
-                        className="btn btn-outline-light text text-dark mx-1 ml-2"
-                        style={{padding: 0}}
-                    >
-                        <span className="material-icons text-base text-gray-600">keyboard_arrow_left</span>
-                    </button>
-                    <span className="text-sm text-gray-700 font-weight-bold" style={{fontSize: 16}}>
-                        {currentPage} / {totalPages}
-                    </span>
-                    <button
-                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                        disabled={currentPage === totalPages}
-                        className="btn btn-outline-light text text-dark mx-1 "
-                        style={{padding: 0}}
-                    >
-                        <span className="material-icons text-base text-gray-600">keyboard_arrow_right</span>
-                    </button>
-                </div>
-                </div>
-            )}
-
-            {!selectedPreset && !loading && <div>Пожалуйста, выберите пресет.</div>}
-            {selectedPreset && !loading && processedRows.length === 0 && (
-                <div>Нет данных для выбранного пресета.</div>
-            )}
-            <GroupActionModal
-                isOpen={modalOpen}
-                onClose={() => setModalOpen(false)}
-                preset={selectedPreset?.preset ?? null}
-                action={modalAction!}
-                ids={modalIds}
-                idProjectMap={idProjectMap}
-                glagolParent={glagolParent}
-                role={role}
-                modules={modules}
-            />
         </div>
     );
 };

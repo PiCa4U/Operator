@@ -51,10 +51,9 @@ const App: React.FC = () => {
     const startModulesRanRef = useRef<boolean>(false);
 
     useEffect(() => {
-        console.log("TESTMODmonoModules: ", monoModules)
-        console.log("TESTMODmodules: ", modules)
+        console.log("scriptProject: ", scriptProject)
 
-    },[modules, monoModules])
+    },[scriptProject])
     const [prefix, setPrefix] = useState<string>('')
     const [get_callcenter, setGet_callcenter] = useState<boolean>(false)
     const [scriptDir, setScriptDir] = useState<"inbound" | "outbound" >("inbound")
@@ -64,8 +63,10 @@ const App: React.FC = () => {
     const { monitorUsers } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
-    useEffect(() => console.log("postActive: ", postActive),[postActive])
+    useEffect(() => {
+        console.log("scriptDir: ", scriptDir)
 
+    },[scriptDir])
     const {
         sipLogin   = '',
         worker     = '',
@@ -84,6 +85,36 @@ const App: React.FC = () => {
             return false;
         }
     });
+
+    const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
+    const activeCalls: any[] = useMemo(() => {
+        return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
+    }, [rawActiveCalls]);
+
+    function cleanProjectName(name: string): string {
+        return name.replace(/\s*\(.*?\)\s*$/, '').trim();
+    }
+
+    useEffect(() => {
+        if (activeCalls.length || postActive) return
+        console.log("scriptTestselectedCall: ",selectedCall)
+        if (selectedCall) {
+            console.log("scriptTestselectedCall112: ",Object.values(selectedCall?.projects)[0].call_result)
+        }
+
+        if(selectedCall && Object.values(selectedCall.projects)[0].call_result === null) {
+            console.log("script")
+            const scriptDirection = selectedCall.total_direction || "inbound"
+            const scriptProj = Object.keys(selectedCall.projects)[0] !== "outbound" ?
+                Object.keys(selectedCall.projects)[0] :
+                selectedCall.variable_last_arg
+            console.log("scriptTestselectedCall333: ", scriptDirection)
+            console.log("scriptTestselectedCall444: ", cleanProjectName(scriptProj))
+
+            setScriptDir(scriptDirection)
+            setScriptProject(cleanProjectName(scriptProj))
+        }
+    },[activeCalls.length, postActive, selectedCall])
 
     useEffect(()=> {
         if (showTasksDashboard && !momoProjectRepo.current) {
@@ -114,13 +145,13 @@ const App: React.FC = () => {
             setOpenedPhones([])
             setGroupIDs([])
         }
-        // if(!postActive && !activeCall) {
+        // if(!postActive && !activeCalls.length && !selectedCall) {
         //     setOpenedGroup([])
         //     setPhonesData([])
         //     setOpenedPhones([])
         //     setGroupIDs([])
         // }
-    },[showTasksDashboard, postActive])
+    },[showTasksDashboard, postActive, activeCalls.length, selectedCall])
     useEffect(() => console.log("openedPhones: ", openedPhones),[openedPhones])
     useEffect(() => console.log("phonesData: ", phonesData),[phonesData])
 
@@ -147,10 +178,10 @@ const App: React.FC = () => {
     useEffect(() => {
         if (groupProjects.length > 0) {
             setScriptProject(groupProjects[0]);
-        } else {
+        } else if (openedPhones.length){
             setScriptProject(''); // или null
         }
-    }, [groupProjects]);
+    }, [groupProjects, openedPhones.length]);
 
     // useEffect(() => {
     //     if(!showTasksDashboard) {
@@ -201,10 +232,6 @@ const App: React.FC = () => {
 
     const dispatch = useDispatch();
     const roomId = useMemo(() => makeId(40), []);
-    const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
-    const activeCalls: any[] = useMemo(() => {
-        return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
-    }, [rawActiveCalls]);
 
     useEffect(() => {
         // TODO fix check_express
@@ -722,7 +749,7 @@ const App: React.FC = () => {
                         ) : (
                             <>
                                 {/* Левая колонка: ScriptPanel */}
-                                <div className="col-12 col-md-7">
+                                <div className="col-12 col-md-6">
                                     {/* 1) Если есть открытые карточки и мы не в звонке/посте — показываем кнопки выбора проекта + ScriptPanel */}
                                     {!postActive && !activeCall && openedPhones.length > 0 && (
                                         <div style={{ marginLeft: 13, marginRight: 14 }}>
@@ -789,7 +816,7 @@ const App: React.FC = () => {
                                 </div>
 
                                 {/* Правая колонка: CallControlPanel */}
-                                <div className="col-12 col-md-5">
+                                <div className="col-12 col-md-6">
                                     {(openedPhones.length > 0 || activeCall || postActive) && (
                                         <CallControlPanel
                                             call={selectedCall}
@@ -836,7 +863,22 @@ const App: React.FC = () => {
             ) : <div className="row my-3">
                 {/* Левая колонка: Дашборд звонков или панель скриптов */}
                 <div className="col-12 col-md-7">
-                    {showScriptPanel || (activeCalls.length && activeCalls[0] && Object.keys(activeCalls[0]).length > 0 && activeCalls[0].uuid && activeProjectName) || (postActive && activeProjectName) ? (
+                    {(selectedCall && scriptDir && scriptProject && !postActive && !activeCalls.length) ?
+                        <ScriptPanel
+                            direction={scriptDir}
+                            projectName={scriptProject}
+                            onClose={() => setShowScriptPanel(false)}
+                            tuskMode={tuskMode}
+                            selectedCall={selectedCall}
+                        />
+                        :
+
+
+                    (
+                        showScriptPanel ||
+                        (activeCalls.length && activeCalls[0] && Object.keys(activeCalls[0]).length > 0 && activeCalls[0].uuid && activeProjectName) ||
+                        (postActive && activeProjectName)
+                            ? (
                         <ScriptPanel
                             direction={scriptDir}
                             projectName={activeProjectName}
@@ -852,7 +894,7 @@ const App: React.FC = () => {
                             isLoading={isLoading}
                             setIsLoading={setIsLoading}
                         />
-                    )}
+                    ))}
                 </div>
                 <div className="col-12 col-md-5">
                     {(selectedCall || activeCall || postActive) && (

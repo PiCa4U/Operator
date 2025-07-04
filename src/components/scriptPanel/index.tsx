@@ -91,6 +91,7 @@ interface ScriptPanelProps {
     bUuid?: string;
     onClose: () => void;
     tuskMode?: boolean
+    selectedCall?: CallData
 }
 
 const ScriptPanel: React.FC<ScriptPanelProps> = ({
@@ -99,7 +100,8 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
                                                      uuid = '',
                                                      bUuid = '',
                                                      onClose,
-                                                     tuskMode = false
+                                                     tuskMode = false,
+                                                     selectedCall,
                                                  }) => {
     const {
         sipLogin   = '',
@@ -141,11 +143,10 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     const hasActiveCall = Array.isArray(activeCalls) && activeCalls.length ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
     /** При монтировании: если есть активный звонок, запрашиваем start_script */
     useEffect(() => {
-        if (hasActiveCall || tuskMode) {
+        if (hasActiveCall || tuskMode || selectedCall) {
 
-            const firstCall = activeCalls[0];
-            const currentUuid  = firstCall?.uuid  || uuid;
-            const currentBUuid = firstCall?.b_uuid|| bUuid;
+            const currentUuid = activeCalls.length ? activeCalls[0].uuid : selectedCall?.special_key_call;
+            const currentBUuid  = activeCalls.length ? activeCalls[0].b_uuid : selectedCall?.special_key_conn;
 
             socket.emit('start_script', {
                 worker,
@@ -158,7 +159,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
             });
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [projectName, direction, activeCalls]);
+    }, [projectName, direction, activeCalls, selectedCall]);
 
     useEffect(() => {
         /** Событие "start_script" */

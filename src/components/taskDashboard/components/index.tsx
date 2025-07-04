@@ -393,7 +393,6 @@ const GroupActionModal: React.FC<Props> = ({
                     </tbody>
                 </table>
 
-                {/* ─── КНОПКИ ───────────────────────────────────────── */}
                 <div className={stylesModal.buttonRow}>
                     <button onClick={onClose} className="px-3 py-1 btn btn-outline-danger mr-2 ">Отмена</button>
                     <button

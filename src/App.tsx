@@ -47,6 +47,7 @@ const App: React.FC = () => {
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
     const [expressCall, setExpressCall] = useState<boolean>(false)
 
+    useEffect(() => console.log("postActive: ", postActive),[postActive])
     const momoProjectRepo = useRef<boolean>(false)
     const startModulesRanRef = useRef<boolean>(false);
     const { sessionKey } = store.getState().operator
@@ -314,7 +315,7 @@ const App: React.FC = () => {
             // setOutboundCall(false);
             setPostActive(true);
         }
-    }, [activeCalls]);
+    }, [activeCall, activeCalls]);
 
     useEffect(()=> {
         const getOuboundProject = (msg:any) => {
@@ -880,7 +881,7 @@ const App: React.FC = () => {
                 </>
             ) : <div className="row my-3">
                 {/* Левая колонка: Дашборд звонков или панель скриптов */}
-                <div className="col-12 col-md-7">
+                <div className="col-12 col-md-6">
                     {(selectedCall && scriptDir && scriptProject && !postActive && !activeCalls.length) ?
                         <ScriptPanel
                             direction={scriptDir}
@@ -890,11 +891,9 @@ const App: React.FC = () => {
                             selectedCall={selectedCall}
                         />
                         :
-
-
                     (
                         showScriptPanel ||
-                        (activeCalls.length && activeCalls[0] && Object.keys(activeCalls[0]).length > 0 && activeCalls[0].uuid && activeProjectName) ||
+                        (activeCall && activeProjectName) ||
                         (postActive && activeProjectName)
                             ? (
                         <ScriptPanel
@@ -914,7 +913,7 @@ const App: React.FC = () => {
                         />
                     ))}
                 </div>
-                <div className="col-12 col-md-5">
+                <div className="col-12 col-md-6">
                     {(selectedCall || activeCall || postActive) && (
                         <CallControlPanel
                             call={selectedCall}

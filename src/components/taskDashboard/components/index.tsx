@@ -194,10 +194,9 @@ const GroupActionModal: React.FC<Props> = ({
                             b_uuid:      "",
                             worker,
                             session_key: sessionKey,
-                            project_name,
+                            projects: {[contact?.project]: kwargs},
                             filename:    foundModule.filename.replace(/\.py$/, ''),
                             common_code: foundModule.common_code,
-                            kwargs,
                         });
                     });
                 });

@@ -371,6 +371,11 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 );
                 if (!matchedPreset) {
                     console.log('Нет пресета под проект:', outActiveProjectName);
+                    socket.emit("get_project_fields",{
+                        projects: [outActiveProjectName],
+                        session_key: sessionKey,
+                        worker
+                    })
                     return;
                 } else {
                     console.log("matchedPreset:", matchedPreset);

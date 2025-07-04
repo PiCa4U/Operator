@@ -309,6 +309,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const moduleProjectMapRef = useRef<Record<number, string>>({});
 
+    useEffect(() => {
+        if (hasActiveCall && !openedPhones && outboundCall) {
+            socket.emit("get_project_fields",{
+                projects: [outActiveProjectName],
+                session_key: sessionKey,
+                worker
+            })
+        }
+    },[hasActiveCall, openedPhones, outActiveProjectName, outboundCall, sessionKey, worker])
 
     // const [projectsData, setProjectsData] = useState<ProjectFieldsResponse | null>(null);
 
@@ -469,6 +478,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         //TODO TEST
         // Если включён tuskMode, собираем mergedFields (вне зависимости от hasActiveCall)
         // if (tuskMode) {
+            console.log("testOUTBOUNDCALLCHILDRILL")
             const map = new Map<string, MergedField>();
             setGroup_instructions(data.group_instructions || null)
             Object.entries(data.as_is_dict).forEach(([projName, fields]) => {
@@ -611,7 +621,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // };
 // ✅ Правильная инициализация значений:
 
-    useEffect(() => console.log("setBasicFields: ", basicFields),[basicFields])
     useEffect(() => {
         // if (!tuskMode) return;
 
@@ -619,7 +628,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return () => {
             socket.off("project_fields", handleProjectFields);
         };
-    }, [tuskMode, groupProjects, sessionKey, worker, activeCalls, openedPhones, handleProjectFields,call]);
+    }, [tuskMode, groupProjects, sessionKey, worker, activeCalls, openedPhones, handleProjectFields, call, hasActiveCall, values]);
 
     useEffect(() => {
         const handleReports = (msg: any) => {
@@ -759,7 +768,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // Обработка ответа сервера для "get_modules"
     useEffect(() => {
         // setModules([]);
-        startModulesRanRef.current = false;
+        // startModulesRanRef.current = false;
         console.log()
         // if ((!hasActiveCall && (!openedPhones?.length || !call))) return;
         console.log("it's working")
@@ -1027,7 +1036,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
 
     const startModules = useMemo<ModuleData[]>(() => {
-        if (tuskMode && monoModules) {
+        if (monoModules) {
             // flatten всех модулей из monoModules
             return Object.values(monoModules)
                 .flat()
@@ -1041,7 +1050,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 mod.start_modes.includes('start')
             );
         }
-    }, [tuskMode, monoModules, modules]);
+    }, [monoModules, modules]);
 
     useEffect(() => console.log("startModules: ", startModules),[startModules])
 // ручные модули — всё, что не стартовое
@@ -1067,7 +1076,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         console.log("START")
 
         // 1) активный звонок
-        if (startModules.length && hasActiveCall) {
+        if (startModules.length && (hasActiveCall || call)) {
             console.log("startModules")
             startModules.forEach(mod => handleModuleRun(mod));
             startModulesRanRef.current = true;
@@ -1227,9 +1236,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             base_fields: Record<string, string>;
         }> = {};
 
-        const sanitizedBaseFields = Object.fromEntries(
-            Object.entries(baseFieldValues).map(([k, v]) => [k, sanitize(v)])
-        );
+        // const sanitizedBaseFields = Object.fromEntries(
+        //     Object.entries(baseFieldValues).map(([k, v]) => [k, sanitize(v)])
+        // );
+        const sanitizedBaseFields = Object.values(values)[0]
 
         projectsPayload[call?.project_name ?? "proj"] = {
             call_reason: reasonNumber,

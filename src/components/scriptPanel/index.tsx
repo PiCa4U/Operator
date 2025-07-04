@@ -119,13 +119,14 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     const [scriptMode, setScriptMode] = useState<string>('');  // 'rememeber', 'forget' и т.п.
     const [commentMode, setCommentMode] = useState<string>(''); // 'true'/'false'
     const [source, setSource] = useState('');                   // 'fs' или иное
-
     // Текущий блок
     const [blockName, setBlockName] = useState('');
     const [blockText, setBlockText] = useState<any>(null);
     const [instructions, setInstructions] = useState<any>(null);
     const [blockButtons, setBlockButtons] = useState<ScriptButton[]>([]);
     // FAQ
+    useEffect(() => console.log("КУКУКУКУКУ"),[])
+
     const [questions, setQuestions] = useState<ScriptQuestion[]>([]);
     const [searchText, setSearchText] = useState('');
     const [openAnswers, setOpenAnswers] = useState<{ [id: string]: boolean }>({});
@@ -221,7 +222,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
             socket.off('start_script', handleStartScript);
             socket.off('move_script', handleMoveScript);
         };
-    }, [direction, projectName, sipLogin, sessionKey, roomId, worker]);
+    }, [direction, projectName]);
 
     /** Клик по кнопке скрипта => move_script */
     const handleButtonClick = (btn: ScriptButton) => {

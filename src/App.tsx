@@ -11,6 +11,7 @@ import {makeSelectFullProjectPool, setActiveCalls, setFsStatus, setUserStatuses}
 import {RootState, store} from './redux/store';
 import TasksDashboard, {ApiRow, OptionType, Preset} from "./components/taskDashboard";
 import stylesButton from './components/callControlPanel/index.module.css';
+import axios from "axios";
 
 
 
@@ -439,19 +440,21 @@ const App: React.FC = () => {
             try {
                 let myPresets = presets;
                 if (presets.length === 0) {
-                    const resp = await fetch('http://45.145.66.28:8000/api/v1/get_preset_list', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            glagol_parent: "fs.at.glagol.ai",
-                            worker,
-                            projects: projectPoolForCall,
-                            role
-                        }),
+                    const response = await axios.post<Preset[]>('/api/v1/get_preset_list', {
+                        glagol_parent: 'fs.at.glagol.ai',
+                        worker,
+                        projects: projectPoolForCall,
+                        role,
                     });
-                    if (!resp.ok) throw new Error(resp.statusText);
-                    const data: Preset[] = await resp.json();
-                    myPresets = data.map(p => ({ value: p.id, label: p.preset_name, preset: p }));
+
+                    // Данные уже в response.data
+                    const data: Preset[] = response.data;
+
+                    const myPresets = data.map(p => ({
+                        value: p.id,
+                        label: p.preset_name,
+                        preset: p,
+                    }));
                     setPresets(myPresets);
                 }
 
@@ -466,20 +469,14 @@ const App: React.FC = () => {
                     setSelectedPreset(matchedPreset);
                 }
 
-                const respProjectIds = await fetch('http://45.145.66.28:8000/api/v1/get_grouped_phones', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        glagol_parent: projectPool[0].scheme || '',
-                        group_by: matchedPreset.preset.group_by,
-                        filter_by: { project: ['IN', matchedPreset.preset.projects] },
-                        group_table: matchedPreset.preset.group_table,
-                        role
-                    }),
+                const response2 = await axios.post<any>('/api/v1/get_grouped_phones', {
+                    glagol_parent: projectPool[0].scheme || '',
+                    group_by: matchedPreset.preset.group_by,
+                    filter_by: { project: ['IN', matchedPreset.preset.projects] },
+                    group_table: matchedPreset.preset.group_table,
+                    role,
                 });
-                if (!respProjectIds.ok) throw new Error(respProjectIds.statusText);
-
-                const projectIdData = await respProjectIds.json();
+                const projectIdData = response2.data;
                 console.log("OUT1121projectIdData:", projectIdData);
 
                 // ✅ Используем рекурсивный обход для сбора всех массивов телефонов

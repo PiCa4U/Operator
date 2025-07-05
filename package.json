@@ -2,7 +2,6 @@
   "name": "operator_page",
   "version": "0.1.0",
   "private": true,
-  "proxy": "http://45.145.66.28:8000",
   "dependencies": {
     "@reduxjs/toolkit": "^2.6.1",
     "@testing-library/dom": "^10.4.0",

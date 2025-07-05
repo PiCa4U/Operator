@@ -10,6 +10,7 @@ import Swal from "sweetalert2";
 import {socket} from "../../socket";
 import {RootState, store} from "../../redux/store";
 import {ExpressState} from "../callControlPanel";
+import axios from "axios";
 
 // --- Типы данных ---
 interface ColumnCell {
@@ -154,23 +155,24 @@ const PresetSelectorTable: React.FC<Props> = ({
     useEffect(()=> console.log("selectedRows: ", selectedRows))
 
     useEffect(() => {
-        if (role === "manager" && selectedPreset) {
+        if (role === 'manager' && selectedPreset) {
             const projects = selectedPreset.preset.projects;
 
             Promise
                 .allSettled(
                     projects.map(projectName =>
-                        fetch(
-                            `http://45.145.66.28:8000/api/v1/express_configs?glagol_parent=fs.at.akc24.ru&project_name=${encodeURIComponent(projectName)}`,
-                            { method: 'GET', headers: { 'Accept': 'application/json' } }
-                        )
-                            .then(async res => {
-                                if (!res.ok) {
-                                    throw new Error(`Ошибка ${res.status}: ${res.statusText}`);
-                                }
-                                const data = await res.json();
-                                return { projectName, config: data };
+                        axios
+                            .get<any>('/api/v1/express_configs', {
+                                params: {
+                                    glagol_parent: 'fs.at.akc24.ru',
+                                    project_name: projectName
+                                },
+                                headers: { Accept: 'application/json' }
                             })
+                            .then(response => ({
+                                projectName,
+                                config: response.data
+                            }))
                     )
                 )
                 .then(results => {
@@ -179,13 +181,11 @@ const PresetSelectorTable: React.FC<Props> = ({
                         if (result.status === 'fulfilled') {
                             configMap[result.value.projectName] = result.value.config;
                         } else {
-                            console.warn('Failed to load config for one project:', result.reason);
-                            // Optionally set a default or null
-                            // configMap[projects[index]] = null;
+                            console.warn('Failed to load config for project:', result.reason);
                         }
                     });
                     setExpressConfig(configMap);
-                    console.log("expressConfig:", configMap);
+                    console.log('expressConfig:', configMap);
                 });
         }
     }, [role, selectedPreset]);
@@ -195,13 +195,13 @@ const PresetSelectorTable: React.FC<Props> = ({
         if (!role || projectNames.length === 0) return;
 
         (async () => {
-            const resp = await fetch('http://45.145.66.28:8000/api/v1/get_preset_list', {
-                method: 'POST',
-                headers: {'Content-Type':'application/json'},
-                body: JSON.stringify({ glagol_parent: glagolParent, worker, projects: projectNames, role })
+            const response = await axios.post<Preset[]>('/api/v1/get_preset_list', {
+                glagol_parent: glagolParent,
+                worker,
+                projects: projectNames,
+                role
             });
-            if (!resp.ok) throw new Error(resp.statusText);
-            const data: Preset[] = await resp.json();
+            const data: Preset[] = response.data;
             setPresets(data.map(p => ({ value: p.id, label: p.preset_name, preset: p })));
         })();
     }, [glagolParent, worker, role, projectNames]);
@@ -217,50 +217,30 @@ const PresetSelectorTable: React.FC<Props> = ({
         (async () => {
             try {
                 const { preset } = selectedPreset;
-                const resp = await fetch('http://45.145.66.28:8000/api/v1/get_grouped_phones', {
-                    method: 'POST',
-                    headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({
-                        glagol_parent: glagolParent,
-                        group_table: preset.group_table,
-                        filter_by: {
-                            project: [
-                                "IN",
-                                preset.projects
-                            ]
-                        },
-                        preset_id: preset.id,
-                        role
-                    })
+                const response1 = await axios.post<ApiRow[]>('/api/v1/get_grouped_phones', {
+                    glagol_parent: glagolParent,
+                    group_table: preset.group_table,
+                    filter_by: {
+                        project: ['IN', preset.projects]
+                    },
+                    preset_id: preset.id,
+                    role
                 });
-                if (!resp.ok) throw new Error(resp.statusText);
-                // второй запрос, который отдаёт данные по проектам
-                const respProjectIds = await fetch('http://45.145.66.28:8000/api/v1/get_grouped_phones', {
-                    method: 'POST',
-                    headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({
-                        glagol_parent: glagolParent,
-                        group_by: ["project"],
-                        filter_by: { project: ['IN', preset.projects] },
-                        group_table: preset.group_table,
-                        role
-                    })
+                const response2 = await axios.post<Record<string, { id: number }[]>>('/api/v1/get_grouped_phones', {
+                    glagol_parent: glagolParent,
+                    group_by: ['project'],
+                    filter_by: { project: ['IN', preset.projects] },
+                    group_table: preset.group_table,
+                    role
                 });
-                if (!respProjectIds.ok) throw new Error(respProjectIds.statusText);
-                // распарсим JSON вида { akc24: [{id:13,…},…], test_2: [{id:23,…},…] }
-                const projectIdData: Record<string, { id: number }[]> = await respProjectIds.json();
+                const projectIdData = response2.data;
                 const flatPhones = Object.values(projectIdData).flat();
                 setPhonesData(flatPhones);
-                console.log("projectIdData: ", projectIdData)
-                const flat: { id: number; project_name: string }[] = Object
-                    .entries(projectIdData)
-                    .flatMap(([project_name, list]) =>
-                            list.map(item => ({ id: item.id, project_name }))
-                    );
+                const flat = Object.entries(projectIdData).flatMap(([project_name, list]) =>
+                    list.map(item => ({ id: item.id, project_name }))
+                );
                 setIdProjectMap(flat);
-
-                console.log("flat: ", flat)
-                const rows: ApiRow[] = await resp.json();
+                const rows: ApiRow[] = response1.data;
                 setTableData(rows);
                 setSelectedActionOption(null);
                 setCurrentPage(1);
@@ -545,48 +525,49 @@ const PresetSelectorTable: React.FC<Props> = ({
                 const express_id = config.express_config.id;
 
                 const [statusRes, agentsRes] = await Promise.all([
-                    fetch(`http://45.145.66.28:8000/api/v1/express_status?express_id=${express_id}`).then(r => r.json()),
-                    fetch(`http://45.145.66.28:8000/api/v1/express_agents?express_id=${express_id}`).then(r => r.json()),
+                    axios.get<{ active: boolean; active_calls?: number }>('/api/v1/express_status', {
+                        params: { express_id }
+                    }),
+                    axios.get<{ operators: string[] }>('/api/v1/express_agents', {
+                        params: { express_id }
+                    }),
                 ]);
 
                 result[project] = {
                     project,
                     express_id,
-                    active: statusRes.active,
-                    calls: statusRes.active_calls || 0,
-                    agents: agentsRes.operators,
+                    active: statusRes.data.active,
+                    calls: statusRes.data.active_calls || 0,
+                    agents: agentsRes.data.operators,
                 };
             })
         );
-        console.log("result: ", result);
+
+        console.log('result:', result);
         setExpressStates(result);
     };
 
     const handleStartExpress = async (project: string) => {
-        await fetch(`http://45.145.66.28:8000/api/v1/start_express`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                glagol_parent: 'fs.at.akc24.ru',
-                project_name: project
-            })
+        await axios.post('/api/v1/start_express', {
+            glagol_parent: 'fs.at.akc24.ru',
+            project_name: project
         });
-
         await fetchStatuses();
     };
 
     const handleStopExpress = async (project: string, express_id: number) => {
-        await fetch(`http://45.145.66.28:8000/api/v1/stop_express`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                glagol_parent: 'fs.at.akc24.ru',
-                project_name: project
-            })
+        await axios.post('/api/v1/stop_express', {
+            glagol_parent: 'fs.at.akc24.ru',
+            project_name: project
         });
-
         await fetchStatuses();
     };
+
+
+
+
+
+
 
     useEffect(() => {
         if (role !== 'manager' || !Object.keys(expressConfig).length) return;

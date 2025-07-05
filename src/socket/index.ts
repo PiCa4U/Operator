@@ -9,9 +9,16 @@ import {
 } from '../redux/operatorSlice';
 import { parseMonitorData } from "../utils";
 
-const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
 
-export const socket = io(`${protocol}://45.145.66.28:8000`, {
+const container = document.getElementById('root');
+if (!container) throw new Error('Root container not found');
+const rawFsServer = (container.dataset as any).fsServer;
+const fsServer = rawFsServer || 'wwstest.glagol.ai';
+
+const WS_PROTOCOL = window.location.protocol === 'https:' ? 'wss' : 'ws';
+const SOCKET_URL = `${WS_PROTOCOL}://${fsServer}:8000`;
+
+export const socket = io(`${SOCKET_URL}`, {
     transports: ['websocket'],
 });
 

@@ -7,6 +7,7 @@ import {makeSelectFullProjectPool} from "../../../redux/operatorSlice";
 import styles from "./checkbox.module.css";
 import stylesModal from "./modal.module.css";
 import {ModuleType} from "../index";
+import axios from "axios";
 
 interface Action { action_name: string; action_type: string; code_filename: string; }
 interface Preset {
@@ -212,46 +213,34 @@ const GroupActionModal: React.FC<Props> = ({
     useEffect(() => {
         if (!isOpen) return;
         setLoading(true);
-        fetch('http://45.145.66.28:8000/api/v1/get_grouped_phones', {
-            method: 'POST',
-            headers: { 'Content-Type':'application/json' },
-            body: JSON.stringify({
-                glagol_parent: glagolParent,
-                group_by: preset?.group_by,
-                filter_by: { project: ['IN', projectNames] },
-                group_table: preset?.group_table,
-                role
-            })
-        })
-            .then(async res => {
-                if (!res.ok) throw new Error(res.statusText);
-                type Nested = Record<string, Record<string, Record<string,RawRow[]>>>;
-                const raw = await res.json();
+        (async () => {
+            try {
+                type Nested = Record<string, Record<string, Record<string, RawRow[]>>>;
+                const response = await axios.post<Nested>('/api/v1/get_grouped_phones', {
+                    glagol_parent: glagolParent,
+                    group_by: preset?.group_by,
+                    filter_by: { project: ['IN', projectNames] },
+                    group_table: preset?.group_table,
+                    role,
+                });
+                const raw = response.data;
                 const allRows: RawRow[] = flattenRows(raw);
                 const filtered = allRows.filter(r => ids.includes(r.id));
                 setRawRows(filtered);
                 setSelectedIds(new Set(filtered.map(r => r.id)));
-                setSelectedFilters({ group1:new Set(), group2:new Set(), group3:new Set(), status:new Set() });
-            })
-            .catch(e => Swal.fire('Ошибка','Не удалось загрузить данные','error'))
-            .finally(() => setLoading(false));
+                setSelectedFilters({
+                    group1: new Set(),
+                    group2: new Set(),
+                    group3: new Set(),
+                    status: new Set(),
+                });
+            } catch (e) {
+                Swal.fire('Ошибка', 'Не удалось загрузить данные', 'error');
+            } finally {
+                setLoading(false);
+            }
+        })();
     }, [isOpen, preset, role, ids, glagolParent]);
-
-    useEffect(()=> {
-        console.log("777isOpen: ", isOpen)
-    },[isOpen])
-    useEffect(()=> {
-        console.log("777preset: ", preset)
-    },[preset])
-    useEffect(()=> {
-        console.log("777role: ", role)
-    },[role])
-    useEffect(()=> {
-        console.log("777ids: ", ids)
-    },[ids])
-    useEffect(()=> {
-        console.log("777glagolParent: ", glagolParent)
-    },[glagolParent])
 
 
     if (!isOpen) return null;

@@ -2435,7 +2435,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                                     field_name: f.label,
                                                                                     field_type: f.type,
                                                                                     field_vals: f.values,
-                                                                                    editable: true,
+                                                                                    editable: f.editable,
                                                                                     must_have: false,
                                                                                     project_name: proj
                                                                                 }]}
@@ -2469,7 +2469,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                                     field_name: f.label,
                                                                                     field_type: f.type,
                                                                                     field_vals: f.values,
-                                                                                    editable: true,
+                                                                                    editable: f.editable,
                                                                                     must_have: false,
                                                                                     project_name: proj
                                                                                 }]}

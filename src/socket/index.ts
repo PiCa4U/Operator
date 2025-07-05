@@ -16,17 +16,18 @@ const rawFsServer = (container.dataset as any).fsServer;
 const fsServer = rawFsServer || 'wwstest.glagol.ai';
 
 const WS_PROTOCOL = window.location.protocol === 'https:' ? 'wss' : 'ws';
-const SOCKET_URL = `${WS_PROTOCOL}://${fsServer}:8000`;
+// const SOCKET_URL = `${WS_PROTOCOL}://${fsServer}:8000`;
+const SOCKET_URL = `wss://${fsServer}`;
+
 
 export const socket = io(`${SOCKET_URL}`, {
     transports: ['websocket'],
 });
 
 
-let isInitialized = false;       // залогинились и запустили поллинг?
-let statusIntervalId: number;    // ID интервала для опроса
+let isInitialized = false;
+let statusIntervalId: number;
 
-// всегда берём актуальные креды из стора
 const getCreds = () => store.getState().credentials;
 
 // единожды шлёт статус с самым свежим sessionKey

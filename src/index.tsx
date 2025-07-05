@@ -27,10 +27,12 @@ const {
 // const worker     = rawWorker     || '10.lotus.at.glagol.ai';
 
 const sipLogin   = rawSipLogin   || '1000';
-const fsServer   = rawFsServer   || '45.145.66.28';
+const fsServer   = rawFsServer   || 'wwstest.glagol.ai';
 const worker     = rawWorker     || '4.fs@akc24.ru';
 
-axios.defaults.baseURL = `http://${fsServer}:8000`;
+// axios.defaults.baseURL = `http://${fsServer}:8000`;
+axios.defaults.baseURL = `https://${fsServer}`;
+
 
 store.dispatch(setCredentials({
     sessionKey: "",

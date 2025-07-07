@@ -292,7 +292,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [mergedFields, setMergedFields] = useState<MergedField[]>([]);
     const [values, setValues] = useState<GroupFieldValues>({});
     const [basicFields, setBasicFields] = useState<any[]>([])
-    useEffect(() => console.log("values: ", values), [values])
+    useEffect(() => console.log("values323123: ", values), [values])
 
     useEffect(() => console.log("mergedFields: ", mergedFields), [mergedFields])
     // Состояние для списка модулей, полученных с сервера
@@ -936,21 +936,29 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 const result  = dataObj.result || {};
 
                 Object.entries(result).forEach(([fieldKey, value]) => {
-                    const v = value == null ? '' : String(value);
+                    let v: string;
+                    if (value == null) {
+                        v = '';
+                    } else if (typeof value === 'object') {
+                        v = JSON.stringify(value);
+                    } else {
+                        v = String(value);
+                    }
                     applyFieldUpdate(project, fieldKey, v);
                 });
 
                 // 3) Новый групповой формат: { projectA: {...}, projectB: {...} }
-            } else if ( Object.values(dataObj).every(v => typeof v === 'object')) {
-                console.log("сработало")
-                // считаем, что dataObj — это сразу projectsPayload
+            } else if (Object.values(dataObj).every(v => typeof v === 'object')) {
                 Object.entries(dataObj).forEach(([project, result]) => {
                     Object.entries(result || {}).forEach(([fieldKey, value]) => {
-                        const v = value == null ? '' : String(value);
-                        console.log("сработалоproject: ", project)
-                        console.log("сработалоfieldKey: ", fieldKey)
-                        console.log("сработалоv: ", v)
-
+                        let v: string;
+                        if (value == null) {
+                            v = '';
+                        } else if (typeof value === 'object') {
+                            v = JSON.stringify(value);
+                        } else {
+                            v = String(value);
+                        }
                         applyFieldUpdate(project, fieldKey, v);
                     });
                 });
@@ -975,7 +983,14 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 }
 
                 Object.entries(dataObj).forEach(([fieldKey, value]) => {
-                    const v = value == null ? '' : String(value);
+                    let v: string;
+                    if (value == null) {
+                        v = '';
+                    } else if (typeof value === 'object') {
+                        v = JSON.stringify(value);
+                    } else {
+                        v = String(value);
+                    }
                     applyFieldUpdate(project, fieldKey, v);
                 });
             }
@@ -1000,6 +1015,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         postCallData,
         activeCalls,
     ]);
+
 
     function applyFieldUpdate(
         project: string,

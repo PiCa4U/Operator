@@ -125,7 +125,6 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     const [instructions, setInstructions] = useState<any>(null);
     const [blockButtons, setBlockButtons] = useState<ScriptButton[]>([]);
     // FAQ
-    useEffect(() => console.log("КУКУКУКУКУ"),[])
 
     const [questions, setQuestions] = useState<ScriptQuestion[]>([]);
     const [searchText, setSearchText] = useState('');

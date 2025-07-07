@@ -48,7 +48,7 @@ const App: React.FC = () => {
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
     const [expressCall, setExpressCall] = useState<boolean>(false)
 
-    useEffect(() => console.log("postActive: ", postActive),[postActive])
+    useEffect(() => console.log("scriptProject: ", scriptProject),[scriptProject])
     const momoProjectRepo = useRef<boolean>(false)
     const startModulesRanRef = useRef<boolean>(false);
     const { sessionKey } = store.getState().operator
@@ -67,10 +67,13 @@ const App: React.FC = () => {
     const { monitorUsers } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
-    useEffect(() => {
-        console.log("scriptDir: ", scriptDir)
 
-    },[scriptDir])
+    useEffect(() => {
+        if (!selectedCall || tuskMode) {
+            setScriptProject("")
+        }
+    },[selectedCall, tuskMode])
+
     const {
         sipLogin   = '',
         worker     = '',

@@ -41,14 +41,19 @@ const App: React.FC = () => {
     const [assignedKey, setAssignedKey] = useState('');
     const [isLoading,    setIsLoading]    = useState(false);
     const [specialKey, setSpecialKey] = useState<string>('')
-    const [showTasksDashboard, setShowTasksDashboard] = useState<boolean>(false);
+    // const [showTasksDashboard, setShowTasksDashboard] = useState<boolean>(false);
     const [modules, setModules] = useState<ModuleData[]>([]);
     const [monoModules, setMonoModules] = useState<MonoProjectsModuleData>({})
     const [scriptProject, setScriptProject] = useState<string>("")
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
     const [expressCall, setExpressCall] = useState<boolean>(false)
 
-    useEffect(() => console.log("scriptProject: ", scriptProject),[scriptProject])
+
+    const [openedGroup, setOpenedGroup] = useState<any[]>([]);
+    const [phonesData, setPhonesData] = useState<any[]>([])
+    const [openedPhones, setOpenedPhones] = useState<any[]>([])
+    const [GroupIDs, setGroupIDs] = useState<any[]>([])
+
     const momoProjectRepo = useRef<boolean>(false)
     const startModulesRanRef = useRef<boolean>(false);
     const { sessionKey } = store.getState().operator
@@ -61,18 +66,53 @@ const App: React.FC = () => {
     const [prefix, setPrefix] = useState<string>('')
     const [get_callcenter, setGet_callcenter] = useState<boolean>(false)
     const [scriptDir, setScriptDir] = useState<"inbound" | "outbound" >("inbound")
-    const [tuskMode, setTuskMode] = useState<boolean>(false)
+    // const [currentPresetPage, setCurrentPresetPage]         = useState(1);
     const [presets, setPresets] = useState<OptionType[]>([]);
+
+    const [showTasksDashboard, setShowTasksDashboard] = useState<boolean>(() => {
+        const saved = localStorage.getItem('showTasksDashboard');
+        return saved !== null ? JSON.parse(saved) : false;
+    });
+
+    const [currentPresetPage, setCurrentPresetPage] = useState<number>(() => {
+        const saved = localStorage.getItem('tasksCurrentPage');
+        return saved !== null ? parseInt(saved, 10) : 1;
+    });
+
+    const [selectedPreset, setSelectedPreset] = useState<OptionType | null>(() => {
+        const saved = localStorage.getItem('tasksSelectedPreset');
+        return saved ? JSON.parse(saved) as OptionType : null;
+    });
 
     const { monitorUsers } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
 
+    // 1) showTasksDashboard
     useEffect(() => {
-        if (!selectedCall || tuskMode) {
+        localStorage.setItem('showTasksDashboard', JSON.stringify(showTasksDashboard));
+    }, [showTasksDashboard]);
+
+// 2) currentPage
+    useEffect(() => {
+        localStorage.setItem('tasksCurrentPage', currentPresetPage.toString());
+    }, [currentPresetPage]);
+
+// 3) selectedPreset
+    useEffect(() => {
+        if (selectedPreset) {
+            localStorage.setItem('tasksSelectedPreset', JSON.stringify(selectedPreset));
+        } else {
+            localStorage.removeItem('tasksSelectedPreset');
+        }
+    }, [selectedPreset]);
+
+    useEffect(() => console.log("scriptProject: ", scriptProject),[scriptProject])
+    useEffect(() => {
+        if (!selectedCall || !openedPhones.length) {
             setScriptProject("")
         }
-    },[selectedCall, tuskMode])
+    },[openedPhones.length, selectedCall])
 
     const {
         sipLogin   = '',
@@ -83,7 +123,8 @@ const App: React.FC = () => {
         monitorUsers[sipLogin]?.type || "operator"
 
     const [outboundID, setOutboundID] = useState<number | null>(null)
-    const [selectedPreset, setSelectedPreset] = useState<OptionType | null>(null);
+    // const [selectedPreset, setSelectedPreset] = useState<OptionType | null>(null);
+
     useEffect(() => console.log('selectedPreset: ', selectedPreset),[selectedPreset])
     const [fullWidthCard, setFullWidthCard] = useState<boolean>(() => {
         try {
@@ -137,13 +178,6 @@ const App: React.FC = () => {
             setSelectedCall(null)
         }
     },[showTasksDashboard])
-    const [openedGroup, setOpenedGroup] = useState<any[]>([]);
-    const [phonesData, setPhonesData] = useState<any[]>([])
-    const [openedPhones, setOpenedPhones] = useState<any[]>([])
-    const [GroupIDs, setGroupIDs] = useState<any[]>([])
-    useEffect(() => console.log("outboundCall: ", outboundCall),[outboundCall])
-    useEffect(() => console.log("openedGroup: ", openedGroup),[openedGroup])
-    useEffect(() => console.log("GroupIDs: ", GroupIDs),[GroupIDs])
 
     const selectFullProjectPool3 = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     // Вызываем useSelector для получения «полных» проектов
@@ -631,7 +665,6 @@ const App: React.FC = () => {
                 setShowTasksDashboard={setShowTasksDashboard}
                 prefix={prefix}
                 setPrefix={setPrefix}
-                tuskMode={tuskMode}
                 setOutboundID={setOutboundID}
                 setOpenedGroup={setOpenedGroup}
                 setGroupIDs={setGroupIDs}
@@ -657,6 +690,8 @@ const App: React.FC = () => {
                             selectedPreset={selectedPreset}
                             setSelectedPreset={setSelectedPreset}
                             role={role}
+                            currentPage={currentPresetPage}
+                            setCurrentPage={setCurrentPresetPage}
                         />
                         )
                     }
@@ -887,7 +922,7 @@ const App: React.FC = () => {
                             direction={scriptDir}
                             projectName={scriptProject}
                             onClose={() => setSelectedCall(null)}
-                            tuskMode={tuskMode}
+                            tuskMode={showTasksDashboard}
                             selectedCall={selectedCall}
                         />
                         :
@@ -900,7 +935,7 @@ const App: React.FC = () => {
                             direction={scriptDir}
                             projectName={activeProjectName}
                             onClose={() => setShowScriptPanel(false)}
-                            tuskMode={tuskMode}
+                            tuskMode={showTasksDashboard}
                         />
                     ) : (
                         <CallsDashboard

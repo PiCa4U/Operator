@@ -270,10 +270,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         sipLogin   = '',
         worker     = '',
     } = store.getState().credentials;
-    const roomId     = useSelector((state: RootState) => state.room.roomId) || 'default_room';
-
+    const [manualNumber, setManualNumber] = useState('');
     // Состояния для формы
-    const fsReasons = useSelector((state: RootState) => state.operator.fsReasons);
 
     const [callReason, setCallReason] = useState('');
     const [callResult, setCallResult] = useState('');
@@ -284,10 +282,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // Списки причин, результатов и полей для заполнения
     const [callReasons, setCallReasons] = useState<ReasonItem[]>([]);
     const [callResults, setCallResults] = useState<ResultItem[]>([]);
-    const [params, setParams]      = useState<FieldDefinition[]>([]);
-    // useEffect(() => console.log("1111callReasons: ", callReasons),[callReasons])
-    // useEffect(() => console.log("1111callResults: ", callResults),[callResults])
-    // useEffect(() => console.log("1111params: ", params),[params])
     const [group_instructions, setGroup_instructions] = useState<any>(null)
     const [mergedFields, setMergedFields] = useState<MergedField[]>([]);
     const [values, setValues] = useState<GroupFieldValues>({});
@@ -1239,10 +1233,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     useEffect(()=> console.log("selectedCall: ", call),[call])
     const handleSave = () => {
-        if (!callReason || !callResult) {
-            Swal.fire({ title: "Ошибка", text: "Проверьте заполнение обязательных полей", icon: "error" });
-            return;
-        }
+        // if (!callReason || !callResult) {
+        //     Swal.fire({ title: "Ошибка", text: "Проверьте заполнение обязательных полей", icon: "error" });
+        //     return;
+        // }
         const reasonNumber = typeof callReason === "string" ? parseInt(callReason, 10) : callReason
         const resultNumber = typeof callResult === "string" ? parseInt(callResult, 10) : callResult
         const projectsPayload: Record<string, {
@@ -1282,10 +1276,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     };
 
     const handleGroupSave = () => {
-        if (!callReason || !callResult) {
-            Swal.fire({ title: "Ошибка", text: "Выберите причину и результат", icon: "error" });
-            return;
-        }
+        // if (!callReason || !callResult) {
+        //     Swal.fire({ title: "Ошибка", text: "Выберите причину и результат", icon: "error" });
+        //     return;
+        // }
         if (!groupModalOpen) {
             setGroupModalOpen(true);
             return;
@@ -1380,14 +1374,14 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         onClose();
     };
     const handlePostSave = () => {
-        if (!callReason || !callResult) {
-            Swal.fire({
-                title: "Ошибка",
-                text: "Проверьте заполнение обязательных полей",
-                icon: "error",
-            });
-            return;
-        }
+        // if (!callReason || !callResult) {
+        //     Swal.fire({
+        //         title: "Ошибка",
+        //         text: "Проверьте заполнение обязательных полей",
+        //         icon: "error",
+        //     });
+        //     return;
+        // }
 
         const post_time = POST_LIMIT - postSeconds
         if(tuskMode) {
@@ -1611,10 +1605,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const renderGroupPhones = () => {
         if (!phoneGroups.length) return null;
 
+
         return (
             <div
                 style={{
-                    position: 'relative',      // для абсолютного позиционирования кнопки
+                    position: 'relative',
                     display: 'flex',
                     flexWrap: 'wrap',
                     gap: 12,
@@ -1624,14 +1619,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 {/* Кнопка «Закрыть» */}
                 <button
                     onClick={() => {
-                        setOpenedPhones?.([])
-                        setOpenedGroup?.([])
-                        setPhonesData?.([])
-                        startModulesRanRef.current=false
-                        if(momoProjectRepo && momoProjectRepo.current && setTuskMode) {
-                            setTuskMode(false)
-                            onClose()
-                    }}}
+                        setOpenedPhones?.([]);
+                        setOpenedGroup?.([]);
+                        setPhonesData?.([]);
+                        startModulesRanRef.current = false;
+                        if (momoProjectRepo && momoProjectRepo.current && setTuskMode) {
+                            setTuskMode(false);
+                            onClose();
+                        }
+                    }}
                     className="btn btn-outline-light text text-dark"
                     style={{
                         position: 'absolute',
@@ -1643,11 +1639,56 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         zIndex: 1,
                     }}
                 >
-                    <span className="material-icons" style={{marginTop: 4}}>
-                        close
-                    </span>
+          <span className="material-icons" style={{ marginTop: 4 }}>
+            close
+          </span>
                 </button>
 
+                {/* Первая карточка: свободный ввод номера */}
+                <div
+                    key="manual-entry"
+                    style={{
+                        border: '1px solid #ddd',
+                        borderRadius: 6,
+                        padding: 8,
+                        minWidth: 180,
+                        maxWidth: 240,
+                        flex: '0 1 auto',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                        background: '#fff',
+                    }}
+                >
+                    <input
+                        type="text"
+                        placeholder="Введите номер..."
+                        value={manualNumber}
+                        onChange={e => {
+                            // убираем все символы, кроме цифр
+                            const onlyDigits = e.target.value.replace(/\D/g, '');
+                            setManualNumber(onlyDigits);
+                        }}
+                        className="form-control mb-2"
+                        inputMode="numeric"
+                        pattern="\d*"
+                    />
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {groupProjects.map(proj => (
+                            <button
+                                key={`manual-${proj}`}
+                                className="btn btn-sm btn-outline-success"
+                                onClick={() => {
+                                    if (manualNumber.trim()) {
+                                        callFromCard(proj, manualNumber.trim());
+                                    }
+                                }}
+                            >
+                                Вызов {findNameProject(proj)}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Дальше — уже существующие карточки */}
                 {phoneGroups.map(group => (
                     <div
                         key={group.phone}
@@ -1655,9 +1696,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             border: '1px solid #ddd',
                             borderRadius: 6,
                             padding: 8,
-                            minWidth: 180,        // поменьше, чем было
-                            maxWidth: 240,        // и не даём расти слишком
-                            flex: '0 1 auto',     // «авто»-размер вместо 1 1 auto
+                            minWidth: 180,
+                            maxWidth: 240,
+                            flex: '0 1 auto',
                             boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
                             background: '#fff',
                         }}
@@ -1674,7 +1715,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         >
                             {group.phone}
                         </div>
-
                         {group.entries.map(entry => (
                             <button
                                 key={entry.project}
@@ -1690,6 +1730,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             </div>
         );
     };
+
 
     const renderActiveCallHeader = (activeCall: ActiveCall) => {
         const mainActiveCall = activeCall || postCallData
@@ -2117,7 +2158,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         {tuskMode && !hasActiveCall && !postActive && renderGroupPhones()}
 
                         <div>
-                            {!tuskMode && !hasActiveCall && !postActive && (
+                            {!(tuskMode && !call) && !hasActiveCall && !postActive && (
                                 renderSelectedCallHeader()
                             )}
                             {shouldShowMeta && fullWidthCard ? (
@@ -2129,44 +2170,50 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                         flexWrap: 'wrap'
                                     }}
                                 >
-                                    {[{
-                                        label: 'Причина звонка',
-                                        value: callReason,
-                                        onChange: setCallReason,
-                                        options: callReasons
-                                    }, {
-                                        label: 'Результат звонка',
-                                        value: callResult,
-                                        onChange: setCallResult,
-                                        options: callResults
-                                    }].map(({ label, value, onChange, options }, idx) => (
-                                        <div
-                                            key={idx}
-                                            className="form-group"
-                                            style={{
-                                                flex: '1 1 calc(50% - 6px)',
-                                                minWidth: 0,
-                                                display: 'flex',
-                                                flexDirection: 'column',
-                                                gap: 4
-                                            }}
-                                        >
-                                            <label style={{ fontWeight: 400, fontSize: 16 }}>
-                                                {label}: <span style={{ color: 'red' }}>*</span>
-                                            </label>
-                                            <SearchableSelect
-                                                options={options}
-                                                value={value}
-                                                onChange={onChange}
-                                                placeholder={`Выберите ${label.toLowerCase()}...`}
-                                                augmentSaved={!hasActiveCall && !postActive}
-                                            />
-                                        </div>
-                                    ))}
+                                    {[
+                                        {
+                                            label: 'Причина звонка',
+                                            value: callReason,
+                                            onChange: setCallReason,
+                                            options: callReasons
+                                        },
+                                        {
+                                            label: 'Результат звонка',
+                                            value: callResult,
+                                            onChange: setCallResult,
+                                            options: callResults
+                                        }
+                                    ]
+                                        // Оставляем только те, у которых есть опции
+                                        .filter(({ options }) => options && options.length > 0)
+                                        .map(({ label, value, onChange, options }, idx) => (
+                                            <div
+                                                key={idx}
+                                                className="form-group"
+                                                style={{
+                                                    flex: '1 1 calc(50% - 6px)',
+                                                    minWidth: 0,
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    gap: 4
+                                                }}
+                                            >
+                                                <label style={{ fontWeight: 400, fontSize: 16 }}>
+                                                    {label}: <span style={{ color: 'red' }}>*</span>
+                                                </label>
+                                                <SearchableSelect
+                                                    options={options}
+                                                    value={value}
+                                                    onChange={onChange}
+                                                    placeholder={`Выберите ${label.toLowerCase()}...`}
+                                                    augmentSaved={!hasActiveCall && !postActive}
+                                                />
+                                            </div>
+                                        ))}
                                 </div>
                             ) : (
                                 <>
-                                    {(shouldShowMeta || tuskMode) && (
+                                    {(shouldShowMeta || tuskMode) && callReasons.length > 0 && (
                                         <div className="form-group d-flex align-items-center" style={compact ? { flex: '1 1 calc(50% - 12px)', minWidth: 0 } : { flex: '1 1 0%', minWidth: 0 }}>
                                             <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
                                                 Причина звонка: <span style={{ color: 'red' }}>*</span>
@@ -2181,7 +2228,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                         </div>
                                     )}
 
-                                    {(shouldShowMeta || tuskMode) && (
+                                    {(shouldShowMeta || tuskMode) && callResults.length > 0 && (
                                         <div className="form-group d-flex align-items-center" style={compact ? { flex: '1 1 calc(50% - 22px)', minWidth: 0 } : { flex: '1 1 0%', minWidth: 0 }}>
                                             <label className="mb-0" style={{ whiteSpace: 'nowrap', fontWeight: 400, fontSize: 16 }}>
                                                 Результат звонка: <span style={{ color: 'red' }}>*</span>
@@ -2534,7 +2581,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         </div>
 
                         {/* Кнопка «Сохранить» для обычного режима */}
-                        {(shouldShowMeta && !tuskMode && !hasActiveCall && !postActive) && (
+                        {(shouldShowMeta && !hasActiveCall && !postActive) && (
                             <div className="card-footer d-flex justify-content-end">
                                 <button className="btn btn-outline-success" onClick={handleSave}>
                                     Сохранить

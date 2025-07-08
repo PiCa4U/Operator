@@ -62,7 +62,6 @@ interface HeaderPanelProps {
     setShowTasksDashboard: (show: boolean) => void;
     prefix: string
     setPrefix: (prefix: string) => void
-    tuskMode: boolean
     setOutboundID: (outboundID: number) => void
     setOpenedGroup: (ids: number[]) => void
     setGroupIDs: (ids: any[]) => void
@@ -94,7 +93,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      activeProjectName,
                                                      prefix,
                                                      setPrefix,
-                                                     tuskMode,
                                                      setOutboundID,
                                                      setOpenedGroup,
                                                      setGroupIDs,
@@ -1101,13 +1099,13 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     </div>
                 </div>
             </div>
-            <div id="start_section" className="card ml-3 mr-0">
+            {hasActiveCall && <div id="start_section" className="card ml-3 mr-0">
                 <div className="card-body pr-0" id="glagol_actions">
                     <div className="row col-12 pr-0" id="start_inner">
                         <input
                             type="text"
                             className="form-control col input mb-0 mr-2"
-                            style={{ height: '40px' }}
+                            style={{height: '40px'}}
                             placeholder="Номер для вызова"
                             value={phone}
                             onChange={e => setPhone(e.target.value.replace(/\D/g, ''))}
@@ -1124,7 +1122,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                         </button>
                     </div>
                 </div>
-            </div>
+            </div>}
 
             <div className="card ml-3 mr-0">
                 <div className="card-body mt-0">

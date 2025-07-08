@@ -65,6 +65,8 @@ type Props = {
     selectedPreset: OptionType | null
     setSelectedPreset: (selectedPreset: OptionType | null) => void
     role: string
+    currentPage: number
+    setCurrentPage: (currentPage: number) => void
 }
 const ROWS_PER_PAGE = 10;
 
@@ -76,7 +78,9 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                   setGroupIDs,
                                                   selectedPreset,
                                                   setSelectedPreset,
-                                                  role
+                                                  role,
+                                                  currentPage,
+                                                  setCurrentPage
                                               }) => {
 
     const { monitorUsers } = useSelector(
@@ -90,21 +94,17 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [idProjectMap, setIdProjectMap] = useState<{ id: number; project_name: string }[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc'|'desc' }|null>(null);
-    const [currentPage, setCurrentPage] = useState(1);
     const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
 
     const [expressStates, setExpressStates] = useState<Record<string, ExpressState>>({});
     const [expressConfig, setExpressConfig] = useState<Record<string, any>>({});
-    useEffect(()=> console.log("expressStates: ", expressStates),[expressStates])
-    useEffect(()=> console.log("expressConfig: ", expressConfig),[expressConfig])
 
     const [modalOpen, setModalOpen] = useState(false);
     const [modalIds, setModalIds] = useState<number[]>([]);
     const [modalAction, setModalAction] = useState<Action | null>(null);
 
-    useEffect(() => console.log("loading: ", loading),[loading])
     const [modules, setModules] = useState<ModuleType[]>([]);
-    useEffect(() => console.log("presetModules: ", modules),[modules])
+
     // --- глобальные зависимости для запросов ---
     const glagolParent = "fs.at.glagol.ai";
     const {
@@ -784,7 +784,10 @@ const PresetSelectorTable: React.FC<Props> = ({
                 {/* Пагинация */}
                     <div className="mt-4 flex justify-center items-center space-x-2 my-2" style={{position:"absolute", right:"48%", bottom: -50, zIndex: 10}}>
                         <button
-                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                            onClick={() => {
+                                const prevPage = Math.max(1, currentPage - 1);
+                                setCurrentPage(prevPage);
+                            }}
                             disabled={currentPage === 1}
                             className="btn btn-outline-light text text-dark mx-1 ml-2"
                             style={{padding: 0}}
@@ -795,13 +798,18 @@ const PresetSelectorTable: React.FC<Props> = ({
                             {currentPage} / {totalPages}
                         </span>
                         <button
-                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                            onClick={() => {
+                                const nextPage = Math.min(totalPages, currentPage + 1);
+                                setCurrentPage(nextPage);
+                            }}
                             disabled={currentPage === totalPages}
                             className="btn btn-outline-light text text-dark mx-1 "
                             style={{padding: 0}}
                         >
                             <span className="material-icons text-base text-gray-600">keyboard_arrow_right</span>
                         </button>
+
+
                     </div>
                     </div>
                 )}

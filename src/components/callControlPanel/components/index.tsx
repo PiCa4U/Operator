@@ -23,7 +23,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                                            compact = false     // <- дефолт
                                                        }) => {
     const [fieldValues, setFieldValues] = useState<{ [fieldId: string]: string }>(initialValues);
-    useEffect(() => console.log("fieldValues: ", fieldValues),[fieldValues])
+
     const visibleParams = params.filter(param => !param.deleted);
     const baseOptionsRef = useRef<string[]>([]);
     const baseLinksRef = useRef<any[]>([]);
@@ -37,6 +37,22 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
         setFieldValues(newValues);
         onChange?.(newValues);
     };
+
+
+    function toIsoDate(raw: string): string {
+        // если уже в формате YYYY-MM-DD — возвращаем как есть
+        if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+            return raw;
+        }
+        // пытаемся распарсить dd.MM.yyyy
+        const m = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+        if (m) {
+            const [, dd, mm, yyyy] = m;
+            return `${yyyy}-${mm}-${dd}`;
+        }
+        // иначе — пустая строка (или raw, если нужно)
+        return "";
+    }
 
     return (
         <div
@@ -68,18 +84,16 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         className="form-group"
                         style={{
                             display: 'flex',
-                            alignItems: 'center',
+                            alignItems: param.field_type === 'href' ? 'flex-start' : 'center',
                             marginBottom: '1rem',
-                            ...(compact
-                                ? { flex: '1 1 calc(50% - 12px)', minWidth: 0 }
-                                : {})
-                        }}
-                    >
+                            ...(compact ? { flex: '1 1 calc(50% - 12px)', minWidth: 0 } : {}),
+                           }}
+                     >
                         <label
                             style={{
                                 whiteSpace: 'nowrap',
                                 fontWeight: 400,
-                                fontSize: '16px',
+                                marginTop: 6,
                                 marginRight: '8px'
                             }}
                         >
@@ -108,9 +122,9 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             )
                         )}
                         {param.field_type === 'number'  && <input type="number" {...commonProps} />}
-                        {param.field_type === 'date'    && <input type="date" {...commonProps} />}
+                        {param.field_type === 'date'    && <input type="date" className="form-control" value={toIsoDate(currentValue)} onChange={e => handleChange(param.field_id, e.target.value)} />}
                         {param.field_type === 'time'    && <input type="time" {...commonProps} />}
-                        {/* Textarea */}
+
                         {param.field_type === 'textarea' && (
                             param.editable ? (
                                 <textarea
@@ -311,7 +325,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             const trimmed = rawField.trim();
                             let links: Array<{ text: string; url: string }> = [];
 
-                            // 1) попытка распарсить JSON из values (модуль мог туда положить JSON.stringify([...]))
                             if (baseLinksRef.current.length) {
                                 links = baseLinksRef.current
 
@@ -329,11 +342,10 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                     }
 
                                 } catch {
-                                    // невалидный JSON — игнорируем
+
                                 }
                             }
 
-                            // 2) если из values не получилось, берём из param.field_vals
                             if (!links.length) {
                                 if (Array.isArray(param.field_vals)) {
                                     links = param.field_vals as any;
@@ -343,14 +355,20 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                         if (Array.isArray(parsed)) links = parsed;
                                         onChange({[param.field_id]: ""})
                                     } catch {
-                                        // если и здесь не JSON — ничего не показываем
                                         links = [];
                                     }
                                 }
                             }
 
                             return (
-                                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+
+                                        <div style={{
+                                                 display: "flex",
+                                                 flexDirection: "column",
+                                                 gap: "4px",
+                                                 flex: 1,
+                                                 minWidth: 0,
+                                               }}>
                                     {links.map((link, i) => (
                                         <a
                                             key={i}
@@ -359,9 +377,12 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                             rel="noopener noreferrer"
                                             className="form-control"
                                             style={{
-                                                whiteSpace: "nowrap",
-                                                overflow: "hidden",
-                                                textOverflow: "ellipsis",
+                                                display: 'block',
+                                                width: '100%',
+                                                height:'100%',
+                                                whiteSpace: 'normal',
+                                                overflowWrap: 'anywhere',
+                                                wordBreak: 'break-word',
                                             }}
                                         >
                                             {link.text}
@@ -428,6 +449,8 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                         } else {
                                             onChange({ [param.field_id]: "" });
                                         }
+                                    } else {
+                                        onChange({ [param.field_id]: "" });
                                     }
                                 } catch {
                                     // не JSON — игнорируем

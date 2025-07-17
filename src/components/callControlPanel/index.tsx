@@ -15,7 +15,23 @@ import stylesButton from './index.module.css';
 
 
 // Типы (упрощённые — оставьте свои)
+interface PhoneCombo {
+    id: string;           // "<phone>|<comma-separated values>"
+    phone: string;        // сам телефон
+    values: string[];     // массив значений
+    projects: string[];   // **новое** — список проектов, в которых найдены эти значения
+}
+export interface PhoneOption {
+    id: string;
+    phone: string;
+    project: string;
+}
 
+export interface FieldPhoneOptions {
+    showDropdown: boolean;
+    distinctValues: string[];
+    phoneOptions: PhoneOption[];
+}
 interface Project {
     comment: string | null;
     call_reason: number | null;
@@ -76,6 +92,7 @@ export interface CallData {
     special_key_call: string;
     special_key_conn: string;
     projects: ProjectsMap
+    express: boolean
 }
 export interface ActiveCall {
     accountcode: string;
@@ -166,6 +183,7 @@ interface MergedField {
     position?: number;
     group_id?: number | null ;
     group_position?: number | null;
+    width: number | null;
 }
 
 type GroupFieldValues = Record<
@@ -216,6 +234,7 @@ interface CallControlPanelProps {
     setPhonesData?: (group: any[]) => void
     momoProjectRepo?: React.MutableRefObject<boolean>;
     startModulesRanRef: React.MutableRefObject<boolean>;
+    expressCall: boolean
 }
 
 type PhoneGroup = {
@@ -260,7 +279,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                setOpenedGroup,
                                                                setPhonesData,
                                                                momoProjectRepo,
-                                                               startModulesRanRef
+                                                               startModulesRanRef,
+                                                               expressCall
                                                            }) => {
     // Из cookies
     const { sessionKey } = store.getState().operator
@@ -294,10 +314,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [isParams, setIsParams] = useState<boolean>(true)
     const [groupSelectedIds, setGroupSelectedIds] = useState<number[]>([]);
 
-    const [selectedPhoneByField, setSelectedPhoneByField] = useState<
-        Record<string, { phone: string; project: string }>
-    >({});
+    // const [selectedPhoneByField, setSelectedPhoneByField] = useState<
+    //     Record<string, { phone: string; project: string }>
+    // >({});
+    const [selectedPhoneByField, setSelectedPhoneByField] = useState<Record<string,string>>({});
 
+    useEffect(() => console.log("selectedPhoneByField: ", selectedPhoneByField),[selectedPhoneByField])
 
     const [groupModalOpen, setGroupModalOpen] = useState(false);
 
@@ -338,11 +360,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             setSelectedProjects([activeProject])
         } else if (call && call.project_name) {
             if(Object.keys(call?.projects).length   > 1 ) {
+                console.log("FUCKObject.keys(call?.projects): ", Object.keys(call?.projects))
                 setSelectedProjects(Object.keys(call?.projects))
             } else if (call.project_name === "outbound") {
-                console.log("FUCK!@#")
+                console.log("FUCK!@#call.variable_last_arg: ", call.variable_last_arg)
                 setSelectedProjects([cleanProjectName(call.variable_last_arg)])
             } else {
+                console.log("FUCK!@#call.project_name: ",call.project_name)
                 setSelectedProjects([cleanProjectName(call.project_name)])
             }
         } else {
@@ -386,6 +410,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
+    console.log("projectPool: ", projectPool)
     const projectPoolForCall = useMemo(() => {
         return projectPool.filter(project => (project.out_active && project.active)).map(project => project.project_name);
     }, [projectPool]);
@@ -478,6 +503,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             Object.entries(data.as_is_dict).forEach(([projName, fields]) => {
                 if (!selectedProjects.includes(projName)) return;
                 fields.forEach(f => {
+
                     const key = [
                         f.field_name,
                         f.field_type,
@@ -495,7 +521,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             fieldIds: { [projName]: f.field_id },
                             spatialGroup: (f as any).spatial_group,
                             group_position: f.group_position || null,
-                            group_id: f.group_id || null
+                            group_id: f.group_id || null,
+                            width: f.width
                         });
                     } else {
                         const e = map.get(key)!;
@@ -681,10 +708,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         );
         return found ? found.glagol_name : projectName;
     }
-    function cleanProjectName(name: string = ''): string {
-        return name.replace(/\s*\(.*?\)\s*$/, '').trim();
+    function cleanProjectName(name?: string | null): string {
+        const _name = name ?? '';
+        return _name
+            // убираем скобки "(…)" и суффикс "@default"
+            .replace(/(\s*\(.*?\)|@default)\s*$/g, '')
+            .trim();
     }
 
+    console.log("cleanProjectName: ", cleanProjectName("test_2@default"))
 
     useEffect(() => {
         if (!hasActiveCall && !postActive && call) {
@@ -1257,10 +1289,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             comment,
             base_fields: sanitizedBaseFields,
         };
+        const uuid = call?.express ? call.special_key_conn : call?.total_direction === "outbound" ? call?.special_key_conn : call?.special_key_conn
+        const b_uuid = call?.express ? call.special_key_conn : call?.total_direction === "outbound" ? call?.special_key_conn : call?.special_key_call
 
         socket.emit("edit_call_fs", {
-            b_uuid: call?.special_key_call,
-            uuid: call?.special_key_conn,
+            b_uuid: b_uuid,
+            uuid: uuid,
             session_key: sessionKey,
             worker,
             projects: projectsPayload,
@@ -1341,8 +1375,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             };
         });
 
-        const b_uuid = postCallData?.b_uuid;
-        const uuid = postCallData?.uuid;
+        const uuid = expressCall ? postCallData?.b_uuid : postCallData?.direction === "outbound" ? postCallData?.call_uuid : postCallData?.b_uuid
+        const b_uuid = expressCall ? postCallData?.b_uuid : postCallData?.direction === "outbound" ? postCallData?.call_uuid : postCallData?.uuid
+
+        // const b_uuid = postCallData?.b_uuid;
+        // const uuid = postCallData?.b_uuid;
 
         socket.emit("edit_call_fs", {
             b_uuid,
@@ -1406,8 +1443,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     'project_name':outActiveProjectName
                 })
             }
-            const uuid = postCallData?.direction === "outbound" ? postCallData?.call_uuid : postCallData?.b_uuid
-            const b_uuid = postCallData?.direction === "outbound" ? postCallData?.call_uuid : postCallData?.uuid
+            // const uuid = postCallData?.direction === "outbound" ? postCallData?.call_uuid : postCallData?.b_uuid
+            // const b_uuid = postCallData?.direction === "outbound" ? postCallData?.call_uuid : postCallData?.uuid
+
+            const uuid = expressCall ? postCallData?.b_uuid : postCallData?.direction === "outbound" ? postCallData?.call_uuid : postCallData?.b_uuid
+            const b_uuid = expressCall ? postCallData?.b_uuid : postCallData?.direction === "outbound" ? postCallData?.call_uuid : postCallData?.uuid
+
             const sanitizedBaseFields = Object.fromEntries(
                 Object.entries(baseFieldValues).map(([k, v]) => [k, sanitize(v)])
             );
@@ -1545,6 +1586,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return Array.from(map.values());
     }, [openedPhones]);
 
+    useEffect(() => console.log("phoneGroups: ", phoneGroups),[phoneGroups])
 // Строим карту вариантов для каждого поля
     const contactInfoVariants = useMemo(() => {
         const result: Record<string, Set<string>> = {};
@@ -1616,13 +1658,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     marginBottom: 16,
                 }}
             >
-                {/* Кнопка «Закрыть» */}
                 <button
                     onClick={() => {
                         setOpenedPhones?.([]);
                         setOpenedGroup?.([]);
                         setPhonesData?.([]);
                         startModulesRanRef.current = false;
+                        if (setActiveProjectName) {
+                            setActiveProjectName("")
+                        }
                         if (momoProjectRepo && momoProjectRepo.current && setTuskMode) {
                             setTuskMode(false);
                             onClose();
@@ -1688,7 +1732,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     </div>
                 </div>
 
-                {/* Дальше — уже существующие карточки */}
                 {phoneGroups.map(group => (
                     <div
                         key={group.phone}
@@ -1715,14 +1758,14 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         >
                             {group.phone}
                         </div>
-                        {group.entries.map(entry => (
+                        {Array.from(new Set(group.entries.map(e => e.project))).map(proj => (
                             <button
-                                key={entry.project}
+                                key={proj}
                                 className="btn btn-sm btn-outline-success"
                                 style={{ marginRight: 4, marginBottom: 4 }}
-                                onClick={() => callFromCard(entry.project, group.phone)}
+                                onClick={() => callFromCard(proj, group.phone)}
                             >
-                                Вызов {findNameProject(entry.project)}
+                                Вызов {findNameProject(proj)}
                             </button>
                         ))}
                     </div>
@@ -1918,7 +1961,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         // обычный режим — только ручные из modules
         if (!tuskMode) {
             return (
-                <div style={{ display: "flex", gap: 8, margin: "0 0 10px 20px", alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 8, margin: "0 0 10px 0", alignItems: "center" }}>
                     <div style={{ fontWeight: 600, fontSize: 16 }}>Модули:</div>
                     {manualModules.map((mod, idx) => (
                         <button
@@ -1936,10 +1979,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         // tuskMode — ручные общие + ручные проектные
         if (monoModules) {
             return (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "0 0 10px 20px" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "0 0 10px 0" }}>
                     {/* ручные общие модули */}
                     {commonModules
-                        .filter(mod => !mod.start_modes?.includes("start"))
                         .map((mod, idx) => (
                             <button
                                 key={`common-${mod.filename}-${idx}`}
@@ -2051,7 +2093,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         });
         return result;
     }, [openedPhones]);
-
+    useEffect(() => console.log("contactInfoOptions: ", contactInfoOptions),[contactInfoOptions])
 // вот этот эффект надо добавить **после** объявления contactInfoOptions и перед return(...)
     useEffect(() => {
         // 1) сброс
@@ -2083,25 +2125,38 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     useEffect(() => {
         if (!openedPhones?.length) return;
-        const next: GroupFieldValues = { ...values };
 
-        // для каждого поля и каждого проекта смотрим, есть ли в contactInfoOptions ровно одно значение
+        // 1) Копируем текущее values
+        const nextValues: GroupFieldValues = {};
+        selectedProjects.forEach(proj => {
+            nextValues[proj] = { ...(values[proj] || {}) };
+        });
+
+        // 2) Собираем default для дропдаунов сразу в два объекта
+        const nextSelected: Record<string, string> = {};
+
         mergedFields.forEach(f => {
+            const { showDropdown, distinctValueSets, combos } =
+                getFieldPhoneOptions(f, contactInfoOptions);
+
             f.projects.forEach(proj => {
                 const fieldId = f.fieldIds[proj];
-                // собрать все значения именно для этого проекта
-                const vals = (contactInfoOptions[fieldId] || [])
-                    .filter(o => o.project === proj)
-                    .map(o => o.value);
-                const uniq = Array.from(new Set(vals));
-                if (uniq.length === 1) {
-                    next[proj] = { ...next[proj], [fieldId]: uniq[0] };
+
+                if (!showDropdown) {
+                    // простой инпут
+                    nextValues[proj][fieldId] = distinctValueSets[0] || "";
+                } else if (combos.length > 0) {
+                    // дропдаун — ставим первую опцию
+                    const firstCombo = combos[0];
+                    nextValues[proj][fieldId] = firstCombo.values.join(", ");
+                    nextSelected[fieldId] = firstCombo.id;
                 }
             });
         });
 
-        setValues(next);
-    }, [contactInfoOptions, selectedProjects, openedPhones]);
+        setValues(nextValues);
+        setSelectedPhoneByField(nextSelected);
+    }, [contactInfoOptions, selectedProjects, openedPhones, mergedFields]);
 
     // Делаем ТОЛЬКО если у нас уже есть openedPhones и выбранные проекты
 // вверху компонента, рядом с другими useEffects
@@ -2147,9 +2202,61 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return openedPhones?.map(p => p.id) || [];
     }, [openedPhones]);
 
+
+    function getFieldPhoneOptions(
+        f: MergedField,
+        contactInfoOptions: Record<string, Array<{phone:string,project:string,value:string}>>
+    ): {
+        showDropdown: boolean;
+        distinctValueSets: string[];
+        combos: PhoneCombo[];
+    } {
+        // 1) забираем все тройки {phone,project,value}
+        const items = f.projects.flatMap(proj => {
+            const id = f.fieldIds[proj];
+            return (contactInfoOptions[id] || [])
+                .map(o => ({ phone: o.phone, project: o.project, value: o.value }))
+                .filter(x => x.value);
+        });
+
+        // 2) группируем по телефону
+        const byPhone: Record<string, { values: string[]; projects: string[] }> = {};
+        items.forEach(({ phone, project, value }) => {
+            if (!byPhone[phone]) {
+                byPhone[phone] = { values: [], projects: [] };
+            }
+            byPhone[phone].values.push(value);
+            byPhone[phone].projects.push(project);
+        });
+
+        // 3) собираем combos уже с projects
+        const combos: PhoneCombo[] = Object.entries(byPhone).map(
+            ([phone, { values, projects }]) => {
+                const uniqVals = Array.from(new Set(values));
+                const uniqProjs = Array.from(new Set(projects));
+                return {
+                    id: `${phone}|${uniqVals.join(',')}`,
+                    phone,
+                    values: uniqVals,
+                    projects: uniqProjs
+                };
+            }
+        );
+
+        // 4) distinctValueSets
+        const distinctValueSets = Array.from(
+            new Set(combos.map(c => c.values.join(', ')))
+        );
+
+        return {
+            showDropdown: distinctValueSets.length > 1,
+            distinctValueSets,
+            combos
+        };
+    }
     return (
         <div style={{marginTop: 20}}>
-            {renderModules()}
+            {/*{renderModules()}*/}
             <div className="col ml-2 pr-0 mr-0 mr-1">
                 <div className="card col ml-0">
                     <div className="card-body">
@@ -2276,99 +2383,88 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                         <div style={{ marginTop: 8, marginBottom: 8 }}>
                                             <div style={{ border: `2px solid black`, borderRadius: 4, padding: 8 }}>
                                                 {commonFields.map(f => {
-                                                    // собираем набор всех телефонов|проектов для этого общего поля
-                                                    const uniquePhones = Array.from(
-                                                        new Set(
-                                                            f.projects.flatMap(p => {
-                                                                const id = f.fieldIds[p];
-                                                                return (contactInfoOptions[id] || [])
-                                                                    .filter(o => o.project === p)
-                                                                    .map(o => `${o.phone}|${o.project}`);
-                                                            })
-                                                        )
-                                                    ).map(key => {
-                                                        const [phone, project] = key.split('|');
-                                                        return { phone, project };
-                                                    });
+                                                    const { showDropdown, combos } = getFieldPhoneOptions(f, contactInfoOptions);
 
-                                                    const showSelector = uniquePhones.length > 1;
-                                                    // для initialValues берём первое не-null значение из всех проектов
-                                                    const fieldValue = f.projects.reduce<string | null>((acc, p) => {
-                                                        const id = f.fieldIds[p];
-                                                        return acc ?? values[p]?.[id] ?? null;
-                                                    }, null);
+                                                    const infoText = combos
+                                                        .map(c => `${c.phone} (${c.projects.map(findNameProject).join(', ')}) → ${c.values.join(', ')}`)
+                                                        .join("\n")
+                                                    const initial = f.projects.reduce<string | undefined>((acc, proj) => {
+                                                        const id = f.fieldIds[proj];
+                                                        return acc ?? values[proj]?.[id];
+                                                    }, undefined) ?? "";
 
                                                     return (
                                                         <div key={f.id} style={{ marginBottom: 16 }}>
-                                                            {showSelector && (
-                                                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                    <label style={{ fontWeight: 500 }}>
-                                                                        Выберите телефон для «{f.label}»:
-                                                                    </label>
+                                                            {showDropdown && (
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                                        <label style={{ fontWeight: 500 }}>{`Контактная информация для ${f.label}`}</label>
+                                                                        <abbr
+                                                                            title={infoText}
+                                                                            style={{
+                                                                                textDecoration: 'none',
+                                                                                cursor: 'help',
+                                                                                color: '#6c757d',
+                                                                                fontSize: '1rem',
+                                                                                lineHeight: 1,
+                                                                                marginBottom: 10
+                                                                            }}
+                                                                        >
+                                                                            ℹ️
+                                                                        </abbr>
+                                                                    </div>
                                                                     <PhoneProjectSelect
-                                                                        value={
-                                                                            selectedPhoneByField[f.id]
-                                                                                ? `${selectedPhoneByField[f.id].phone}|${selectedPhoneByField[f.id].project}`
-                                                                                : ''
-                                                                        }
+                                                                        value={selectedPhoneByField[f.id] || ''}
                                                                         onChange={val => {
-                                                                            const [phone, project] = val.split('|');
-                                                                            // найдём все записи с этим телефоном
-                                                                            const entries = (openedPhones || []).filter(
-                                                                                ent => ent.phone === phone && ent.project === project
-                                                                            );
-                                                                            const id = f.fieldIds[project];
-                                                                            const val0 = entries[0]?.contact_info[id] || '';
-
-                                                                            // обновляем сразу все проекты, где есть это общее поле
+                                                                            setSelectedPhoneByField(cur => ({
+                                                                                ...cur,
+                                                                                [f.id]: val
+                                                                            }));
+                                                                            const [, joinedValues] = val.split('|');
                                                                             setValues(cur => {
                                                                                 const next = { ...cur };
                                                                                 f.projects.forEach(proj => {
                                                                                     const fid = f.fieldIds[proj];
-                                                                                    next[proj] = { ...next[proj], [fid]: val0 };
+                                                                                    next[proj] = {
+                                                                                        ...next[proj],
+                                                                                        [fid]: joinedValues
+                                                                                    };
                                                                                 });
                                                                                 return next;
                                                                             });
-
-                                                                            // сохраняем выбор селекта
-                                                                            setSelectedPhoneByField(cur => ({
-                                                                                ...cur,
-                                                                                [f.id]: { phone, project }
-                                                                            }));
                                                                         }}
-                                                                        options={uniquePhones.map(opt => ({
-                                                                            id: `${opt.phone}|${opt.project}`,
-                                                                            name: `${opt.phone} (${findNameProject(opt.project)})`
+                                                                        options={combos.map(c => ({
+                                                                            id: c.id,
+                                                                            name: c.values.join(', ')
                                                                         }))}
-                                                                        placeholder="— выберите телефон —"
+                                                                        placeholder="выберите вариант…"
                                                                     />
                                                                 </div>
                                                             )}
 
-
                                                             <EditableFields
-                                                                params={[
-                                                                    {
-                                                                        field_id: f.id,
-                                                                        field_name: f.label,
-                                                                        field_type: f.type,
-                                                                        field_vals: f.values,
-                                                                        editable: f.editable,
-                                                                        must_have: false,
-                                                                        project_name: '' // не используется для common
-                                                                    }
-                                                                ]}
-                                                                initialValues={{ [f.id]: fieldValue || '' }}
+                                                                params={[{
+                                                                    field_id: f.id,
+                                                                    field_name: f.label,
+                                                                    field_type: f.type,
+                                                                    field_vals: f.values,
+                                                                    editable: f.editable,
+                                                                    must_have: false,
+                                                                    project_name: ''
+                                                                }]}
+                                                                initialValues={{ [f.id]: initial }}
                                                                 onChange={nv => {
                                                                     const v = nv[f.id] || '';
                                                                     setValues(cur => {
-                                                                        const copy = { ...cur };
-                                                                        // при любом ручном вводе тоже обновляем сразу во всех проектах
+                                                                        const next = { ...cur };
                                                                         f.projects.forEach(proj => {
-                                                                            const id = f.fieldIds[proj];
-                                                                            copy[proj] = { ...copy[proj], [id]: v };
+                                                                            const fid = f.fieldIds[proj];
+                                                                            next[proj] = {
+                                                                                ...next[proj],
+                                                                                [fid]: v
+                                                                            };
                                                                         });
-                                                                        return copy;
+                                                                        return next;
                                                                     });
                                                                 }}
                                                             />
@@ -2378,32 +2474,25 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                             </div>
                                         </div>
                                     )}
-
                                     <div style={{ marginTop: 4, marginBottom: 4 }}>
                                         {selectedProjects.map(proj => {
                                             const fields = uniqueFieldsByProject[proj];
                                             if (!fields.length) return null;
 
+                                            // Определяем валидные группы и их поля
                                             const validGroupIds = new Set(
                                                 (group_instructions[proj]?.groups || []).map((g: any) => g.id)
                                             );
-                                            (group_instructions[proj]?.groups || []).forEach((group: any) => {
-                                                console.log('>>> group.id:', group.id);
-                                                const matching = fields.filter(f => f.group_id === group.id);
-                                                console.log(`>>>Group ${group.id} matched fields:`, matching);
-                                            });
-
-
                                             const groupedFields = (group_instructions[proj]?.groups || [])
                                                 .slice()
                                                 .sort((a: any, b: any) => a.position - b.position)
-                                                .map((group: any) => {
-                                                    const fieldsInGroup = fields
+                                                .map((group: any) => ({
+                                                    group,
+                                                    fields: fields
                                                         .filter(f => f.group_id === group.id)
-                                                        .sort((a, b) => (a.group_position ?? 0) - (b.group_position ?? 0));
-                                                    return { group, fields: fieldsInGroup };
-                                                })
-                                                .filter(({ fields }: any) => fields.length > 0);
+                                                        .sort((a, b) => (a.group_position ?? 0) - (b.group_position ?? 0)),
+                                                }))
+                                                .filter((gf: any) => gf.fields.length > 0);
 
                                             const orphanFields = fields.filter(
                                                 f => f.group_id == null || !validGroupIds.has(f.group_id)
@@ -2416,148 +2505,197 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                         border: `2px solid ${projectColors[proj]}`,
                                                         borderRadius: 4,
                                                         padding: 8,
-                                                        marginBottom: 12
+                                                        marginBottom: 12,
                                                     }}
                                                 >
                                                     <div
                                                         style={{
-                                                            display: 'flex',
-                                                            flexWrap: 'wrap',
-                                                            gap: 16,
-                                                            marginBottom: 16
+                                                            display: 'grid',
+                                                            gridTemplateColumns: 'repeat(12, minmax(0,1fr))',
+                                                            gap: '16px',
+                                                            // alignItems: 'stretch',
+                                                            marginBottom: 16,
                                                         }}
                                                     >
-                                                        {groupedFields.map(({ group, fields }:{group: any, fields: any}) => (
-                                                            <div
-                                                                key={group.id}
-                                                                style={{
-                                                                    border: '1px solid #ccc',
-                                                                    borderRadius: 4,
-                                                                    padding: 8,
-                                                                    width: fullWidthCard && group.width === 0.5 ? 'calc(50% - 8px)' : '100%',
-                                                                    minWidth: 0
-                                                                }}
-                                                            >
-                                                                <div style={{ fontWeight: 600, marginBottom: 8 }}>
-                                                                    {group.group_name}
+                                                        {groupedFields.map(({ group, fields }: { group:any, fields:any }) => {
+                                                            const spanGroup = (group.width === 0.5 && openedPhones?.length && fullWidthCard) ? 6 : 12;
+
+                                                            return (
+                                                                <div
+                                                                    key={group.id}
+                                                                    style={{
+                                                                        gridColumn: `span ${spanGroup}`,
+                                                                        border: '1px solid #ccc',
+                                                                        borderRadius: 4,
+                                                                        padding: 8,
+                                                                        display: 'grid',
+                                                                        gridTemplateColumns: 'repeat(12, minmax(0,1fr))',
+                                                                        alignItems: 'start',
+                                                                        gap: '0 16px',
+                                                                    }}
+                                                                >
+                                                                    <div style={{ gridColumn: '1 / -1', fontWeight: 600, marginBottom: 8 }}>
+                                                                        {group.group_name}
+                                                                    </div>
+
+                                                                    {fields.map((f: MergedField) => {
+                                                                        const fieldId = f.fieldIds[proj];
+                                                                        const { showDropdown, distinctValueSets, combos } =
+                                                                            getFieldPhoneOptions(f, contactInfoOptions);
+
+                                                                        const infoText = combos
+                                                                            .map(c => `${c.phone} (${c.projects.map(findNameProject).join(', ')}) → ${c.values.join(', ')}`)
+                                                                            .join("\n")
+                                                                        const current =
+                                                                            values[proj]?.[fieldId] ??
+                                                                            distinctValueSets[0] ??
+                                                                            '';
+
+                                                                        return (
+                                                                            <div
+                                                                                key={f.id}
+                                                                                style={{
+                                                                                    gridColumn: `span ${f.width || 12}`,
+                                                                                    alignSelf: 'start',
+                                                                                }}
+                                                                            >
+                                                                                {showDropdown ? (
+                                                                                    <div style={{ display: 'flex',  flexDirection: "column"}}>
+                                                                                        <div style={{display: 'flex',gap: 8, flexDirection: "row", alignItems: "center"}}>
+                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                                                                <label style={{ fontWeight: 500 }}>{`Контактная информация для ${f.label}`}</label>
+                                                                                                <abbr
+                                                                                                    title={infoText}
+                                                                                                    style={{
+                                                                                                        textDecoration: 'none',
+                                                                                                        cursor: 'help',
+                                                                                                        color: '#6c757d',
+                                                                                                        fontSize: '1rem',
+                                                                                                        lineHeight: 1,
+                                                                                                        marginBottom: 10
+                                                                                                    }}
+                                                                                                >
+                                                                                                    ℹ️
+                                                                                                </abbr>
+                                                                                            </div>
+                                                                                            <PhoneProjectSelect
+                                                                                                value={selectedPhoneByField[fieldId] || ''}
+                                                                                                onChange={val => {
+                                                                                                    // val === "<phone>|<val1>,<val2>"
+                                                                                                    setSelectedPhoneByField(cur => ({
+                                                                                                        ...cur,
+                                                                                                        [fieldId]: val
+                                                                                                    }));
+                                                                                                    const [phone, joinedValues] = val.split('|');
+                                                                                                    // записываем в поле именно "Значение 1, Значение 3"
+                                                                                                    setValues(cur => ({
+                                                                                                        ...cur,
+                                                                                                        [proj]: {
+                                                                                                            ...cur[proj],
+                                                                                                            [fieldId]: joinedValues
+                                                                                                        }
+                                                                                                    }));
+                                                                                                }}
+                                                                                                options={combos.map(c => ({
+                                                                                                    id: c.id,
+                                                                                                    name: c.values.join(', ')
+                                                                                                }))}
+                                                                                                placeholder="выберите вариант…"
+                                                                                            />
+                                                                                        </div>
+                                                                                        <EditableFields
+                                                                                            params={[{
+                                                                                                field_id: f.id,
+                                                                                                field_name: f.label,
+                                                                                                field_type: f.type,
+                                                                                                field_vals: f.values,
+                                                                                                editable: f.editable,
+                                                                                                must_have: false,
+                                                                                                project_name: proj,
+                                                                                            }]}
+                                                                                            initialValues={{ [f.id]: current }}
+                                                                                            onChange={nv => {
+                                                                                                const v = nv[f.id] || '';
+                                                                                                setValues(cur => ({
+                                                                                                    ...cur,
+                                                                                                    [proj]: { ...cur[proj], [fieldId]: v }
+                                                                                                }));
+                                                                                            }}
+                                                                                        />
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <div>
+
+                                                                                        <EditableFields
+                                                                                            params={[{
+                                                                                                field_id: f.id,
+                                                                                                field_name: f.label,
+                                                                                                field_type: f.type,
+                                                                                                field_vals: f.values,
+                                                                                                editable: f.editable,
+                                                                                                must_have: false,
+                                                                                                project_name: proj,
+                                                                                            }]}
+                                                                                            initialValues={{ [f.id]: current }}
+                                                                                            onChange={nv => {
+                                                                                                const v = nv[f.id] || '';
+                                                                                                setValues(cur => ({
+                                                                                                    ...cur,
+                                                                                                    [proj]: { ...cur[proj], [fieldId]: v }
+                                                                                                }));
+                                                                                            }}
+                                                                                        />
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        );
+                                                                    })}
                                                                 </div>
-                                                                {fields.map((f: any) => {
-                                                                    const fieldId = f.fieldIds[proj];
-                                                                    // берём только варианты из текущего проекта
-                                                                    const opts = (contactInfoOptions[fieldId] || []).filter(
-                                                                        o => o.project === proj
-                                                                    );
-                                                                    const uniquePhones = Array.from(
-                                                                        new Set(opts.map(o => `${o.phone}|${o.project}`))
-                                                                    ).map(key => {
-                                                                        const [phone, project] = key.split('|');
-                                                                        return { phone, project };
-                                                                    });
+                                                            );
+                                                        })}
 
-                                                                    const showSelector = uniquePhones.length > 1;
-                                                                    const picked = selectedPhoneByField[fieldId];
+                                                        {orphanFields.map((f: any) => {
+                                                            const fieldId = f.fieldIds[proj];
+                                                            const spanField = f.width ?? 12;
 
-                                                                    return (
-                                                                        <div key={f.id} style={{ marginBottom: 16 }}>
-                                                                            {showSelector && (
-                                                                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                                    <label style={{ fontWeight: 500 }}>
-                                                                                        Выберите телефон для «{f.label}»:
-                                                                                    </label>
-                                                                                    <PhoneProjectSelect
-                                                                                        value={
-                                                                                            selectedPhoneByField[fieldId]
-                                                                                                ? `${selectedPhoneByField[fieldId].phone}|${selectedPhoneByField[fieldId].project}`
-                                                                                                : ''
-                                                                                        }
-                                                                                        onChange={val => {
-                                                                                            const [phone, project] = val.split('|');
-                                                                                            const found = openedPhones?.find(p => p.phone === phone && p.project === project);
-                                                                                            if (!found) return;
-                                                                                            setValues(cur => ({
-                                                                                                ...cur,
-                                                                                                [proj]: { ...cur[proj], [fieldId]: found.contact_info[fieldId] || '' }
-                                                                                            }));
-                                                                                            setSelectedPhoneByField(cur => ({
-                                                                                                ...cur,
-                                                                                                [fieldId]: { phone, project }
-                                                                                            }));
-                                                                                        }}
-                                                                                        options={uniquePhones.map(opt => ({
-                                                                                            id: `${opt.phone}|${opt.project}`,
-                                                                                            name: `${opt.phone} (${findNameProject(opt.project)})`
-                                                                                        }))}
-                                                                                        placeholder="— выберите телефон —"
-                                                                                    />
-                                                                                </div>
-                                                                            )}
-
-                                                                            <EditableFields
-                                                                                params={[{
-                                                                                    field_id: f.id,
-                                                                                    field_name: f.label,
-                                                                                    field_type: f.type,
-                                                                                    field_vals: f.values,
-                                                                                    editable: f.editable,
-                                                                                    must_have: false,
-                                                                                    project_name: proj
-                                                                                }]}
-                                                                                initialValues={{
-                                                                                    [f.id]: values[proj]?.[fieldId] || ''
-                                                                                }}
-                                                                                onChange={nv => {
-                                                                                    const v = nv[f.id] || '';
-                                                                                    setValues(cur => ({
-                                                                                        ...cur,
-                                                                                        [proj]: { ...cur[proj], [fieldId]: v }
-                                                                                    }));
-                                                                                }}
-                                                                            />
-                                                                        </div>
-                                                                    );
-                                                                })}
-                                                            </div>
-                                                        ))}
-
-                                                        {orphanFields.length > 0 && (
-                                                            <div style={{ flex: '1 1 100%' }}>
-                                                                {orphanFields.map(f => {
-                                                                    const fieldId = f.fieldIds[proj];
-                                                                    return (
-                                                                        <div key={f.id} style={{ marginBottom: 16 }}>
-                                                                            {/* аналогичный селект для orphans, если нужно */}
-                                                                            <EditableFields
-                                                                                params={[{
-                                                                                    field_id: f.id,
-                                                                                    field_name: f.label,
-                                                                                    field_type: f.type,
-                                                                                    field_vals: f.values,
-                                                                                    editable: f.editable,
-                                                                                    must_have: false,
-                                                                                    project_name: proj
-                                                                                }]}
-                                                                                initialValues={{
-                                                                                    [f.id]: values[proj]?.[fieldId] || ''
-                                                                                }}
-                                                                                onChange={nv => {
-                                                                                    const v = nv[f.id] || '';
-                                                                                    setValues(cur => ({
-                                                                                        ...cur,
-                                                                                        [proj]: { ...cur[proj], [fieldId]: v }
-                                                                                    }));
-                                                                                }}
-                                                                            />
-                                                                        </div>
-                                                                    );
-                                                                })}
-                                                            </div>
-                                                        )}
+                                                            return (
+                                                                <div
+                                                                    key={f.id}
+                                                                    style={{
+                                                                        gridColumn: `span ${spanField}`,
+                                                                        minWidth: 0,
+                                                                        marginBottom: 16,
+                                                                    }}
+                                                                >
+                                                                    <EditableFields
+                                                                        params={[
+                                                                            {
+                                                                                field_id: f.id,
+                                                                                field_name: f.label,
+                                                                                field_type: f.type,
+                                                                                field_vals: f.values,
+                                                                                editable: f.editable,
+                                                                                must_have: false,
+                                                                                project_name: proj,
+                                                                            },
+                                                                        ]}
+                                                                        initialValues={{ [f.id]: values[proj]?.[fieldId] || '' }}
+                                                                        onChange={nv => {
+                                                                            const v = nv[f.id] || '';
+                                                                            setValues(cur => ({
+                                                                                ...cur,
+                                                                                [proj]: { ...cur[proj], [fieldId]: v },
+                                                                            }));
+                                                                        }}
+                                                                    />
+                                                                </div>
+                                                            );
+                                                        })}
                                                     </div>
                                                 </div>
                                             );
                                         })}
                                     </div>
-
                                 </div>
                             )}
                             {(shouldShowMeta || tuskMode) && (
@@ -2578,6 +2716,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                     />
                                 </div>
                             )}
+                            {renderModules()}
                         </div>
 
                         {/* Кнопка «Сохранить» для обычного режима */}

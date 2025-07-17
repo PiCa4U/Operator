@@ -1,6 +1,6 @@
 .my-date-picker-input {
     /* Аналогичные свойства, как у form-control */
-    height: 40px;
+    height: calc(1.8125rem + 2px);
     width: 220px;
     background: white;
     border-radius: 0.75rem !important;

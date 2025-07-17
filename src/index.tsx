@@ -8,7 +8,7 @@ import {Provider} from "react-redux";
 import './socket'
 import { setCredentials } from './redux/credentialsSlice';
 import axios from "axios";
-
+import 'react-datepicker/dist/react-datepicker.css'
 
 const container = document.getElementById('root');
 if (!container) throw new Error('Root container not found');

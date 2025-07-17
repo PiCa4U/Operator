@@ -12,6 +12,7 @@ import {RootState, store} from './redux/store';
 import TasksDashboard, {ApiRow, OptionType, Preset} from "./components/taskDashboard";
 import stylesButton from './components/callControlPanel/index.module.css';
 import axios from "axios";
+import {ManagerPanel} from "./components/managerPanel";
 
 
 
@@ -48,11 +49,17 @@ const App: React.FC = () => {
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
     const [expressCall, setExpressCall] = useState<boolean>(false)
 
+    const { start: defaultStart, end: defaultEnd } = getInitialDateRange();
+    const [startDate, setStartDate] = useState<Date | null>(defaultStart);
+    const [endDate, setEndDate]     = useState<Date | null>(defaultEnd);
+    const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
 
     const [openedGroup, setOpenedGroup] = useState<any[]>([]);
     const [phonesData, setPhonesData] = useState<any[]>([])
     const [openedPhones, setOpenedPhones] = useState<any[]>([])
     const [GroupIDs, setGroupIDs] = useState<any[]>([])
+
+    const [managerPanel, setManagerPanel] = useState<boolean>(false)
 
     const momoProjectRepo = useRef<boolean>(false)
     const startModulesRanRef = useRef<boolean>(false);
@@ -88,6 +95,64 @@ const App: React.FC = () => {
         (state: RootState) => state.operator.monitorData
     );
 
+    useEffect(() => {
+        setSelectedStatus(null)
+    },[selectedPreset])
+    function getInitialDateRange(): { start: Date; end: Date } {
+        const raw = localStorage.getItem('dateRange');
+        if (raw) {
+            try {
+                const { start, end, saved } = JSON.parse(raw) as {
+                    start: string;
+                    end?: string; // может отсутствовать
+                    saved: string;
+                };
+
+                const savedDate = new Date(saved);
+                const today = new Date();
+
+                const isSameDay =
+                    savedDate.getFullYear() === today.getFullYear() &&
+                    savedDate.getMonth() === today.getMonth() &&
+                    savedDate.getDate() === today.getDate();
+
+                if (isSameDay && start) {
+                    const startDate = new Date(start);
+                    const endDate = end ? new Date(end) : new Date(startDate);
+                    if (!end) {
+                        endDate.setDate(endDate.getDate() + 1);
+                    }
+                    return { start: startDate, end: endDate };
+                }
+
+                localStorage.removeItem('dateRange');
+            } catch {
+                localStorage.removeItem('dateRange');
+            }
+        }
+
+        // дефолт: сегодня → завтра
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        return { start: today, end: tomorrow };
+    }
+
+// Внутри компонента App:
+
+// И эффект, который будет сохранять изменения в localStorage:
+    useEffect(() => {
+        const now = new Date().toISOString();
+        localStorage.setItem(
+            'dateRange',
+            JSON.stringify({
+                start: startDate?.toISOString(),
+                end:   endDate?.toISOString(),
+                saved: now
+            })
+        );
+    }, [startDate, endDate]);
     // 1) showTasksDashboard
     useEffect(() => {
         localStorage.setItem('showTasksDashboard', JSON.stringify(showTasksDashboard));
@@ -120,6 +185,7 @@ const App: React.FC = () => {
     } = store.getState().credentials;
 
     const role =
+        // "manager"
         monitorUsers[sipLogin]?.type || "operator"
 
     const [outboundID, setOutboundID] = useState<number | null>(null)
@@ -139,10 +205,12 @@ const App: React.FC = () => {
         return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
     }, [rawActiveCalls]);
 
-    function cleanProjectName(name: string): string {
-        return name.replace(/\s*\(.*?\)\s*$/, '').trim();
+    function cleanProjectName(name?: string | null): string {
+        const _name = name ?? '';
+        return _name
+            .replace(/(\s*\(.*?\)|@default)\s*$/g, '')
+            .trim();
     }
-
     useEffect(() => {
         if (activeCalls.length || postActive) return
         console.log("scriptTestselectedCall: ",selectedCall)
@@ -158,15 +226,11 @@ const App: React.FC = () => {
             const scriptProj = Object.keys(selectedCall.projects)[0] !== "outbound" ?
                 Object.keys(selectedCall.projects)[0] :
                 selectedCall.variable_last_arg
-            console.log("step")
             socket.emit('get_modules', {
                 worker,
                 session_key: sessionKey,
                 projects: [cleanProjectName(scriptProj)],
             });
-
-            // console.log("scriptTestselectedCall333: ", scriptDirection)
-            // console.log("scriptTestselectedCall444: ", cleanProjectName(scriptProj))
 
             setScriptDir(scriptDirection)
             setScriptProject(cleanProjectName(scriptProj))
@@ -217,7 +281,9 @@ const App: React.FC = () => {
             Array.from(new Set(openedPhones.map(p => p.project))),
         [openedPhones]
     );
-
+    useEffect(() => {
+        console.log("fullWidthCard: ", fullWidthCard)
+    },[fullWidthCard])
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
 
@@ -674,140 +740,56 @@ const App: React.FC = () => {
                 role={role}
                 expressCall={expressCall}
                 groupProjects={groupProjects}
+                setManagerPanel={setManagerPanel}
+                managerPanel={managerPanel}
             />
 
-            {/* Основной контент */}
-            {showTasksDashboard ? (
-                <>
-                    {/* Показываем Dashboard, если нет активного звонка */}
-                    {!(activeCall || postActive) && openedPhones.length === 0 && (
-                        <TasksDashboard
-                            openedGroup={openedGroup}
-                            setOpenedGroup={setOpenedGroup}
-                            phonesData={phonesData}
-                            setPhonesData={setPhonesData}
-                            setGroupIDs={setGroupIDs}
-                            selectedPreset={selectedPreset}
-                            setSelectedPreset={setSelectedPreset}
-                            role={role}
-                            currentPage={currentPresetPage}
-                            setCurrentPage={setCurrentPresetPage}
-                        />
-                        )
-                    }
-                    <div className="row my-3">
-                        {fullWidthCard ? (
-                            <>
-                                {/* CallControlPanel на всю ширину */}
-                                <div className="col-12">
-                                    {(openedPhones.length || activeCall || postActive) && (
-                                        <CallControlPanel
-                                            call={selectedCall}
-                                            hasActiveCall={activeCall}
-                                            activeProject={scriptProject}
-                                            onClose={() => setSelectedCall(null)}
-                                            postActive={postActive}
-                                            setPostActive={setPostActive}
-                                            currentPage={currentPage}
-                                            outActivePhone={outActivePhone}
-                                            outActiveProjectName={outActiveProjectName}
-                                            assignedKey={assignedKey}
-                                            isLoading={isLoading}
-                                            setIsLoading={setIsLoading}
-                                            specialKey={specialKey}
-                                            setModules={setModules}
-                                            modules={modules}
-                                            prefix={prefix}
-                                            outboundCall={outboundCall}
-                                            tuskMode={showTasksDashboard}
-                                            setTuskMode={setShowTasksDashboard}
-                                            fullWidthCard={fullWidthCard}
-                                            setFullWidthCard={setFullWidthCard}
-                                            openedPhones={openedPhones}
-                                            setOpenedPhones={setOpenedPhones}
-                                            monoModules={monoModules}
-                                            setMonoModules={setMonoModules}
-                                            setActiveProjectName={setScriptProject}
-                                            selectedPreset={selectedPreset}
-                                            postCallData={postCallData}
-                                            setPostCallData={setPostCallData}
-                                            role={role}
-                                            setOpenedGroup={setOpenedGroup}
-                                            setPhonesData={setPhonesData}
-                                            momoProjectRepo={momoProjectRepo}
-                                            startModulesRanRef={startModulesRanRef}
-                                        />
-                                    )}
-                                </div>
-                                {/* ScriptPanel под ней на всю ширину */}
-                                {!postActive && !activeCall && openedPhones.length > 0 &&(
-                                    <div style={{marginLeft: 13, marginRight: 14}}>
-                                        {/* 1) Кнопки выбора проекта */}
-                                        {groupProjects.length > 1 && (
-
-                                            <div style={{
-                                                display: "flex",
-                                                gap: "8px",
-                                                marginBottom: "6px",
-                                                marginLeft: "25px"
-                                            }}>
-                                                {groupProjects.map(proj => {
-                                                    const isActive = scriptProject === proj;
-                                                    return (
-                                                        <button
-                                                            key={proj}
-                                                            className={`${stylesButton.projectButton} ${isActive ? stylesButton.active : ''}`}
-                                                            style={{
-                                                                color: isActive ? '#fff' : projectColors[proj],
-                                                                backgroundColor: isActive ? projectColors[proj] : 'transparent',
-                                                                borderColor: projectColors[proj]
-                                                            }}
-                                                            onClick={() => setScriptProject(proj)}
-                                                        >
-                                                            {findNameProject(proj)}
-                                                        </button>
-                                                    )
-
-                                                })}
-                                            </div>
-                                        )}
-
-                                        {/* 2) Собственно панель со скриптом */}
-                                        {scriptProject && (
-                                            <ScriptPanel
-                                                key={scriptProject}
-                                                projectName={scriptProject}
-                                                onClose={() => setShowScriptPanel(false)}
-                                                direction={scriptDir}
-                                                uuid={postCallData?.uuid}
-                                                bUuid={postCallData?.b_uuid}
-                                                tuskMode={showTasksDashboard}
-                                            />
-                                        )}
-                                    </div>
-                                )}
-                                <div className="col-12">
-                                    {(activeCall || postActive) &&
-                                        <ScriptPanel
-                                            key={scriptProject}
-                                            projectName={scriptProject}
-                                            onClose={() => setShowScriptPanel(false)}
-                                            tuskMode={showTasksDashboard}
-                                            uuid={postCallData?.uuid}
-                                            bUuid={postCallData?.b_uuid}
-
-                                        />
-                                    }
-                                </div>
-                            </>
-                        ) : (
-                            <>
-                                {/* Левая колонка: ScriptPanel */}
-                                <div className="col-12 col-md-6">
-                                    {/* 1) Если есть открытые карточки и мы не в звонке/посте — показываем кнопки выбора проекта + ScriptPanel */}
+            {managerPanel ? (
+                (<ManagerPanel/>)
+            ) :
+                showTasksDashboard ? (
+                        <>
+                            {/* Показываем Dashboard, если нет активного звонка */}
+                            {!(activeCall || postActive) && openedPhones.length === 0 && (
+                                <TasksDashboard
+                                    openedGroup={openedGroup}
+                                    setOpenedGroup={setOpenedGroup}
+                                    phonesData={phonesData}
+                                    setPhonesData={setPhonesData}
+                                    setGroupIDs={setGroupIDs}
+                                    selectedPreset={selectedPreset}
+                                    setSelectedPreset={setSelectedPreset}
+                                    role={role}
+                                    currentPage={currentPresetPage}
+                                    setCurrentPage={setCurrentPresetPage}
+                                    startDate={startDate}
+                                    setStartDate={setStartDate}
+                                    endDate={endDate}
+                                    setEndDate={setEndDate}
+                                    selectedStatus={selectedStatus}
+                                    setSelectedStatus={setSelectedStatus}
+                                />
+                            )
+                            }
+                            <div
+                                // общий «ряд», в котором скрипт и карточка
+                                style={{
+                                    display: 'flex',
+                                    flexWrap: 'wrap',
+                                    gap: 16,
+                                }}
+                            >
+                                {/* ScriptPanel */}
+                                <div
+                                    style={{
+                                        // при fullWidthCard: скрипт идёт ПОСЛЕ карточки, на всю ширину
+                                        // иначе: слева, на 50%
+                                        order: fullWidthCard ? 2 : 1,
+                                        flex: fullWidthCard ? '0 0 100%' : '0 0 48%',
+                                    }}
+                                >
                                     {!postActive && !activeCall && openedPhones.length > 0 && (
                                         <div style={{ marginLeft: 13, marginRight: 14 }}>
-                                            {/* Кнопки выбора проекта */}
                                             {groupProjects.length > 1 && (
                                                 <div
                                                     style={{
@@ -840,37 +822,27 @@ const App: React.FC = () => {
                                                     })}
                                                 </div>
                                             )}
-                                            {/* Панель со скриптом для выбранного проекта */}
-                                            {scriptProject && (
-                                                <ScriptPanel
-                                                    key={scriptProject}
-                                                    projectName={scriptProject}
-                                                    onClose={() => setShowScriptPanel(false)}
-                                                    direction={scriptDir}
-                                                    uuid={postCallData?.uuid}
-                                                    bUuid={postCallData?.b_uuid}
-                                                    tuskMode={showTasksDashboard}
-                                                />
-                                            )}
                                         </div>
                                     )}
-
-                                    {/* 2) Если сейчас активный звонок или постобработка — обычный ScriptPanel */}
-                                    {(activeCall || postActive) && (
+                                    {scriptProject && (
                                         <ScriptPanel
                                             key={scriptProject}
                                             projectName={scriptProject}
                                             onClose={() => setShowScriptPanel(false)}
-                                            tuskMode={showTasksDashboard}
                                             direction={scriptDir}
                                             uuid={postCallData?.uuid}
                                             bUuid={postCallData?.b_uuid}
+                                            tuskMode={showTasksDashboard}
                                         />
                                     )}
                                 </div>
 
-                                {/* Правая колонка: CallControlPanel */}
-                                <div className="col-12 col-md-6">
+                                <div
+                                    style={{
+                                        order: fullWidthCard ? 1 : 2,
+                                        flex: fullWidthCard ? '0 0 100%' : '0 0 50%',
+                                    }}
+                                >
                                     {(openedPhones.length > 0 || activeCall || postActive) && (
                                         <CallControlPanel
                                             call={selectedCall}
@@ -907,78 +879,79 @@ const App: React.FC = () => {
                                             setPhonesData={setPhonesData}
                                             momoProjectRepo={momoProjectRepo}
                                             startModulesRanRef={startModulesRanRef}
+                                            expressCall={expressCall}
                                         />
                                     )}
                                 </div>
-                            </>
-                        )}
-                    </div>
-                </>
-            ) : <div className="row my-3">
-                {/* Левая колонка: Дашборд звонков или панель скриптов */}
-                <div className="col-12 col-md-6">
-                    {(selectedCall && scriptDir && scriptProject && !postActive && !activeCalls.length) ?
-                        <ScriptPanel
-                            direction={scriptDir}
-                            projectName={scriptProject}
-                            onClose={() => setSelectedCall(null)}
-                            tuskMode={showTasksDashboard}
-                            selectedCall={selectedCall}
-                        />
-                        :
-                    (
-                        showScriptPanel ||
-                        (activeCall && activeProjectName) ||
-                        (postActive && activeProjectName)
-                            ? (
-                        <ScriptPanel
-                            direction={scriptDir}
-                            projectName={activeProjectName}
-                            onClose={() => setShowScriptPanel(false)}
-                            tuskMode={showTasksDashboard}
-                        />
-                    ) : (
-                        <CallsDashboard
-                            setSelectedCall={setSelectedCall}
-                            selectedCall={selectedCall}
-                            currentPage={currentPage}
-                            setCurrentPage={setCurrentPage}
-                            isLoading={isLoading}
-                            setIsLoading={setIsLoading}
-                        />
-                    ))}
-                </div>
-                <div className="col-12 col-md-6">
-                    {(selectedCall || activeCall || postActive) && (
-                        <CallControlPanel
-                            call={selectedCall}
-                            hasActiveCall={activeCall}
-                            activeProject={activeProjectName}
-                            onClose={() => setSelectedCall(null)}
-                            postActive={postActive}
-                            setPostActive={setPostActive}
-                            currentPage={currentPage}
-                            outActivePhone={outActivePhone}
-                            outActiveProjectName={outActiveProjectName}
-                            assignedKey={assignedKey}
-                            isLoading={isLoading}
-                            setIsLoading={setIsLoading}
-                            specialKey={specialKey}
-                            setModules={setModules}
-                            modules={modules}
-                            prefix={prefix}
-                            outboundCall={outboundCall}
-                            tuskMode={showTasksDashboard}
-                            postCallData={postCallData}
-                            setPostCallData={setPostCallData}
-                            startModulesRanRef={startModulesRanRef}
-                            monoModules={monoModules}
-                            setMonoModules={setMonoModules}
+                            </div>
+                        </>
+                    ) : <div className="row my-3">
+                        {/* Левая колонка: Дашборд звонков или панель скриптов */}
+                        <div className="col-12 col-md-6">
+                            {(selectedCall && scriptDir && scriptProject && !postActive && !activeCalls.length) ?
+                                <ScriptPanel
+                                    direction={scriptDir}
+                                    projectName={scriptProject}
+                                    onClose={() => setSelectedCall(null)}
+                                    tuskMode={showTasksDashboard}
+                                    selectedCall={selectedCall}
+                                />
+                                :
+                                (
+                                    showScriptPanel ||
+                                    (activeCall && activeProjectName) ||
+                                    (postActive && activeProjectName)
+                                        ? (
+                                            <ScriptPanel
+                                                direction={scriptDir}
+                                                projectName={activeProjectName}
+                                                onClose={() => setShowScriptPanel(false)}
+                                                tuskMode={showTasksDashboard}
+                                            />
+                                        ) : (
+                                            <CallsDashboard
+                                                setSelectedCall={setSelectedCall}
+                                                selectedCall={selectedCall}
+                                                currentPage={currentPage}
+                                                setCurrentPage={setCurrentPage}
+                                                isLoading={isLoading}
+                                                setIsLoading={setIsLoading}
+                                            />
+                                        ))}
+                        </div>
+                        <div className="col-12 col-md-6">
+                            {(selectedCall || activeCall || postActive) && (
+                                <CallControlPanel
+                                    call={selectedCall}
+                                    hasActiveCall={activeCall}
+                                    activeProject={activeProjectName}
+                                    onClose={() => setSelectedCall(null)}
+                                    postActive={postActive}
+                                    setPostActive={setPostActive}
+                                    currentPage={currentPage}
+                                    outActivePhone={outActivePhone}
+                                    outActiveProjectName={outActiveProjectName}
+                                    assignedKey={assignedKey}
+                                    isLoading={isLoading}
+                                    setIsLoading={setIsLoading}
+                                    specialKey={specialKey}
+                                    setModules={setModules}
+                                    modules={modules}
+                                    prefix={prefix}
+                                    outboundCall={outboundCall}
+                                    tuskMode={showTasksDashboard}
+                                    postCallData={postCallData}
+                                    setPostCallData={setPostCallData}
+                                    startModulesRanRef={startModulesRanRef}
+                                    monoModules={monoModules}
+                                    setMonoModules={setMonoModules}
+                                    expressCall={expressCall}
 
-                        />
-                    )}
-                </div>
-            </div>}
+                                />
+                            )}
+                        </div>
+                    </div>
+            }
         </div>
     );
 };

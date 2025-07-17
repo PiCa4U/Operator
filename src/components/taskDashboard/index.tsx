@@ -1,16 +1,18 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, {useState, useEffect, useMemo, useRef} from 'react';
 import Select, { SingleValue } from 'react-select';
 import SearchableSelect from '../callControlPanel/components/select/index';
 import styles from "./components/checkbox.module.css"
 import { makeSelectFullProjectPool } from "../../redux/operatorSlice";
 import { useSelector } from "react-redux";
 import GroupActionModal from "./components/index";
-import { getCookies } from "../../utils";
+
 import Swal from "sweetalert2";
 import {socket} from "../../socket";
 import {RootState, store} from "../../redux/store";
 import {ExpressState} from "../callControlPanel";
 import axios from "axios";
+import DatePicker from "react-datepicker";
+import { format } from 'date-fns';
 
 // --- Типы данных ---
 interface ColumnCell {
@@ -67,6 +69,12 @@ type Props = {
     role: string
     currentPage: number
     setCurrentPage: (currentPage: number) => void
+    startDate: Date | null
+    setStartDate: (startDate: Date | null) => void
+    endDate: Date | null
+    setEndDate: (endDate: Date| null) => void
+    selectedStatus: string | null
+    setSelectedStatus: (selectedStatus: string | null) => void
 }
 const ROWS_PER_PAGE = 10;
 
@@ -80,7 +88,13 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                   setSelectedPreset,
                                                   role,
                                                   currentPage,
-                                                  setCurrentPage
+                                                  setCurrentPage,
+                                                  startDate,
+                                                  setStartDate,
+                                                  endDate,
+                                                  setEndDate,
+                                                  selectedStatus,
+                                                  setSelectedStatus
                                               }) => {
 
     const { monitorUsers } = useSelector(
@@ -103,6 +117,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [modalIds, setModalIds] = useState<number[]>([]);
     const [modalAction, setModalAction] = useState<Action | null>(null);
 
+    const [statusOptions, setStatusOptions] = useState<string[]>([])
     const [modules, setModules] = useState<ModuleType[]>([]);
 
     // --- глобальные зависимости для запросов ---
@@ -111,9 +126,12 @@ const PresetSelectorTable: React.FC<Props> = ({
         sipLogin   = '',
         worker     = '',
     } = store.getState().credentials;
+
+    const defaultStatusToState = useRef<boolean>(false)
     // const role = "admin";
     const projectPool = useSelector(useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]));
     const projectNames = useMemo(() => projectPool.map(p => p.project_name), [projectPool]);
+    console.log("projectNames: ", projectNames)
     // const projectNames = ["group_project_1", "group_project_2"]
 
     const { sessionKey } = store.getState().operator
@@ -122,6 +140,9 @@ const PresetSelectorTable: React.FC<Props> = ({
         setGroupIDs(list)
     },[tableData])
 
+    useEffect(() => {
+        defaultStatusToState.current = false
+    },[selectedPreset])
     useEffect(() => {
         const handler = (payload: Record<string, ModuleType[]>) => {
             // Собираем модули в flat-массив
@@ -140,16 +161,18 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         socket.on('get_modules', handler);
 
-        socket.emit('get_modules', {
-            projects: projectNames,
-            session_key: sessionKey,
-            worker,
-        });
+        if (projectNames.length) {
+            socket.emit('get_modules', {
+                projects: projectNames,
+                session_key: sessionKey,
+                worker,
+            });
+        }
 
         return () => {
             socket.off('get_modules', handler);
         };
-    }, [sessionKey, worker]);
+    }, [projectNames, sessionKey, worker]);
 
     console.log("projectNames: ", projectNames)
     useEffect(()=> console.log("selectedRows: ", selectedRows))
@@ -206,6 +229,21 @@ const PresetSelectorTable: React.FC<Props> = ({
         })();
     }, [glagolParent, worker, role, projectNames]);
 
+
+    function formatWithTimezone(date: Date, timePart: 'start' | 'end'): string {
+        const offsetMinutes = date.getTimezoneOffset();
+        const sign = offsetMinutes > 0 ? '-' : '+';
+        const absOffset = Math.abs(offsetMinutes);
+        const hours = String(Math.floor(absOffset / 60)).padStart(2, '0');
+        const minutes = String(absOffset % 60).padStart(2, '0');
+        const tz = `${sign}${hours}:${minutes}`;
+
+        const base = format(date, 'yyyy-MM-dd');
+        const time = timePart === 'start' ? 'T00:00:00' : 'T23:59:59';
+
+        return `${base}${time}${tz}`;
+    }
+
     // 2) загрузка строк при выборе пресета
     useEffect(() => {
         if (!selectedPreset) {
@@ -214,34 +252,79 @@ const PresetSelectorTable: React.FC<Props> = ({
             return;
         }
         setLoading(true);
+
         (async () => {
             try {
                 const { preset } = selectedPreset;
+
+                const filterBy: any = {
+                    project: ['IN', preset.projects],
+                };
+
+                const filterByForSelect: any = {
+                    project: ['IN', preset.projects],
+                };
+
+                if (startDate && endDate) {
+                    const from = formatWithTimezone(startDate, 'start');
+                    const to   = formatWithTimezone(endDate, 'end');
+                    filterBy.created_dt = ['BETWEEN', [from, to]];
+                    filterByForSelect.created_dt = ['BETWEEN', [from, to]];
+                }
+
+                if (selectedStatus) {
+                    filterBy.status = ['IN', [selectedStatus]];
+                }
+
                 const response1 = await axios.post<ApiRow[]>('/api/v1/get_grouped_phones', {
                     glagol_parent: glagolParent,
                     group_table: preset.group_table,
-                    filter_by: {
-                        project: ['IN', preset.projects]
-                    },
+                    filter_by: filterBy,
                     preset_id: preset.id,
                     role
                 });
-                const response2 = await axios.post<Record<string, { id: number }[]>>('/api/v1/get_grouped_phones', {
+
+                const response2 = await axios.post<Record<string, {
+                    status: any; id: number
+                }[]>>('/api/v1/get_grouped_phones', {
                     glagol_parent: glagolParent,
                     group_by: ['project'],
-                    filter_by: { project: ['IN', preset.projects] },
                     group_table: preset.group_table,
+                    filter_by: filterBy,
                     role
                 });
+
+                const response3 = await axios.post<Record<string, {
+                    status: any; id: number
+                }[]>>('/api/v1/get_grouped_phones', {
+                    glagol_parent: glagolParent,
+                    group_by: ['project'],
+                    group_table: preset.group_table,
+                    filter_by: filterByForSelect,
+                    role
+                });
+
+                const statusOptions = Object.values(response3.data).flat().map(phone => phone.status)
+
+                const uniqueStatusOptions = statusOptions.filter((s, i, arr) => arr.indexOf(s) === i);
+                setStatusOptions(uniqueStatusOptions)
+                if (uniqueStatusOptions.includes('Необработано') && !defaultStatusToState.current) {
+                    const defaultStatus = 'Необработано';
+                    setSelectedStatus(defaultStatus);
+                    defaultStatusToState.current = true
+                }
+
+                // Обработка ответов
                 const projectIdData = response2.data;
                 const flatPhones = Object.values(projectIdData).flat();
                 setPhonesData(flatPhones);
+
                 const flat = Object.entries(projectIdData).flatMap(([project_name, list]) =>
                     list.map(item => ({ id: item.id, project_name }))
                 );
                 setIdProjectMap(flat);
-                const rows: ApiRow[] = response1.data;
-                setTableData(rows);
+
+                setTableData(response1.data);
                 setSelectedActionOption(null);
                 setCurrentPage(1);
                 setSearchTerm('');
@@ -251,8 +334,18 @@ const PresetSelectorTable: React.FC<Props> = ({
                 setLoading(false);
             }
         })();
-    }, [selectedPreset, setPhonesData]);
-
+    }, [
+        selectedPreset,
+        startDate,
+        endDate,
+        setPhonesData,
+        setCurrentPage,
+        role,
+        glagolParent,
+        worker,
+        sessionKey,
+        selectedStatus
+    ]);
     // Опции для выпадающего списка действий в шапке
     const actionOptions: ActionOption[] = useMemo(() => {
         if (!selectedPreset) return [];
@@ -263,48 +356,19 @@ const PresetSelectorTable: React.FC<Props> = ({
         }));
     }, [selectedPreset]);
 
+    useEffect(() => console.log("actionOptions: ", actionOptions),[actionOptions])
     // Внутри PresetSelectorTable:
-    const handleBulkProcess = () => {
-        if (!selectedActionOption) {
-            return Swal.fire('Ошибка', 'Выберите действие в шапке', 'error');
-        }
+    const processRows = (rows: ApiRow[], opt: ActionOption) => {
+        const act = opt.action;
 
-        const keys = Array.from(selectedRows);
-        const rows = processedRows.filter(r => keys.includes(r.id_list.join(',')));
-
-        if (rows.length === 0) {
-            return Swal.fire('Нечего обрабатывать', 'Отметьте хотя бы одну строку', 'info');
-        }
-
-        if (rows.length === 1) {
-            // Показываем модалку — поведение как раньше
-            setModalIds(rows[0].id_list);
-            setModalAction(selectedActionOption.action);
-            setModalOpen(true);
-            return;
-        }
-
-        // Множественная обработка — auto-run
-        handleProcessBulk(rows)
-
-        // Swal.fire('Готово', 'Операции отправлены на сервер', 'success');
-    };
-
-
-    const handleProcessBulk = (rows: ApiRow[]) => {
-        if (!selectedActionOption) {
-            return Swal.fire('Ошибка', 'Выберите действие в шапке', 'error');
-        }
-        const act = selectedActionOption.action;
-
+        // Собираем все ID и группируем по проектам
         const allIds = rows.flatMap(r => r.id_list);
-
-        const idToProject = idProjectMap.reduce<Record<number, string>>((acc, { id, project_name }) => {
+        const idToProject = idProjectMap.reduce<Record<number,string>>((acc, {id, project_name}) => {
             acc[id] = project_name;
             return acc;
         }, {});
         const groups = allIds.reduce<Record<string, number[]>>((acc, id) => {
-            const proj = idToProject[id] || 'unknown';
+            const proj = idToProject[id] || "unknown";
             if (!acc[proj]) acc[proj] = [];
             acc[proj].push(id);
             return acc;
@@ -317,12 +381,14 @@ const PresetSelectorTable: React.FC<Props> = ({
                 return Swal.fire('Ошибка', `Модуль "${act.code_filename}" не найден.`, 'error');
             }
 
-            // Явно указываем структуру аргументов
             type KwargDef = { source: string; default?: string };
             const argDefs = Object.values(foundModule.kwargs || {}) as KwargDef[];
 
+            // groups: Record<project_name, number[]>
             Object.entries(groups).forEach(([project_name, ids]) => {
                 ids.forEach(id => {
+                    // для bulk-режима берем contact из phonesData,
+                    // а для режима строки — из rawRows, но phonesData тоже содержит contact_info
                     const contact = phonesData.find((p: any) => p.id === id);
                     const contactInfo = contact?.contact_info ?? {};
 
@@ -337,25 +403,59 @@ const PresetSelectorTable: React.FC<Props> = ({
                         b_uuid:      "",
                         worker,
                         session_key: sessionKey,
-                        project_name,
-                        filename:    foundModule.filename.replace(/\.py$/, ''),
+                        // вот отличие: вместо project_name мы передаем объект projects
+                        projects: { [project_name]: kwargs },
+                        filename:    targetName,
                         common_code: foundModule.common_code,
-                        kwargs:      kwargs,
                     });
                 });
             });
-        } else if (act.action_type === 'delete') {
+        } else if (act.action_type === "delete") {
             Object.entries(groups).forEach(([project_name, ids]) => {
-                console.log('args:', {
-                    worker,
-                    session_key: sessionKey,
-                    project_name,
-                    ids,
+                socket.emit("delete_phone", {
+                    worker, session_key: sessionKey, project_name, ids
                 });
             });
         }
 
-        Swal.fire('Готово', 'Операции отправлены на сервер', 'success');
+        Swal.fire("Готово", "Операции отправлены на сервер", "success");
+    };
+
+
+// Переписанная handleBulkProcess:
+    const handleBulkProcess = (
+        rows: ApiRow[],
+        actionOpt?: ActionOption,
+        isRowClick: boolean = false
+    ) => {
+        // выбираем источник опции: либо переданная, либо из шапки
+        const opt = actionOpt ?? selectedActionOption;
+
+        // 1) Если не row-click и нет опции — требуем выбор в шапке
+        if (!opt && !isRowClick) {
+            return Swal.fire("Ошибка", "Выберите действие в шапке", "error");
+        }
+
+        // 2) Нет строк — ничего делать
+        if (rows.length === 0) {
+            return Swal.fire("Нечего обрабатывать", "Отметьте хотя бы одну строку", "info");
+        }
+
+        // 3) Если клик из строки и ровно один ID в одной строке — мгновенно обрабатываем
+        if (isRowClick && rows.length === 1 && rows[0].id_list.length === 1) {
+            return processRows(rows, opt!);
+        }
+
+        // 4) Если одна строка, но несколько ID — открываем модалку
+        if (rows.length === 1 && rows[0].id_list.length > 1) {
+            setModalIds(rows[0].id_list);
+            setModalAction(opt!.action);
+            setModalOpen(true);
+            return;
+        }
+
+        // 5) Bulk: несколько строк — сразу обрабатываем
+        processRows(rows, opt!);
     };
 
 
@@ -525,10 +625,14 @@ const PresetSelectorTable: React.FC<Props> = ({
                 const express_id = config.express_config.id;
 
                 const [statusRes, agentsRes] = await Promise.all([
-                    axios.get<{ active: boolean; active_calls?: number }>('/api/v1/express_status', {
+                    axios.get<{
+                        result: any; active: boolean; active_calls?: number
+                    }>('/api/v1/express_status', {
                         params: { express_id }
                     }),
-                    axios.get<{ operators: string[] }>('/api/v1/express_agents', {
+                    axios.get<{
+                        result: any; operators: string[]
+                    }>('/api/v1/express_agents', {
                         params: { express_id }
                     }),
                 ]);
@@ -536,9 +640,9 @@ const PresetSelectorTable: React.FC<Props> = ({
                 result[project] = {
                     project,
                     express_id,
-                    active: statusRes.data.active,
-                    calls: statusRes.data.active_calls || 0,
-                    agents: agentsRes.data.operators,
+                    active: statusRes.data.result.active,
+                    calls: statusRes.data.result.active_calls || 0,
+                    agents: agentsRes.data.result.operators || [],
                 };
             })
         );
@@ -562,11 +666,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         });
         await fetchStatuses();
     };
-
-
-
-
-
 
 
     useEffect(() => {
@@ -618,6 +717,15 @@ const PresetSelectorTable: React.FC<Props> = ({
         </div>
     );
 
+    const  mockDataForStatus = []
+    const handleDateChange = (dates: [Date | null, Date | null]) => {
+        const [start, end] = dates;
+        console.log("dates: ", dates)
+        setStartDate(start);
+        setEndDate(end);
+    };
+
+
     return (
         <div>
             {role === 'manager' && renderExpressCards()}
@@ -653,7 +761,32 @@ const PresetSelectorTable: React.FC<Props> = ({
                                     className="form-control"
                                 />
                             </div>
-
+                            <div style={{ width: 250 }}>
+                                <SearchableSelect
+                                    value={selectedStatus ?? ''}
+                                    onChange={(val: string) => {
+                                        setSelectedStatus(val);
+                                    }}
+                                    isSearchable
+                                    options={statusOptions.map(s => ({
+                                        id:   s,
+                                        name: s
+                                    }))}
+                                    placeholder="Выберите статус..."
+                                />
+                            </div>
+                            <div style={{ width: 250 }}>
+                                <DatePicker
+                                    selected={startDate}
+                                    onChange={handleDateChange}
+                                    startDate={startDate}
+                                    endDate={endDate}
+                                    selectsRange
+                                    placeholderText="Выберите период"
+                                    className="form-control"
+                                    dateFormat="dd.MM.yyyy"
+                                />
+                            </div>
                             {/* Действия */}
                             <div style={{ width: 250 }}>
                                 <SearchableSelect
@@ -672,8 +805,12 @@ const PresetSelectorTable: React.FC<Props> = ({
                             </div>
 
                             <button
+                                onClick={() => {
+                                    const keys = Array.from(selectedRows);
+                                    const rows = processedRows.filter(r => keys.includes(r.id_list.join(",")));
+                                    handleBulkProcess(rows);
+                                }}
                                 className="btn btn-outline-light text text-dark mx-1 ml-2"
-                                onClick={handleBulkProcess}
                             >
                                 Обработать
                             </button>
@@ -755,25 +892,26 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                         </td>
                                                     );
                                                 })}
-                                            <td className="border p-2 space-x-2">
-                                                <button
-                                                    className="btn btn-outline-light text text-dark mx-1 ml-2"
-                                                    onClick={() => setOpenedGroup(row.id_list)}
-                                                >
-                                                    Открыть
-                                                </button>
-                                                <button
-                                                    className="btn btn-outline-light text text-dark mx-1 ml-2"
-                                                    onClick={() => {
-                                                        setModalIds(row.id_list);
-                                                        setModalAction(selectedActionOption?.action ?? null);
-                                                        setModalOpen(true);
-                                                    }}
-                                                    disabled={!selectedActionOption} // disable if no action is selected
-                                                >
-                                                    Обработать
-                                                </button>
+                                            <td className="border p-2">
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                                    <button
+                                                        className="btn btn-outline-light text-dark"
+                                                        onClick={() => setOpenedGroup(row.id_list)}
+                                                    >
+                                                        Открыть
+                                                    </button>
+                                                    {actionOptions.map(opt => (
+                                                        <button
+                                                            key={opt.label}
+                                                            className="btn btn-outline-light text-dark"
+                                                            onClick={() => handleBulkProcess([row], opt, true)}
+                                                        >
+                                                            {opt.label}
+                                                        </button>
+                                                    ))}
+                                                </div>
                                             </td>
+
                                         </tr>
                                     );
                                 })}

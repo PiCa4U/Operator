@@ -219,7 +219,7 @@ const GroupActionModal: React.FC<Props> = ({
                 const response = await axios.post<Nested>('/api/v1/get_grouped_phones', {
                     glagol_parent: glagolParent,
                     group_by: preset?.group_by,
-                    filter_by: { project: ['IN', projectNames] },
+                    filter_by: { project: ['IN', projectNames], },
                     group_table: preset?.group_table,
                     role,
                 });
@@ -272,7 +272,7 @@ const GroupActionModal: React.FC<Props> = ({
                 {/* ─── РЯДЫ ФИЛЬТРОВ ────────────────────────────────── */}
                 <div className={stylesModal.filters}>
                     <fieldset className={stylesModal.filtersFieldset}>
-                        <h3 className={stylesModal.noWrap}><b>Групповой фактор 1</b></h3>
+                        <div className={stylesModal.noWrap}><b>Групповой фактор 1</b></div>
                         <div className={stylesModal.filterOptions}>
                         {unique1.map(val => (
                             <label key={val} style={{display:"inline-flex", gap:"4px"}}>
@@ -288,7 +288,7 @@ const GroupActionModal: React.FC<Props> = ({
                     </fieldset>
 
                     <fieldset className={stylesModal.filtersFieldset}>
-                        <h3 className={stylesModal.noWrap}><b>Групповой фактор 2</b></h3>
+                        <div className={stylesModal.noWrap}><b>Групповой фактор 2</b></div>
                         <div className={stylesModal.filterOptions}>
                             {unique2.map(val => (
                                 <label key={val} style={{display:"inline-flex", gap:"4px"}}>
@@ -305,7 +305,7 @@ const GroupActionModal: React.FC<Props> = ({
                     </fieldset>
 
                     <fieldset className={stylesModal.filtersFieldset}>
-                        <h3 className={stylesModal.noWrap}><b>Групповой фактор 3</b></h3>
+                        <div className={stylesModal.noWrap}><b>Групповой фактор 3</b></div>
                         <div className={stylesModal.filterOptions}>
                         {unique3.map(val => (
                             <label key={val} style={{display:"inline-flex", gap:"4px"}}>
@@ -321,7 +321,7 @@ const GroupActionModal: React.FC<Props> = ({
                     </fieldset>
 
                     <fieldset className={stylesModal.filtersFieldset}>
-                        <h3><b>Статус</b></h3>
+                        <div><b>Статус</b></div>
                         <div className={stylesModal.filterOptions}>
                         {uniqueStatus.map(val => (
                             <label key={val} style={{display:"inline-flex", gap:"4px"}}>

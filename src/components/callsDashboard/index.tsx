@@ -11,6 +11,9 @@ import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
 
 function getDisplayNumber(call: any): string {
     if (call.total_direction === 'outbound') {
+        if (call.express) {
+            return call.a_line_num
+        }
         return call.b_line_num || call.caller_id || '—';
     } else {
         return call.a_line_num || call.destination_id || call.caller_id || '—';
@@ -129,27 +132,29 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
         });
     }, [searchParams, currentPage, worker, sessionKey, sipLogin, roomId]);
 
-    function cleanProjectName(name: string): string {
-        return name.replace(/\s*\(.*?\)\s*$/, '').trim();
+    function cleanProjectName(name: string = ''): string {
+        return name
+            // remove trailing "(...)" or "@default"
+            .replace(/(\s*\(.*?\)|@default)\s*$/g, '')
+            .trim();
     }
-
     useEffect(() => {
         if (!fsReport || !Array.isArray(fsReport)) return;
 
         const toFill = fsReport.filter(call => {
             const keys = call.projects ? Object.keys(call.projects) : [];
             if (keys.length === 0) return false;
-
-            const proj = call.projects[keys[0]];  // proj: Project
+            const proj = call.projects[keys[0]];
+            // незаполненным считаем только когда оба === null или === undefined
             return proj.call_reason == null && proj.call_result == null;
         });
 
         const filled = fsReport.filter(call => {
             const keys = call.projects ? Object.keys(call.projects) : [];
             if (keys.length === 0) return false;
-
             const proj = call.projects[keys[0]];
-            return Boolean(proj.call_reason) || Boolean(proj.call_result);
+
+            return proj.call_reason != null || proj.call_result != null;
         });
 
         setCallsToFill(toFill);

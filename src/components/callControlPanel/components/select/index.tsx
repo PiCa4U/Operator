@@ -27,7 +27,8 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
         ...base,
         width: '100%',
         minWidth: 0,
-        boxSizing: 'border-box'
+        boxSizing: 'border-box',
+        height: 'calc(1.5em + .75rem + 2px)'
     }),
 
     control: (base, { isFocused }) => ({
@@ -35,8 +36,8 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
         border: '1px solid #ced4da',
         backgroundColor: '#fff',
         borderRadius: '0.75rem',
-        height: 'calc(1.8125rem + 2px)',
-        minHeight: 'calc(1.8125rem + 2px)',
+        height: 'calc(1.5em + .75rem + 2px)',
+        minHeight: 'calc(1.5em + .75rem + 2px)',
         padding: 0,
         boxShadow: isFocused
             ? '0 0 0 .2rem rgba(65, 212, 146, .25)'
@@ -51,7 +52,7 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
     valueContainer: (base) => ({
         ...base,
         padding: '0 .75rem',
-        height: '100%',
+        height: 'calc(1.5em + .75rem + 2px)',
         display: 'flex',
         alignItems: 'center',
         overflow: 'hidden',
@@ -59,13 +60,13 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
 
     placeholder: (base) => ({
         ...base,
-        lineHeight: 'calc(1.8125rem + 2px)',
+        lineHeight: 'calc(1.5em + .75rem + 2px)',
         color: '#495057',
     }),
 
     singleValue: (base) => ({
         ...base,
-        lineHeight: 'calc(1.8125rem + 2px)',
+        lineHeight: 'calc(1.5em + .75rem + 2px)',
         color: '#495057',
         overflow: 'hidden',
         textOverflow: 'ellipsis',
@@ -110,7 +111,7 @@ const SearchableSelect: React.FC<Props> = ({
                                                value,
                                                onChange,
                                                options,
-                                               placeholder = '— выберите —',
+                                               placeholder = 'выберите...',
                                                augmentSaved = false,
                                                isSearchable = true
                                            }) => {

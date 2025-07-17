@@ -21,28 +21,38 @@ interface Props {
 }
 
 const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
-    container: base => ({ ...base, minWidth: '150px', boxSizing: 'border-box', marginBottom:6}),
+    container: base => ({
+        ...base,
+        minWidth: '150px',
+        boxSizing: 'border-box',
+        marginBottom: 6,
+    }),
     control: (base, { isFocused }) => ({
         ...base,
+        display: 'flex',
+        alignItems: 'center',
         border: '1px solid #ced4da',
         backgroundColor: '#fff',
         borderRadius: '0.75rem',
-        height: 'calc(1.8125rem + 2px)',
         minHeight: 'calc(1.8125rem + 2px)',
-        padding: 0,
+        padding: '0 8px',
         boxShadow: isFocused ? '0 0 0 .2rem rgba(65, 212, 146, .25)' : 'none',
         cursor: 'pointer',
         '&:hover': { borderColor: '#ced4da' },
     }),
     valueContainer: base => ({
         ...base,
-        padding: '0 .75rem',
-        height: '100%',
+        padding: 0,
         display: 'flex',
         alignItems: 'center',
         overflow: 'hidden',
     }),
-    placeholder: base => ({ ...base, lineHeight: 'calc(1.8125rem + 2px)', color: '#495057' }),
+    input: base => ({
+        ...base,
+        margin: 0,
+        padding: 0,
+        lineHeight: 'calc(1.8125rem + 2px)',
+    }),
     singleValue: base => ({
         ...base,
         lineHeight: 'calc(1.8125rem + 2px)',
@@ -52,16 +62,31 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
         whiteSpace: 'nowrap',
         maxWidth: '100%',
     }),
-    dropdownIndicator: base => ({ ...base, padding: 0, height: '100%', display: 'flex', alignItems: 'center' }),
+    placeholder: base => ({
+        ...base,
+        lineHeight: 'calc(1.8125rem + 2px)',
+        color: '#495057',
+    }),
+    dropdownIndicator: base => ({
+        ...base,
+        padding: 0,
+        display: 'flex',
+        alignItems: 'center',
+    }),
     indicatorSeparator: () => ({ display: 'none' }),
     clearIndicator: base => ({
         ...base,
-        padding: '0 8px',
+        padding: '0 4px',
         cursor: 'pointer',
         color: '#999',
         '&:hover': { color: '#333' },
     }),
-    menu: base => ({ ...base, width: '100%', boxSizing: 'border-box', zIndex: 9999 }),
+    menu: base => ({
+        ...base,
+        width: '100%',
+        boxSizing: 'border-box',
+        zIndex: 9999,
+    }),
     option: (base, { isFocused }) => ({
         ...base,
         backgroundColor: isFocused ? '#f8f9fa' : 'white',
@@ -69,6 +94,8 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
         cursor: 'pointer',
     }),
 };
+
+
 
 const PhoneProjectSelect: React.FC<Props> = ({ value, onChange, options, placeholder = '— выберите —', isSearchable = false }) => {
     // Формируем список опций

@@ -6,7 +6,7 @@
     border-radius: 0.75rem;
     overflow: hidden;
     box-sizing: border-box;
-    height: 2.875rem;
+    height: calc(3rem + 2px);
 }
 
 .button {
@@ -14,8 +14,8 @@
     background: #fff;
     color: #77cb1f;
     padding: 9px 14px;
-    font-size: 14px;
-    line-height: 14px;
+    font-size: .875rem;
+    line-height: 1.5;
     cursor: pointer;
 
     display: inline-flex;

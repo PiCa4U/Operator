@@ -71,6 +71,8 @@ interface HeaderPanelProps {
     role: string
     expressCall: boolean
     groupProjects: string[]
+    setManagerPanel: (managerPanel: boolean) => void
+    managerPanel: boolean,
 }
 
 
@@ -91,6 +93,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      specialKey,
                                                      setSpecialKey,
                                                      activeProjectName,
+                                                     setActiveProjectName,
                                                      prefix,
                                                      setPrefix,
                                                      setOutboundID,
@@ -102,6 +105,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      role,
                                                      expressCall,
                                                      groupProjects,
+                                                     setManagerPanel,
+                                                     managerPanel
                                                  }) => {
     const {
         sipLogin   = '',
@@ -187,7 +192,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             setPostCallData(first);
         }
 
-        if (!hasActiveCall && !hasAppField && postCallData?.application && sessionKey) {
+        if (!hasActiveCall && !hasAppField && postCallData?.application) {
             socket.emit('get_fs_report', {
                 worker,
                 session_key: sessionKey,
@@ -208,7 +213,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 session_key: sessionKey,
                 sip_login: sipLogin,
                 worker,
-                reason: "auto_call_reset"
+                reason: "postobrabotka"
             })
             // socket.emit('change_state_fs', {
             //     sip_login: sipLogin,
@@ -545,6 +550,14 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     phone_status: 'ringing',
                     special_key: specialKey,
                 });
+                socket.emit('change_state_fs', {
+                    sip_login: sipLogin,
+                    worker: sipLogin,
+                    session_key: sessionKey,
+                    state: "idle",
+                    reason:"outboundcall",
+                    page: 'online',
+                });
             } else {
                 Swal.fire({ title: "Ошибка при старте звонка", icon: "error" });
                 socket.emit('outbound_call_update', {
@@ -606,7 +619,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 socket.emit('outbound_call_get', {
                     assign: true,
                     batch: 1,
-                    break: true,
+                    // break: true,
                     worker,
                     interface: "glagol",
                     sip_login: sipLogin,
@@ -1063,11 +1076,19 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                             onChange={(m: Mode) => {
                                 setShowTasksDashboard(m === 'tasks');
                                 setShowScriptPanel(false);
+                                setActiveProjectName("")
                             }}
                         />
                     </div>
                 </div>
-
+                <button
+                    name="script_look"
+                    id="script_look"
+                    className="btn btn-outline-light text text-dark mx-1 ml-2"
+                    onClick={() => setManagerPanel(!managerPanel)}
+                >
+                    Панель менеджера
+                </button>
             </>
         );
     };

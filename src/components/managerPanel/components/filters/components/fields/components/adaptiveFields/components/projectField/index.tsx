@@ -98,32 +98,28 @@ export const ProjectField: React.FC<Props> = ({ value, onChange }) => {
     }));
 
     return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, width: 400 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
             <SearchableSelect
                 value={projectOptions.find(p => p.id === selectedProjectId)?.id || ""}
                 onChange={handleProjectChange}
                 options={projectOptions}
-                placeholder="Выберите проект"
+                placeholder="Проект"
             />
-
             {selectedProjectId && (
-                <>
-                    <label style={{ fontSize: 12 }}>Причины</label>
+                <div style={{ display: "flex", gap: 8,flex: 1 }}>
                     <MultiSelect
                         options={reasonOptions}
                         value={value?.reasons?.map(String) || []}
                         onChange={handleReasonsChange}
-                        placeholder="Выберите причины..."
+                        placeholder="Причины"
                     />
-
-                    <label style={{ fontSize: 12 }}>Результаты</label>
                     <MultiSelect
                         options={resultOptions}
                         value={value?.results?.map(String) || []}
                         onChange={handleResultsChange}
-                        placeholder="Выберите результаты..."
+                        placeholder="Результаты"
                     />
-                </>
+                </div>
             )}
         </div>
     );

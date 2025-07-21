@@ -1,5 +1,5 @@
 import {AdaptiveFields} from "./components/adaptiveFields";
-import {useEffect, useMemo, useState} from "react";
+import {FC, useEffect, useMemo, useState} from "react";
 import {makeSelectFullProjectPool} from "../../../../../../redux/operatorSlice";
 import {useSelector} from "react-redux";
 import {store} from "../../../../../../redux/store";
@@ -18,8 +18,15 @@ export const FILTER_FIELDS = [
     { id: 'callDirection', name: 'Направление вызова' }
 ];
 
-export const FilterFields = () => {
-    const [activeFilters, setActiveFilters] = useState<FilterItem[]>([]);
+interface Props {
+    activeFilters: FilterItem[];
+    setActiveFilters: React.Dispatch<React.SetStateAction<FilterItem[]>>;
+}
+
+export const FilterFields: FC<Props> = ({
+                                            activeFilters,
+                                            setActiveFilters
+                                        }) => {
 
     useEffect(()=> console.log("activeFilters: ", activeFilters),[activeFilters])
     const handleAddField = (selected: any) => {
@@ -63,7 +70,7 @@ export const FilterFields = () => {
                 />
             ))}
 
-            <div>
+            <div style={{width: 250}}>
                 <SearchableSelect
                     value={""}
                     onChange={handleAddField}

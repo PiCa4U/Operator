@@ -116,7 +116,7 @@ const MultiSelect: React.FC<Props> = ({
                                           augmentSaved = false,
                                           isSearchable = true
                                       }) => {
-    const stringValues = value.map(v => String(v));
+    const stringValues = Array.isArray(value) ? value.map(v => String(v)) : []
 
     const staticOpts: Option[] = options.map(o => ({
         value: String(o.id),

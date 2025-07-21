@@ -6,7 +6,6 @@ import Select, {
     ClearIndicatorProps,
 } from 'react-select';
 
-// Опция: value = "11111111115|group_project_1", label = "11111111115 (Группа 1)"
 interface Option {
     value: string;
     label: string;

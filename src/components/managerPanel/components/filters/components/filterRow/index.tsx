@@ -2,11 +2,13 @@ import { FILTER_FIELDS } from "../fields";
 import SearchableSelect from "../../../../../callControlPanel/components/select";
 import {AdaptiveFields} from "../fields/components/adaptiveFields";
 
-export interface FilterItem {
-    id: string;
-    fieldId: string;
-    value: null;
-}
+export type FilterItem =
+    | { fieldId: "project"; id: string; value: { projectId: string; reasons?: number[]; results?: number[] } | null }
+    | { fieldId: "operator"; id: string; value: string[] | null }
+    | { fieldId: "date"; id: string; value: { preset: string; start?: Date; end?: Date } | null }
+    | { fieldId: "comment"; id: string; value: string | null }
+    | { fieldId: "phoneNumber"; id: string; value: string | null }
+    | { fieldId: "dialogDuration"; id: string; value: { comparison: "gt" | "lt"; seconds: number } | null };
 
 export const FilterRow: React.FC<{
     filter: FilterItem;
@@ -30,13 +32,15 @@ export const FilterRow: React.FC<{
 
     return (
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <SearchableSelect
-                value={selectedOption?.id || ""}
-                onChange={handleTypeChange}
-                options={fieldOptions}
-            />
-            <AdaptiveFields id={filter.fieldId} value={filter.value} onChange={handleValueChange} />
             <button className="btn btn-outline-danger" onClick={onRemove}>✕</button>
+            <div style={{minWidth: 350}}>
+                <SearchableSelect
+                    value={selectedOption?.id || ""}
+                    onChange={handleTypeChange}
+                    options={fieldOptions}
+                />
+            </div>
+            <AdaptiveFields id={filter.fieldId} value={filter.value} onChange={handleValueChange} />
         </div>
     );
 };

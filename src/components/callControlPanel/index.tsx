@@ -370,7 +370,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             }
         }
         socket.on('fs_report', handleReports);
-
+        console.log("fin")
         return () => {
             socket.off('fs_report', handleReports);
         };

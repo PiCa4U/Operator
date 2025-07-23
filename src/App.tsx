@@ -107,6 +107,7 @@ const App: React.FC = () => {
     const [scriptFlag, setScriptFlag] = useState<boolean>(false)
     useEffect(() => console.log("outActivePhone: ", outActivePhone),[outActivePhone])
 
+    useEffect(() => console.log("postActive: ", postActive),[postActive])
     useEffect(() => {
         setScriptAnotherID("test")
     },[selectedCall])
@@ -334,6 +335,7 @@ const App: React.FC = () => {
                 setAssignedKey={setAssignedKey}
                 setIsLoading={setIsLoading}
                 prefix={prefix}
+                postActive={postActive}
                 setPrefix={setPrefix}
             />
 

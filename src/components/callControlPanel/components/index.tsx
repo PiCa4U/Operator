@@ -36,9 +36,8 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                 const commonProps = {
                     className: "form-control",
                     value: currentValue,
-                    onChange: (e: React.ChangeEvent<
-                        HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
-                    >) => handleChange(param.field_id, e.target.value),
+                    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+                        handleChange(param.field_id, e.target.value),
                     readOnly: !param.editable,
                 };
 
@@ -51,7 +50,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             flexDirection: 'row',
                             alignItems: 'center',
                             flexWrap: 'nowrap',
-                            marginBottom: '1rem'
+                            marginBottom: '1rem',
                         }}
                     >
                         <label
@@ -62,167 +61,152 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                 marginRight: '8px'
                             }}
                         >
-                            {param.field_name} {/* TODO TEST */}
-                            {/*<span*/}
-                            {/*    style={{ color: '#888', fontSize: '14px', marginLeft: '4px' }}*/}
-                            {/*>*/}
-                            {/*    ({param.field_id}) /!* TODO TEST *!/*/}
-                            {/*</span>*/}
+                            {param.field_name}
                             {param.must_have && <span style={{ color: 'red' }}> *</span>}:
                         </label>
 
-                        {param.field_type === 'regular' && <input type="text" style={{fontSize: 18, fontWeight: 500}} {...commonProps} />}
-                        {param.field_type === 'number' && <input type="number" style={{fontSize: 18, fontWeight: 500}} {...commonProps} />}
-                        {param.field_type === 'date' && <input type="date" style={{fontSize: 18, fontWeight: 500}} {...commonProps} />}
-                        {param.field_type === 'time' && <input type="time" style={{fontSize: 18, fontWeight: 500}} {...commonProps} />}
-                        {param.field_type === 'textarea' && <textarea style={{fontSize: 18, fontWeight: 500}} {...commonProps} />}
-
-                        {param.field_type === 'select' && (() => {
-                            const raw = param.field_vals || '';
-                            const splitVals = raw.includes('|_|_|')
-                                ? raw.split('|_|_|')
-                                : raw.split(',');
-                            let opts = splitVals.map(s => s.trim()).filter(Boolean);
-
-                            // 🔽 нормализуем текущее значение
-                            const normalizedValue = currentValue.includes('|_|_|')
-                                ? currentValue.split('|_|_|')[0].trim()
-                                : currentValue;
-
-                            // 🔁 добавляем текущее значение, если его нет в опциях
-                            if (normalizedValue && !opts.includes(normalizedValue)) {
-                                opts = [...opts, normalizedValue];
-                            }
-
-                            const options = [{ id: '', name: '' }, ...opts.map(o => ({ id: o, name: o }))];
-
-                            return (
-                                <SearchableSelect
-                                    value={normalizedValue}
-                                    onChange={val => handleChange(param.field_id, val)}
-                                    options={options}
-                                    placeholder="Выберите..."
-                                    augmentSaved={augmentSaved}
-                                />
-                            );
-                        })()}
-
-                        {param.field_type === 'checkbox' && (
-                            <div className="form-check" style={{ marginLeft: '8px', fontSize: 18}}>
-                                <input
-                                    type="checkbox"
-                                    className="form-check-input"
-                                    id={`checkbox_${param.id}`}
-                                    checked={currentValue === 'true'}
-                                    disabled={!param.editable}
-                                    style={{fontSize: 18, fontWeight: 500}}
-                                    onChange={e =>
-                                        handleChange(
-                                            param.field_id,
-                                            e.target.checked ? 'true' : 'false'
-                                        )
-                                    }
-                                />
-                                <label
-                                    className="form-check-label"
-                                    htmlFor={`checkbox_${param.id}`}
-                                    style={{fontSize: 18, fontWeight: 500}}
-                                >
-                                    {param.field_vals || 'Выбрать'}
-                                </label>
-                            </div>
-                        )}
-
-                        {param.field_type === 'radio' && (
+                        {!param.editable ? (
+                            <div style={{ fontSize: 18, fontWeight: 500, marginBottom: 5}}>{currentValue}</div>
+                        ) : (
                             <>
-                                {param.field_vals?.split(',').map((opt, idx) => (
-                                    <div
-                                        className="form-check"
-                                        key={idx}
-                                        style={{ margin: '0 10px' }}
-                                    >
+                                {param.field_type === 'regular' && <input type="text" style={{ fontSize: 18, fontWeight: 500 }} {...commonProps} />}
+                                {param.field_type === 'number' && <input type="number" style={{ fontSize: 18, fontWeight: 500 }} {...commonProps} />}
+                                {param.field_type === 'date' && <input type="date" style={{ fontSize: 18, fontWeight: 500 }} {...commonProps} />}
+                                {param.field_type === 'time' && <input type="time" style={{ fontSize: 18, fontWeight: 500 }} {...commonProps} />}
+                                {param.field_type === 'textarea' && <textarea style={{ fontSize: 18, fontWeight: 500 }} {...commonProps} />}
+
+                                {param.field_type === 'select' && (() => {
+                                    const raw = param.field_vals || '';
+                                    const splitVals = raw.includes('|_|_|')
+                                        ? raw.split('|_|_|')
+                                        : raw.split(',');
+                                    let opts = splitVals.map(s => s.trim()).filter(Boolean);
+
+                                    const normalizedValue = currentValue.includes('|_|_|')
+                                        ? currentValue.split('|_|_|')[0].trim()
+                                        : currentValue;
+
+                                    if (normalizedValue && !opts.includes(normalizedValue)) {
+                                        opts = [...opts, normalizedValue];
+                                    }
+
+                                    const options = [{ id: '', name: '' }, ...opts.map(o => ({ id: o, name: o }))];
+
+                                    return (
+                                        <SearchableSelect
+                                            value={normalizedValue}
+                                            onChange={val => handleChange(param.field_id, val)}
+                                            options={options}
+                                            placeholder="Выберите..."
+                                            augmentSaved={augmentSaved}
+                                        />
+                                    );
+                                })()}
+
+                                {param.field_type === 'checkbox' && (
+                                    <div className="form-check" style={{ marginLeft: '8px', fontSize: 18 }}>
                                         <input
-                                            type="radio"
+                                            type="checkbox"
                                             className="form-check-input"
-                                            id={`radio_${param.id}_${idx}`}
-                                            name={param.field_id}
-                                            value={opt}
-                                            checked={currentValue === opt}
-                                            disabled={!param.editable}
+                                            id={`checkbox_${param.id}`}
+                                            checked={currentValue === 'true'}
+                                            style={{ fontSize: 18, fontWeight: 500 }}
                                             onChange={e =>
-                                                handleChange(param.field_id, e.target.value)
+                                                handleChange(param.field_id, e.target.checked ? 'true' : 'false')
                                             }
-                                            style={{fontSize: 18, fontWeight: 500}}
                                         />
                                         <label
-                                            style={{fontSize: 18, fontWeight: 500}}
                                             className="form-check-label"
-                                            htmlFor={`radio_${param.id}_${idx}`}
+                                            htmlFor={`checkbox_${param.id}`}
+                                            style={{ fontSize: 18, fontWeight: 500 }}
                                         >
-                                            {opt}
+                                            {param.field_vals || 'Выбрать'}
                                         </label>
                                     </div>
-                                ))}
-                            </>
-                        )}
+                                )}
 
-                        {param.field_type === 'many' && (
-                            <div style={{ marginLeft: '8px' }}>
-                                {param.field_vals
-                                    ?.split(',')
-                                    .map(opt => opt.trim())
-                                    .filter(Boolean)
-                                    .map((opt, idx) => {
-                                        const isChecked = currentValue
-                                            .split(',')
-                                            .map(v => v.trim())
-                                            .includes(opt);
-                                        return (
-                                            <div
-                                                className="form-check"
-                                                key={idx}
-                                                style={{ marginRight: '10px' }}
-                                            >
+                                {param.field_type === 'radio' && (
+                                    <>
+                                        {param.field_vals?.split(',').map((opt, idx) => (
+                                            <div className="form-check" key={idx} style={{ margin: '0 10px' }}>
                                                 <input
-                                                    type="checkbox"
+                                                    type="radio"
                                                     className="form-check-input"
-                                                    id={`many_${param.id}_${idx}`}
+                                                    id={`radio_${param.id}_${idx}`}
+                                                    name={param.field_id}
                                                     value={opt}
-                                                    checked={isChecked}
-                                                    style={{fontSize: 18, fontWeight: 500}}
-                                                    disabled={!param.editable}
-                                                    onChange={e => {
-                                                        const values = currentValue
-                                                            .split(',')
-                                                            .map(v => v.trim())
-                                                            .filter(Boolean);
-                                                        const newValues = e.target.checked
-                                                            ? [...values, opt]
-                                                            : values.filter(v => v !== opt);
-                                                        handleChange(param.field_id, newValues.join(','));
-                                                    }}
+                                                    checked={currentValue === opt}
+                                                    onChange={e =>
+                                                        handleChange(param.field_id, e.target.value)
+                                                    }
+                                                    style={{ fontSize: 18, fontWeight: 500 }}
                                                 />
                                                 <label
+                                                    style={{ fontSize: 18, fontWeight: 500 }}
                                                     className="form-check-label"
-                                                    htmlFor={`many_${param.id}_${idx}`}
-                                                    style={{fontSize: 18, fontWeight: 500}}
+                                                    htmlFor={`radio_${param.id}_${idx}`}
                                                 >
                                                     {opt}
                                                 </label>
                                             </div>
-                                        );
-                                    })}
-                            </div>
-                        )}
+                                        ))}
+                                    </>
+                                )}
 
-                        {param.field_type === 'non_editable' && (
-                            <input
-                                type="text"
-                                className="form-control"
-                                value={currentValue}
-                                readOnly
-                                style={{fontSize: 18, fontWeight: 500}}
-                            />
+                                {param.field_type === 'many' && (
+                                    <div style={{ marginLeft: '8px' }}>
+                                        {param.field_vals
+                                            ?.split(',')
+                                            .map(opt => opt.trim())
+                                            .filter(Boolean)
+                                            .map((opt, idx) => {
+                                                const isChecked = currentValue
+                                                    .split(',')
+                                                    .map(v => v.trim())
+                                                    .includes(opt);
+                                                return (
+                                                    <div className="form-check" key={idx} style={{ marginRight: '10px' }}>
+                                                        <input
+                                                            type="checkbox"
+                                                            className="form-check-input"
+                                                            id={`many_${param.id}_${idx}`}
+                                                            value={opt}
+                                                            checked={isChecked}
+                                                            style={{ fontSize: 18, fontWeight: 500 }}
+                                                            onChange={e => {
+                                                                const values = currentValue
+                                                                    .split(',')
+                                                                    .map(v => v.trim())
+                                                                    .filter(Boolean);
+                                                                const newValues = e.target.checked
+                                                                    ? [...values, opt]
+                                                                    : values.filter(v => v !== opt);
+                                                                handleChange(param.field_id, newValues.join(','));
+                                                            }}
+                                                        />
+                                                        <label
+                                                            className="form-check-label"
+                                                            htmlFor={`many_${param.id}_${idx}`}
+                                                            style={{ fontSize: 18, fontWeight: 500 }}
+                                                        >
+                                                            {opt}
+                                                        </label>
+                                                    </div>
+                                                );
+                                            })}
+                                    </div>
+                                )}
+
+                                {param.field_type === 'non_editable' && (
+                                    <input
+                                        type="text"
+                                        className="form-control"
+                                        value={currentValue}
+                                        readOnly
+                                        style={{ fontSize: 18, fontWeight: 500 }}
+                                    />
+                                )}
+                            </>
                         )}
                     </div>
                 );

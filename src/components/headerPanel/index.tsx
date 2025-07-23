@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import Swal from 'sweetalert2';
 import {RootState, store} from '../../redux/store';
@@ -55,6 +55,7 @@ interface HeaderPanelProps {
     setIsLoading: (isLoading: boolean) => void
     prefix: string
     setPrefix: (prefix: string) => void
+    postActive: boolean
 }
 
 export interface OutActivePhone {
@@ -76,6 +77,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      setOutboundCall,
                                                      setShowScriptPanel,
                                                      setPostActive,
+                                                     postActive,
                                                      showScriptPanel,
                                                      prefix,
                                                      setPrefix,
@@ -153,56 +155,66 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
       }
     }, [activeCalls]);
 
+    const finishCall = useRef<boolean>(false)
     useEffect(() => {
         setHandleOutboundCall(false);
 
         const first = activeCalls[0];
         const hasAppField = first !== undefined && 'application' in first;
-        const hasApp      = Boolean(first?.application);
-
+        const hasApp = Boolean(first?.application);
 
         if (hasAppField && hasApp) {
             setPostCallData(first);
         }
 
-        if (!hasActiveCall && !hasAppField && postCallData?.application) {
-            socket.emit('get_fs_report', {
-                worker,
-                session_key: sessionKey,
-                sip_login: sipLogin,
-                room_id: roomId,
-                fs_server: fsServer,
-                level: 0,
-            });
-            if (fsStatus.status === "On Break") {
-                socket.emit('change_stat_fs', {
-                    fs_server: fsServer,
+        let timeoutId: ReturnType<typeof setTimeout>;
+
+        if (!hasActiveCall && postActive && Object.values(postCallData).length) {
+            timeoutId = setTimeout(() => {
+                socket.emit('get_fs_report', {
+                    worker,
+                    session_key: sessionKey,
                     sip_login: sipLogin,
                     room_id: roomId,
-                    worker: sipLogin,
-                    session_key: sessionKey,
-                    action: 'available',
-                    page: 'online',
+                    fs_server: fsServer,
+                    level: 0,
                 });
-            }
-            setIsLoading(true)
-            socket.emit('outbound_calls', {
-                worker,
-                sip_login: sipLogin,
-                session_key: sessionKey,
-                room_id: roomId,
+                setIsLoading(true);
+            }, 3000);
+            socket.emit('change_state_fs', {
                 fs_server: fsServer,
-                project_pool: projectPoolForCall,
-                action: 'update_phone_to_call',
-                assigned_key: assignedKey,
-                log_status: 'finished',
-                phone_status: 'finished',
-                special_key: outActivePhone?.special_key,
-                project_name: outActiveProjectName,
+                sip_login: sipLogin,
+                room_id: roomId,
+                worker,
+                session_key: sessionKey,
+                // action: 'available',
+                state: "idle",
+                reason: "finished out_call",
+                page: 'online',
             });
+
+            if (!finishCall.current) {
+                socket.emit('outbound_calls', {
+                    worker,
+                    sip_login: sipLogin,
+                    session_key: sessionKey,
+                    room_id: roomId,
+                    fs_server: fsServer,
+                    project_pool: projectPoolForCall,
+                    action: 'update_phone_to_call',
+                    assigned_key: assignedKey,
+                    log_status: 'finished',
+                    phone_status: 'finished',
+                    special_key: outActivePhone?.special_key,
+                    project_name: outActiveProjectName,
+                });
+
+            }
             setPostCallData({});
         }
-    }, [activeCalls, postCallData, hasActiveCall]);
+
+        return () => clearTimeout(timeoutId);
+    }, [activeCalls, postCallData, hasActiveCall, postActive]);
 
 
     const getRegisteredSofia = (status: string) => {

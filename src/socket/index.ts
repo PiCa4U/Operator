@@ -66,6 +66,7 @@ export function initSocket(): SocketIOClient.Socket {
     });
 
     socket.on('fs_report', (data: any) => {
+        console.log("dispatchedData")
         store.dispatch(setFsReport(data));
     });
 

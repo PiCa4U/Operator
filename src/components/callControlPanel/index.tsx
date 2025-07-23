@@ -182,6 +182,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [callResults, setCallResults] = useState<ResultItem[]>([]);
     const [params, setParams]      = useState<FieldDefinition[]>([]);
     console.log("params: ", params)
+    console.log("baseFieldValues: ", baseFieldValues)
+
     const [callId, setCallId] = useState<string | null>(null);
 
     // Состояние для списка модулей, полученных с сервера
@@ -199,7 +201,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // const hasActiveCall = Array.isArray(activeCalls) ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
 
     // Логика «постобработки»
-    const POST_LIMIT = worker.includes('fs.at.akc24.ru') ? 120 : 120;
+    const POST_LIMIT = worker.includes('fs.at.akc24.ru') ? 1200 : 1200;
     const [postSeconds, setPostSeconds] = useState(POST_LIMIT);
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
     const fsReport = useSelector((state: RootState) => state.operator.fsReport);
@@ -241,24 +243,40 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     useEffect(() => {
         if (!postCallData?.call_uuid || !fsReport?.length) return;
 
-        const reportItem = fsReport.find((c: any) => c.special_key_call === postCallData.call_uuid);
+        const reportItem = fsReport.find((c: any) => (c.special_key_call === postCallData.call_uuid || c.special_key_call === postCallData.b_call_uuid));
         if (reportItem?.id) {
             setCallId(reportItem.id);
         }
     }, [fsReport, postCallData]);
 
+    const bool = false
     useEffect(() => {
         if (!postActive) return
-        const item = fsReport?.find((c: any) => c.special_key_call === postCallData?.call_uuid) || null;
+        const item = fsReport?.find((c: any) => c.special_key_call === postCallData?.call_uuid || c.special_key_call === postCallData?.b_call_uuid) || null;
+        console.log("startedItem: ", item)
+        console.log("started")
+        console.log("starteditem")
         if (item) {
+            console.log("starteditemENTER")
+
             setIsLoading(false);
-            // сохраняем локально только нужные поля
             setPostCallRecord({
                 record_name: item.record_name,
                 project_name: item.project_name
             });
+        } else {
+            console.log("startedTAKE")
+
+            socket.emit('get_fs_report', {
+                worker,
+                session_key: sessionKey,
+                sip_login: sipLogin,
+                room_id: roomId,
+                fs_server: fsServer,
+                level: 0,
+            });
         }
-    },[fsReport, setIsLoading, postCallData, postActive])
+    },[fsReport, setIsLoading, postCallData, postActive, socket, worker, sessionKey, sipLogin, roomId, fsServer, bool])
     const sanitize = (v: any) =>
         typeof v === 'string' && v.includes('|_|_|') ? '' : v;
 
@@ -335,9 +353,20 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     useEffect(() => {
         const handleReports = (msg: any) => {
-            const item = msg.find((c: any) => c.special_key_call === postCallData?.call_uuid)
+            const item = msg.find((c: any) => (c.special_key_call === postCallData?.call_uuid || c.special_key_call === postCallData?.b_call_uuid)) || null
             if (item) {
                 setIsLoading(false)
+            } else {
+                console.log("startedTAKE")
+
+                socket.emit('get_fs_report', {
+                    worker,
+                    session_key: sessionKey,
+                    sip_login: sipLogin,
+                    room_id: roomId,
+                    fs_server: fsServer,
+                    level: 0,
+                });
             }
         }
         socket.on('fs_report', handleReports);
@@ -345,7 +374,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return () => {
             socket.off('fs_report', handleReports);
         };
-    },[postCallData, setIsLoading, socket])
+    },[bool, fsServer, postCallData, roomId, sessionKey, setIsLoading, sipLogin, socket, worker])
     useEffect(() => {
         if(!hasActiveCall && !postActive){
             setCallReason(call?.call_reason || '');
@@ -682,6 +711,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const handleStop = (activeCall: ActiveCall, callSection: number) => {
         const currentUUID = activeCall?.call_uuid;
         if (!currentUUID) return;
+
         socket.emit('sofia_operations', {
             worker,
             sip_login: sipLogin,
@@ -692,18 +722,23 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             action: 'uuid_break',
             idle_set: true
         });
-        setIsLoading(true)
-        socket.emit('get_fs_report', {
-            worker,
-            session_key: sessionKey,
-            sip_login: sipLogin,
-            room_id: roomId,
-            fs_server: fsServer,
-            level: 0,
-        });
+
+        setIsLoading(true);
+
+        setTimeout(() => {
+            socket.emit('get_fs_report', {
+                worker,
+                session_key: sessionKey,
+                sip_login: sipLogin,
+                room_id: roomId,
+                fs_server: fsServer,
+                level: 0,
+            });
+        }, 3000);
+
         if (callSection === 1) {
-            setIsParams(false)
-            setPostActive(true)
+            setIsParams(false);
+            setPostActive(true);
             setPostSeconds(POST_LIMIT);
         }
     };
@@ -835,6 +870,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             state: "waiting",
             reason: "manual_return",
             page: "online",
+        });
+        socket.emit('change_stat_fs', {
+            fs_server: fsServer,
+            sip_login: sipLogin,
+            room_id: roomId,
+            worker: sipLogin,
+            session_key: sessionKey,
+            action: 'available',
+            page: 'online',
         });
         setIsLoading(true)
         socket.emit("get_fs_report", {

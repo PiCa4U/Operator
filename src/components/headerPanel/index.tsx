@@ -73,6 +73,8 @@ interface HeaderPanelProps {
     groupProjects: string[]
     setManagerPanel: (managerPanel: boolean) => void
     managerPanel: boolean,
+    setPhoneID: (number: number) => void
+    phoneID: number | null
 }
 
 
@@ -106,7 +108,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      expressCall,
                                                      groupProjects,
                                                      setManagerPanel,
-                                                     managerPanel
+                                                     managerPanel,
+                                                     setPhoneID,
+                                                     phoneID,
                                                  }) => {
     const {
         sipLogin   = '',
@@ -401,11 +405,11 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 console.log('OUTflatPhones:', flatPhones);
 
                 const phoneNumber = outActivePhone;
-                if (!phoneNumber) return;
+                if (!phoneID) return;
 
                 // ✅ Фильтруем группы, где хотя бы один телефон совпадает
                 const matchedGroups = allGroups.filter(group =>
-                    group.some(item => item.phone === phoneNumber)
+                    group.some(item => item.id === phoneID)
                 );
                 console.log("matchedGroups:", matchedGroups);
 
@@ -443,11 +447,11 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         const handleGetPhoneToCall = (msg: any) => {
             console.log("msg:", msg);
             if (!msg.length) return;
-
+            const phoneID = msg[0].id
             const phone = msg[0].phone;
             const project_name = msg[0].project;
 
-            // Сохраняем базу сразу
+            setPhoneID(phoneID)
             setSpecialKey(msg[0].special_key);
             setOutActivePhone(phone);
             setOutActiveProjectName(project_name);
@@ -532,7 +536,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     });
                 }
 
-                // 🧹 Обязательно отключаем слушатель, иначе будут дубли!
+
                 socket.off("check_express", handleCheckExpress);
             };
 
@@ -542,22 +546,24 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         const handleClickToCallStart = (msg: any) => {
             if (msg.status === 'OK') {
                 Swal.fire({ title: "Звонок запускается", icon: "success", timer: 1000 });
-                socket.emit('outbound_call_update', {
-                    worker,
-                    session_key: sessionKey,
-                    assigned_key: assignedKey,
-                    log_status: 'ringing',
-                    phone_status: 'ringing',
-                    special_key: specialKey,
-                });
-                socket.emit('change_state_fs', {
-                    sip_login: sipLogin,
-                    worker: sipLogin,
-                    session_key: sessionKey,
-                    state: "idle",
-                    reason:"outboundcall",
-                    page: 'online',
-                });
+                if (assignedKey && specialKey) {
+                    socket.emit('outbound_call_update', {
+                        worker,
+                        session_key: sessionKey,
+                        assigned_key: assignedKey,
+                        log_status: 'ringing',
+                        phone_status: 'ringing',
+                        special_key: specialKey,
+                    });
+                }
+                // socket.emit('change_state_fs', {
+                //     sip_login: sipLogin,
+                //     worker,
+                //     session_key: sessionKey,
+                //     state: "idle",
+                //     reason:"outboundcall",
+                //     page: 'online',
+                // });
             } else {
                 Swal.fire({ title: "Ошибка при старте звонка", icon: "error" });
                 socket.emit('outbound_call_update', {
@@ -570,7 +576,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 });
                 socket.emit('change_status_fs', {
                     sip_login: sipLogin,
-                    worker: sipLogin,
+                    worker,
                     session_key: sessionKey,
                     action: 'available',
                     page: 'online',
@@ -628,7 +634,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     start_type: "auto"
                 });
             }
-        }, 3000);
+        }, 10000);
         return () => clearInterval(interval);
     }, [hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, projectPoolForCall, fsStatus.state, fsStatus.status]);
 
@@ -1074,6 +1080,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                         <ModeSwitch
                             mode={showTasksDashboard ? 'tasks' : 'calls'}
                             onChange={(m: Mode) => {
+                                setManagerPanel(false);
                                 setShowTasksDashboard(m === 'tasks');
                                 setShowScriptPanel(false);
                                 setActiveProjectName("")
@@ -1148,13 +1155,13 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             <div className="card ml-3 mr-0">
                 <div className="card-body mt-0">
                     <div className="row col-12 my-0 py-0 mx-0 pr-0 pl-0" id="ver_place">
-                        <p className="mt-0 mb-1">Вер. {fsStatus?.version || '1.1.00'}</p>
+                        <p className="mt-0 mb-1">Версия {fsStatus?.version || '2.0.00'}</p>
                     </div>
-                    <div className="row col-12 pr-0">
-                        <a data-name="sharp_stop" id="exit" className="btn btn-outline-danger mr-3" href="/worker_main/">
-                            Назад
-                        </a>
-                    </div>
+                    {/*<div className="row col-12 pr-0">*/}
+                    {/*    <a data-name="sharp_stop" id="exit" className="btn btn-outline-danger mr-3" href="/worker_main/">*/}
+                    {/*        Назад*/}
+                    {/*    </a>*/}
+                    {/*</div>*/}
                 </div>
             </div>
 

@@ -13,6 +13,7 @@ import {ExpressState} from "../callControlPanel";
 import axios from "axios";
 import DatePicker from "react-datepicker";
 import { format } from 'date-fns';
+import {AssignComp} from "./components/assign";
 
 // --- Типы данных ---
 interface ColumnCell {
@@ -43,7 +44,7 @@ export interface OptionType {
     preset: Preset;
 }
 // Опции для селекта действий
-interface ActionOption {
+export interface ActionOption {
     value: string;
     label: string;
     action: Action;
@@ -109,9 +110,22 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [searchTerm, setSearchTerm] = useState('');
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc'|'desc' }|null>(null);
     const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+    const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
+    const [assignOperator, setAssignOperator] = useState<string | null>(null);
+    const [assignOperatorMap, setAssignOperatorMap] = useState<Record<number, Record<string, string>>>({});
 
+    const [flatPhones, setFlatPhones] = useState<any[]>([])
     const [expressStates, setExpressStates] = useState<Record<string, ExpressState>>({});
     const [expressConfig, setExpressConfig] = useState<Record<string, any>>({});
+
+    const operatorOptions = useMemo(() => {
+        return Object.entries(monitorUsers || {})
+            .filter(([_, data]) => data.type === 'operator')
+            .map(([login, data]) => ({
+                id: login,
+                name: `${data.name} (${data.login})` || login
+            }));
+    }, [monitorUsers]);
 
     const [modalOpen, setModalOpen] = useState(false);
     const [modalIds, setModalIds] = useState<number[]>([]);
@@ -120,7 +134,17 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [statusOptions, setStatusOptions] = useState<string[]>([])
     const [modules, setModules] = useState<ModuleType[]>([]);
 
-    // --- глобальные зависимости для запросов ---
+
+    useEffect(() => {
+        if (selectedPreset) {
+            localStorage.setItem('tasksSelectedPreset', JSON.stringify(selectedPreset));
+        } else {
+            localStorage.removeItem('tasksSelectedPreset');
+        }
+    }, [selectedPreset]);
+
+
+
     const glagolParent = "fs.at.glagol.ai";
     const {
         sipLogin   = '',
@@ -128,11 +152,9 @@ const PresetSelectorTable: React.FC<Props> = ({
     } = store.getState().credentials;
 
     const defaultStatusToState = useRef<boolean>(false)
-    // const role = "admin";
+
     const projectPool = useSelector(useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]));
     const projectNames = useMemo(() => projectPool.map(p => p.project_name), [projectPool]);
-    console.log("projectNames: ", projectNames)
-    // const projectNames = ["group_project_1", "group_project_2"]
 
     const { sessionKey } = store.getState().operator
     useEffect(() => {
@@ -225,7 +247,37 @@ const PresetSelectorTable: React.FC<Props> = ({
                 role
             });
             const data: Preset[] = response.data;
-            setPresets(data.map(p => ({ value: p.id, label: p.preset_name, preset: p })));
+            const presetOptions = data.map(p => ({ value: p.id, label: p.preset_name, preset: p }));
+            setPresets(presetOptions);
+
+            // --- Синхронизация с localStorage ---
+            const savedRaw = localStorage.getItem('tasksSelectedPreset');
+            if (savedRaw) {
+                try {
+                    const saved = JSON.parse(savedRaw) as OptionType;
+                    const matched = presetOptions.find(p => p.preset.id === saved.preset.id);
+
+                    if (matched) {
+                        const oldStructure = JSON.stringify(saved.preset.structure);
+                        const newStructure = JSON.stringify(matched.preset.structure);
+
+                        if (oldStructure !== newStructure) {
+                            console.warn("Структура пресета обновилась — обновляем selectedPreset");
+                            setSelectedPreset(matched);
+                            localStorage.setItem('tasksSelectedPreset', JSON.stringify(matched));
+                        } else {
+                            setSelectedPreset(saved);
+                        }
+                    } else {
+                        // Не найден — обнуляем
+                        setSelectedPreset(null);
+                        localStorage.removeItem('tasksSelectedPreset');
+                    }
+                } catch (err) {
+                    console.error("Ошибка разбора сохраненного пресета", err);
+                    localStorage.removeItem('tasksSelectedPreset');
+                }
+            }
         })();
     }, [glagolParent, worker, role, projectNames]);
 
@@ -244,108 +296,125 @@ const PresetSelectorTable: React.FC<Props> = ({
         return `${base}${time}${tz}`;
     }
 
-    // 2) загрузка строк при выборе пресета
     useEffect(() => {
+        // 1. Смотрим, что в LS
+        const saved = localStorage.getItem('selectedStatus');
+        if (saved === null) {
+            // если ничего нет — ничего не делаем, дальше
+            return;
+        }
+
+        console.log("statusOptions: ", statusOptions)
+        if (statusOptions.length && !statusOptions.includes(saved)) {
+            setSelectedStatus(null);
+        } else {
+            setSelectedStatus(saved);
+        }
+    }, [statusOptions]);
+
+    const loadGroupedPhones = async () => {
         if (!selectedPreset) {
             setTableData([]);
             setSelectedActionOption(null);
             return;
         }
+
+        const { preset } = selectedPreset;
+
+        const filterBy: any = {
+            project: ['IN', preset.projects],
+        };
+
+        const filterByForSelect: any = {
+            project: ['IN', preset.projects],
+        };
+
+        if (startDate && endDate) {
+            const from = formatWithTimezone(startDate, 'start');
+            const to = formatWithTimezone(endDate, 'end');
+            filterBy.created_dt = ['BETWEEN', [from, to]];
+            filterByForSelect.created_dt = ['BETWEEN', [from, to]];
+        }
+
+        if (selectedStatus) {
+            filterBy.status = ['IN', [selectedStatus]];
+        }
+        if (selectedOperator) {
+            filterBy.manager = ['IN', [selectedOperator]];
+            filterByForSelect.manager = ['IN', [selectedOperator]];
+        }
+
         setLoading(true);
+        try {
+            const response1 = await axios.post<ApiRow[]>('/api/v1/get_grouped_phones', {
+                glagol_parent: glagolParent,
+                group_table: preset.group_table,
+                filter_by: filterBy,
+                preset_id: preset.id,
+                role
+            });
 
-        (async () => {
-            try {
-                const { preset } = selectedPreset;
+            const response2 = await axios.post<Record<string, {
+                status: any; id: number
+            }[]>>('/api/v1/get_grouped_phones', {
+                glagol_parent: glagolParent,
+                group_by: ['project'],
+                group_table: preset.group_table,
+                filter_by: filterBy,
+                role
+            });
 
-                const filterBy: any = {
-                    project: ['IN', preset.projects],
-                };
+            const response3 = await axios.post<Record<string, {
+                status: any; id: number
+            }[]>>('/api/v1/get_grouped_phones', {
+                glagol_parent: glagolParent,
+                group_by: ['project'],
+                group_table: preset.group_table,
+                filter_by: filterByForSelect,
+                role
+            });
 
-                const filterByForSelect: any = {
-                    project: ['IN', preset.projects],
-                };
+            const statusOptions = Object.values(response3.data).flat().map(phone => phone.status);
+            const uniqueStatusOptions = statusOptions.filter((s, i, arr) => arr.indexOf(s) === i);
+            setStatusOptions(uniqueStatusOptions);
 
-                if (startDate && endDate) {
-                    const from = formatWithTimezone(startDate, 'start');
-                    const to   = formatWithTimezone(endDate, 'end');
-                    filterBy.created_dt = ['BETWEEN', [from, to]];
-                    filterByForSelect.created_dt = ['BETWEEN', [from, to]];
-                }
+            const projectIdData = response2.data;
+            const flatPhones = Object.values(projectIdData).flat();
+            setPhonesData(flatPhones);
 
-                if (selectedStatus) {
-                    filterBy.status = ['IN', [selectedStatus]];
-                }
+            const flat = Object.entries(projectIdData).flatMap(([project_name, list]) =>
+                list.map(item => ({ id: item.id, project_name }))
+            );
+            setFlatPhones(flatPhones)
+            console.log("flatPhones: ", flatPhones)
 
-                const response1 = await axios.post<ApiRow[]>('/api/v1/get_grouped_phones', {
-                    glagol_parent: glagolParent,
-                    group_table: preset.group_table,
-                    filter_by: filterBy,
-                    preset_id: preset.id,
-                    role
-                });
+            setIdProjectMap(flat);
 
-                const response2 = await axios.post<Record<string, {
-                    status: any; id: number
-                }[]>>('/api/v1/get_grouped_phones', {
-                    glagol_parent: glagolParent,
-                    group_by: ['project'],
-                    group_table: preset.group_table,
-                    filter_by: filterBy,
-                    role
-                });
-
-                const response3 = await axios.post<Record<string, {
-                    status: any; id: number
-                }[]>>('/api/v1/get_grouped_phones', {
-                    glagol_parent: glagolParent,
-                    group_by: ['project'],
-                    group_table: preset.group_table,
-                    filter_by: filterByForSelect,
-                    role
-                });
-
-                const statusOptions = Object.values(response3.data).flat().map(phone => phone.status)
-
-                const uniqueStatusOptions = statusOptions.filter((s, i, arr) => arr.indexOf(s) === i);
-                setStatusOptions(uniqueStatusOptions)
-                if (uniqueStatusOptions.includes('Необработано') && !defaultStatusToState.current) {
-                    const defaultStatus = 'Необработано';
-                    setSelectedStatus(defaultStatus);
-                    defaultStatusToState.current = true
-                }
-
-                // Обработка ответов
-                const projectIdData = response2.data;
-                const flatPhones = Object.values(projectIdData).flat();
-                setPhonesData(flatPhones);
-
-                const flat = Object.entries(projectIdData).flatMap(([project_name, list]) =>
-                    list.map(item => ({ id: item.id, project_name }))
-                );
-                setIdProjectMap(flat);
-
-                setTableData(response1.data);
-                setSelectedActionOption(null);
+            setTableData(response1.data);
+            setSelectedActionOption(null);
+            if (response1.data.length < 11) {
                 setCurrentPage(1);
-                setSearchTerm('');
-                setSortConfig(null);
-                setSelectedRows(new Set());
-            } finally {
-                setLoading(false);
             }
-        })();
+            setSearchTerm('');
+            setSortConfig(null);
+            setSelectedRows(new Set());
+        } catch (error) {
+            console.error("Ошибка загрузки данных:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadGroupedPhones();
     }, [
         selectedPreset,
         startDate,
         endDate,
-        setPhonesData,
-        setCurrentPage,
-        role,
-        glagolParent,
-        worker,
-        sessionKey,
-        selectedStatus
+        selectedStatus,
+        selectedOperator
     ]);
+
     // Опции для выпадающего списка действий в шапке
     const actionOptions: ActionOption[] = useMemo(() => {
         if (!selectedPreset) return [];
@@ -355,10 +424,22 @@ const PresetSelectorTable: React.FC<Props> = ({
             action: act
         }));
     }, [selectedPreset]);
+    const isReloadingRef = useRef(false);
+
+    const triggerGroupedPhonesReload = () => {
+        if (isReloadingRef.current) return;
+
+        isReloadingRef.current = true;
+        loadGroupedPhones();
+
+        setTimeout(() => {
+            isReloadingRef.current = false;
+        }, 2000); // можно чуть больше — 3 сек, если надо
+    };
 
     useEffect(() => console.log("actionOptions: ", actionOptions),[actionOptions])
     // Внутри PresetSelectorTable:
-    const processRows = (rows: ApiRow[], opt: ActionOption) => {
+    const processRows = (rows: ApiRow[], opt: ActionOption, operator?: string, allCount?: number, count?: number) => {
         const act = opt.action;
 
         // Собираем все ID и группируем по проектам
@@ -386,39 +467,86 @@ const PresetSelectorTable: React.FC<Props> = ({
 
             // groups: Record<project_name, number[]>
             Object.entries(groups).forEach(([project_name, ids]) => {
-                ids.forEach(id => {
-                    // для bulk-режима берем contact из phonesData,
-                    // а для режима строки — из rawRows, но phonesData тоже содержит contact_info
+                const idToContact = ids.map(id => {
                     const contact = phonesData.find((p: any) => p.id === id);
-                    const contactInfo = contact?.contact_info ?? {};
+                    return { id, contactInfo: contact?.contact_info ?? {} };
+                });
 
+                const groupedByContactInfo = new Map<string, { ids: number[]; kwargs: Record<string, string> }>();
+
+                idToContact.forEach(({ id, contactInfo }) => {
+                    // Фильтруем только нужные поля и подставляем default
                     const kwargs: Record<string, string> = {};
                     argDefs.forEach(({ source, default: def }) => {
                         if (!source) return;
-                        kwargs[source] = contactInfo[source] ?? def ?? '';
+                        const value = contactInfo[source];
+                        kwargs[source] = (value !== undefined && value !== null && value !== '') ? value : (def ?? '');
                     });
 
+                    const hashKey = JSON.stringify(kwargs);
+                    if (!groupedByContactInfo.has(hashKey)) {
+                        groupedByContactInfo.set(hashKey, { ids: [], kwargs });
+                    }
+                    groupedByContactInfo.get(hashKey)!.ids.push(id);
+                });
+
+                groupedByContactInfo.forEach(({ ids: groupedIds, kwargs }) => {
                     socket.emit('run_module', {
-                        uuid:        "",
-                        b_uuid:      "",
+                        uuid: "",
+                        b_uuid: "",
                         worker,
                         session_key: sessionKey,
-                        // вот отличие: вместо project_name мы передаем объект projects
                         projects: { [project_name]: kwargs },
-                        filename:    targetName,
+                        filename: targetName,
                         common_code: foundModule.common_code,
                     });
+
+                    console.log(`[run_module] project=${project_name}, ids=[${groupedIds.join(', ')}], kwargs=`, kwargs);
                 });
             });
-        } else if (act.action_type === "delete") {
+            loadGroupedPhones()
+
+        } else if (act.action_type === 'assign') {
+        Object.entries(groups).forEach(([project_name, ids]) => {
+            if (!selectedPreset?.preset.group_by) return;
+
+            const filter_by: Record<string, string> = {};
+
+            selectedPreset.preset.group_by.forEach(groupField => {
+                const sample = flatPhones.find(p => p.id === ids[0]);
+                if (sample && groupField in sample) {
+                    filter_by[groupField] = sample[groupField];
+                }
+            });
+            if (operator) {
+                axios.put('/api/v1/phones/update', {
+                    glagol_parent: "fs.at.akc24.ru",
+                    project_name,
+                    filter_by,
+                    update: {
+                        manager: operator
+                    }
+                }).catch(err => {
+                    console.error('Ошибка обновления контакта', err);
+                });
+            }
+
+        });
+        if (allCount === count) {
+            loadGroupedPhones()
+        }
+    }
+    else if (act.action_type === "delete") {
             Object.entries(groups).forEach(([project_name, ids]) => {
                 socket.emit("delete_phone", {
                     worker, session_key: sessionKey, project_name, ids
                 });
             });
+            loadGroupedPhones()
         }
 
         Swal.fire("Готово", "Операции отправлены на сервер", "success");
+        // loadGroupedPhones()
     };
 
 
@@ -441,20 +569,23 @@ const PresetSelectorTable: React.FC<Props> = ({
             return Swal.fire("Нечего обрабатывать", "Отметьте хотя бы одну строку", "info");
         }
 
+        if (actionOpt?.action.action_type === "assign") {
+
+        }
         // 3) Если клик из строки и ровно один ID в одной строке — мгновенно обрабатываем
         if (isRowClick && rows.length === 1 && rows[0].id_list.length === 1) {
             return processRows(rows, opt!);
         }
 
         // 4) Если одна строка, но несколько ID — открываем модалку
-        if (rows.length === 1 && rows[0].id_list.length > 1) {
+        if (rows.length === 1 && rows[0].id_list.length > 1 && actionOpt?.action.action_type !== "assign") {
             setModalIds(rows[0].id_list);
             setModalAction(opt!.action);
             setModalOpen(true);
             return;
         }
 
-        // 5) Bulk: несколько строк — сразу обрабатываем
+
         processRows(rows, opt!);
     };
 
@@ -505,88 +636,6 @@ const PresetSelectorTable: React.FC<Props> = ({
             return { key: colKey, direction: prev.direction==='asc' ? 'desc' : 'asc' };
         });
     };
-    const handleProcess = (row: ApiRow) => {
-        if (!selectedActionOption) {
-            return Swal.fire('Ошибка', 'Выберите действие в шапке', 'error');
-        }
-        const act = selectedActionOption.action;
-
-        // 1) Построим словарь id → project_name
-        const idToProject = idProjectMap.reduce<Record<number, string>>((acc, { id, project_name }) => {
-            acc[id] = project_name;
-            return acc;
-        }, {});
-
-        const orderColumnKey = Object
-            .entries(selectedPreset!.preset.structure)
-            .find(([_, cfg]) => cfg.name === 'ID заказа')?.[0];
-        console.log("row.id_list: ", row.id_list)
-        // Достаём текст заказа (первый элемент массива)
-        let orderIdText = row.id_list[0] + ''; // fallback на первый из id_list
-        if (orderColumnKey) {
-            const cell = row[orderColumnKey] as ColumnCell;
-            orderIdText = cell.value[0] ?? orderIdText;
-        }
-        // 2) Сгруппируем id_list по проектам
-        const groups = row.id_list.reduce<Record<string, number[]>>((acc, id) => {
-            const proj = idToProject[id] || 'unknown';
-            if (!acc[proj]) acc[proj] = [];
-            acc[proj].push(id);
-            return acc;
-        }, {});
-
-        // 3) Проверим, что для code-actions есть модуль
-        let missingModule = false;
-        let foundModule: ModuleType | undefined;
-        if (act.action_type === 'code') {
-            foundModule = modules.find(m => m.filename === act.code_filename);
-            if (!foundModule) {
-                missingModule = true;
-            }
-        }
-
-        Swal.fire({
-            title: `Применить «${act.action_name}» к заказу ${orderIdText}?`,
-            icon: 'question',
-            showCancelButton: true,
-            confirmButtonText: 'Выполнить',
-        }).then(result => {
-            if (!result.isConfirmed) return;
-
-            if (act.action_type === 'code') {
-                if (missingModule) {
-                    return Swal.fire(
-                        'Ошибка',
-                        `Модуль "${act.code_filename}" не найден в загруженных модулях.`,
-                        'error'
-                    );
-                }
-
-            }
-            else if (act.action_type === 'delete') {
-                // для каждого проекта отправляем delete_phone
-                Object.entries(groups).forEach(([project_name, ids]) => {
-                    console.log("args: ",{
-                        worker,
-                        session_key:  sessionKey,
-                        project_name,
-                        ids,
-                    })
-                    // socket.emit('delete_phone', {
-                    //     worker,
-                    //     session_key:  sessionKey,
-                    //     project_name,
-                    //     ids,
-                    // });
-                });
-            }
-            else {
-                // остальные типы action_type…
-            }
-
-            Swal.fire('Готово', 'Операция отправлена на сервер', 'success');
-        });
-    };
 
     const toggleSelectAll = () => {
         const allKeys = paginatedRows.map(r => r.id_list.join(','));
@@ -620,36 +669,50 @@ const PresetSelectorTable: React.FC<Props> = ({
     const fetchStatuses = async () => {
         const result: Record<string, ExpressState> = {};
 
-        await Promise.all(
-            Object.entries(expressConfig).map(async ([project, config]) => {
-                const express_id = config.express_config.id;
+        const configEntries = Object.entries(expressConfig);
+        if (configEntries.length === 0) return;
 
-                const [statusRes, agentsRes] = await Promise.all([
-                    axios.get<{
-                        result: any; active: boolean; active_calls?: number
-                    }>('/api/v1/express_status', {
-                        params: { express_id }
-                    }),
-                    axios.get<{
-                        result: any; operators: string[]
-                    }>('/api/v1/express_agents', {
-                        params: { express_id }
-                    }),
-                ]);
+        const ids = configEntries.map(([_, cfg]) => cfg.express_config.id);
+
+        try {
+            const response = await axios.get('/api/v1/express_agents_statuses', {
+                params: { ids },
+                paramsSerializer: params =>
+                    params.ids.map((id: number) => `ids=${id}`).join('&')
+            });
+
+            const {
+                operators = {},
+                statuses = {}
+            }: {
+                operators: Record<string, string[]>,
+                statuses: Record<string, { active: boolean, active_calls: number }>
+            } = response.data;
+
+            for (const [project, cfg] of configEntries) {
+                const express_id = cfg.express_config.id;
+                const idStr = String(express_id);
+
+                const status = statuses[idStr];
+                const agents = operators[idStr];
+
+                if (!status) continue;
 
                 result[project] = {
                     project,
                     express_id,
-                    active: statusRes.data.result.active,
-                    calls: statusRes.data.result.active_calls || 0,
-                    agents: agentsRes.data.result.operators || [],
+                    active: status.active,
+                    calls: status.active_calls,
+                    agents: agents || []
                 };
-            })
-        );
+            }
 
-        console.log('result:', result);
-        setExpressStates(result);
+            setExpressStates(result);
+        } catch (err) {
+            console.error("Ошибка при получении express_agents_statuses:", err);
+        }
     };
+
 
     const handleStartExpress = async (project: string) => {
         await axios.post('/api/v1/start_express', {
@@ -684,17 +747,32 @@ const PresetSelectorTable: React.FC<Props> = ({
     }, [expressConfig, role]);
 
     const renderExpressCards = () => (
-        <div className="d-flex flex-row flex-wrap gap-3 ps-3 ml-4">
+        <div
+            // className="d-flex flex-row flex-wrap gap-3 ps-3 ml-4"
+            style={{marginLeft:30, display: "flex", flexDirection: "row", flexWrap: "wrap", gap: 20}}
+        >
             {Object.entries(expressStates).map(([project, state]) => (
                 <div
                     key={project}
-                    className="card p-3 flex-shrink-0"
-                    style={{ width: '220px' }}
+                    className="card"
+                    style={{
+                        minWidth: '220px',
+                        padding: 16,
+                        borderRadius: 8,
+                        flex: '0 1 auto'
+                    }}
                 >
-                    <div><strong>Проект:</strong> {findNameProject(project)}</div>
-                    <div><strong>Express активен:</strong> {state.active ? 'Да' : 'Нет'}</div>
-                    <div><strong>Операторов в ожидании:</strong> {state.agents.length}</div>
-                    <div><strong>Активных вызовов:</strong> {state.calls}</div>
+                    {[
+                        { label: "Проект:", value: findNameProject(project) },
+                        { label: "Express активен:", value: state.active ? "Да" : "Нет" },
+                        { label: "Операторов в ожидании:", value: state.agents.length },
+                        { label: "Активных вызовов:", value: state.calls },
+                    ].map((item, idx) => (
+                        <div key={idx}>
+                            <strong>{item.label}</strong> {item.value}
+                        </div>
+                    ))}
+
                     <div className="mt-2 d-flex gap-2">
                         {state.active ? (
                             <button
@@ -713,6 +791,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                         )}
                     </div>
                 </div>
+
             ))}
         </div>
     );
@@ -725,21 +804,44 @@ const PresetSelectorTable: React.FC<Props> = ({
         setEndDate(end);
     };
 
-
+    const statusLabels: Record<string, string> = {
+        to_call: "Необработано",
+        add: "Доп. контакт",
+        schedule: "Отложенный",
+        finished: "Завершен"
+    };
+    useEffect(() => {
+        console.log("selectedRows: ", selectedRows)
+    },[selectedRows])
     return (
         <div>
             {role === 'manager' && renderExpressCards()}
             <div className="card p-4 ml-4">
-                <div style={{ display: 'flex', gap: 16, marginBottom: 8 }}>
-                    {/* Пресеты */}
+                <div
+                    style={{
+                        display: 'grid',
+                        gap: 16,
+                        marginBottom: 8,
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+                        alignItems: 'end',
+                    }}
+                >
+                {/* Пресеты */}
+
                     <div style={{ width: 250 }}>
                         <SearchableSelect
                             value={selectedPreset ? selectedPreset.preset.id : ''}
                             isSearchable
                             onChange={val => {
+                                if (selectedPreset && String(selectedPreset.preset.id) === val) {
+                                    return;
+                                }
+
                                 const p = presets.find(x => String(x.preset.id) === val);
-                                setTableData([])
-                                setSelectedPreset(p || null);
+                                if (p) {
+                                    setTableData([]);
+                                    setSelectedPreset(p);
+                                }
                             }}
                             options={presets.map(p => ({
                                 id:   p.value,
@@ -747,11 +849,11 @@ const PresetSelectorTable: React.FC<Props> = ({
                             }))}
                             placeholder="Выберите пресет..."
                         />
+
                     </div>
 
                     {selectedPreset && (
                         <>
-                            {/* Поиск */}
                             <div style={{ width: 250 }}>
                                 <input
                                     type="text"
@@ -769,8 +871,8 @@ const PresetSelectorTable: React.FC<Props> = ({
                                     }}
                                     isSearchable
                                     options={statusOptions.map(s => ({
-                                        id:   s,
-                                        name: s
+                                        id: s,
+                                        name: statusLabels[s] || s
                                     }))}
                                     placeholder="Выберите статус..."
                                 />
@@ -787,6 +889,16 @@ const PresetSelectorTable: React.FC<Props> = ({
                                     dateFormat="dd.MM.yyyy"
                                 />
                             </div>
+                            <div style={{ width: 250 }}>
+                                <SearchableSelect
+                                    value={selectedOperator ?? ''}
+                                    onChange={(val: string) => setSelectedOperator(val)}
+                                    isSearchable
+                                    options={operatorOptions}
+                                    placeholder="Выберите оператора..."
+                                />
+                            </div>
+
                             {/* Действия */}
                             <div style={{ width: 250 }}>
                                 <SearchableSelect
@@ -803,17 +915,29 @@ const PresetSelectorTable: React.FC<Props> = ({
                                     placeholder="Выберите действие..."
                                 />
                             </div>
+                            {selectedActionOption?.action.action_type === "assign" ? (
+                                <div style={{ minWidth: 400 }}>
+                                    <AssignComp
+                                        opt={selectedActionOption}
+                                        rows={selectedRows}
+                                        processRows={processRows}
+                                    />
+                                </div>
+                            ) : (
+                                <button
+                                    onClick={() => {
+                                        const keys = Array.from(selectedRows);
+                                        const rows = processedRows.filter(r =>
+                                            keys.includes(r.id_list.join(','))
+                                        );
+                                        handleBulkProcess(rows);
+                                    }}
+                                    className="btn btn-outline-light text text-dark mx-1 ml-2"
+                                >
+                                    Обработать
+                                </button>
+                            )}
 
-                            <button
-                                onClick={() => {
-                                    const keys = Array.from(selectedRows);
-                                    const rows = processedRows.filter(r => keys.includes(r.id_list.join(",")));
-                                    handleBulkProcess(rows);
-                                }}
-                                className="btn btn-outline-light text text-dark mx-1 ml-2"
-                            >
-                                Обработать
-                            </button>
                         </>
                     )}
                 </div>
@@ -866,32 +990,48 @@ const PresetSelectorTable: React.FC<Props> = ({
                                     const key = row.id_list.join(',');
                                     return (
                                         <tr key={key}>
+                                            {/* Чекбокс */}
                                             <td className="border p-2 text-center">
                                                 <input
                                                     type="checkbox"
                                                     className={styles.customCheckbox}
                                                     checked={selectedRows.has(key)}
                                                     onChange={() => toggleRow(key)}
-                                                    style={{cursor: "pointer"}}
+                                                    style={{ cursor: "pointer" }}
                                                 />
                                             </td>
+
+                                            {/* Данные по колонкам */}
                                             {Object.keys(selectedPreset.preset.structure)
                                                 .sort((a, b) => Number(a) - Number(b))
                                                 .map(colKey => {
-                                                    const cell = row[colKey] as ColumnCell;
+                                                    // Попытка безопасно достать ячейку
+                                                    const maybeCell = row[colKey] as ColumnCell | undefined;
                                                     const def = selectedPreset.preset.structure[colKey].default;
+
+                                                    // Если ячейка или её value отсутствует — рендерим default
+                                                    if (!maybeCell || !Array.isArray(maybeCell.value)) {
+                                                        return (
+                                                            <td key={colKey} className="border p-2 align-top">
+                                                                {def}
+                                                            </td>
+                                                        );
+                                                    }
+
+                                                    // Иначе — отобразим все элементы массива или default, если он пуст
                                                     return (
                                                         <td key={colKey} className="border p-2 align-top">
-                                                            {Array.isArray(cell.value) && cell.value.length > 0 ? (
-                                                                cell.value.map((item, idx) => (
+                                                            {maybeCell.value.length > 0
+                                                                ? maybeCell.value.map((item, idx) => (
                                                                     <div key={idx}>{item}</div>
                                                                 ))
-                                                            ) : (
-                                                                def
-                                                            )}
+                                                                : def
+                                                            }
                                                         </td>
                                                     );
                                                 })}
+
+                                            {/* Колонка с кнопками действий */}
                                             <td className="border p-2">
                                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                                                     <button
@@ -900,15 +1040,24 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                     >
                                                         Открыть
                                                     </button>
-                                                    {actionOptions.map(opt => (
-                                                        <button
-                                                            key={opt.label}
-                                                            className="btn btn-outline-light text-dark"
-                                                            onClick={() => handleBulkProcess([row], opt, true)}
-                                                        >
-                                                            {opt.label}
-                                                        </button>
-                                                    ))}
+
+                                                    {actionOptions.map(opt => {
+                                                        if (opt.action?.action_type === "assign") {
+                                                            return (
+                                                                <AssignComp opt={opt} row={row} processRows={processRows}/>
+                                                            );
+                                                        }
+
+                                                        return (
+                                                            <button
+                                                                key={opt.label}
+                                                                className="btn btn-outline-light text-dark"
+                                                                onClick={() => handleBulkProcess([row], opt, true)}
+                                                            >
+                                                                {opt.label}
+                                                            </button>
+                                                        );
+                                                    })}
                                                 </div>
                                             </td>
 
@@ -966,6 +1115,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                     glagolParent={glagolParent}
                     role={role}
                     modules={modules}
+                    onAfterAction={loadGroupedPhones}
                 />
             </div>
         </div>

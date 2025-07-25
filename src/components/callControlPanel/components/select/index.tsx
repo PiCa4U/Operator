@@ -51,11 +51,14 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
 
     valueContainer: (base) => ({
         ...base,
+        display: 'flex',
+        flexWrap: 'nowrap',
+        alignItems: 'center',
         padding: '0 .75rem',
         height: 'calc(1.5em + .75rem + 2px)',
-        display: 'flex',
-        alignItems: 'center',
         overflow: 'hidden',
+        flex: 1,
+        minWidth: 0,
     }),
 
     placeholder: (base) => ({
@@ -63,14 +66,23 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
         lineHeight: 'calc(1.5em + .75rem + 2px)',
         color: '#495057',
     }),
+    input: (base) => ({
+        ...base,
+        flexShrink: 0,
+        flexGrow: 0,
+        width: 'auto',
+        minWidth: 2,
+    }),
+
 
     singleValue: (base) => ({
         ...base,
-        lineHeight: 'calc(1.5em + .75rem + 2px)',
-        color: '#495057',
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
+        flexShrink: 1,
+        flexGrow: 1,
+        minWidth: 0,
         maxWidth: '100%',
     }),
 

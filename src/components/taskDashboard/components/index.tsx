@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useMemo} from 'react';
+import React, {useState, useEffect, useMemo, useRef} from 'react';
 import Swal from 'sweetalert2';
 import { socket } from '../../../socket';
 import {store} from "../../../redux/store";
@@ -35,6 +35,8 @@ interface Props {
     modules?: ModuleType[]
     onSelectionChange?: (ids: number[]) => void
     handleGroupSave?: () => void
+    phoneID?: number | null
+    onAfterAction?: () => void;
 }
 
 const GroupActionModal: React.FC<Props> = ({
@@ -49,7 +51,9 @@ const GroupActionModal: React.FC<Props> = ({
                                                idProjectMap,
                                                modules,
                                                onSelectionChange,
-                                               handleGroupSave
+                                               handleGroupSave,
+                                               phoneID,
+                                               onAfterAction
                                            }) => {
     const { sipLogin = '', worker = '' } = store.getState().credentials;
     const [rawRows, setRawRows] = useState<RawRow[]>([]);
@@ -94,35 +98,48 @@ const GroupActionModal: React.FC<Props> = ({
     const unique3 = useMemo(() => Array.from(new Set(rawRows.map(r => r[f3Key]).filter(Boolean))), [rawRows, f3Key]);
     const uniqueStatus = useMemo(() => Array.from(new Set(rawRows.map(r => r.status))), [rawRows]);
 
+    const wasInitialized = useRef(false);
+
     // пересчёт подходящих под фильтры ID
     const matchingIds = useMemo(() => {
-        // флаги — выбран ли хоть один фильтр
         const anyGroup1 = selectedFilters.group1.size > 0;
         const anyGroup2 = selectedFilters.group2.size > 0;
         const anyGroup3 = selectedFilters.group3.size > 0;
         const anyStatus = selectedFilters.status.size > 0;
 
-        // если ни одного фильтра не выбрано — считаем, что подходят все
         const noFilters = !anyGroup1 && !anyGroup2 && !anyGroup3 && !anyStatus;
 
+        if (noFilters) {
+            if (phoneID && rawRows.some(r => r.id === phoneID)) {
+                return [phoneID];
+            }
+            return rawRows.map(r => r.id);
+        }
+
         return rawRows
-            .filter(r => {
-                if (noFilters) return true;
-                // попадает ли строка хотя бы под один из выбранных фильтров?
-                return (
-                    (anyGroup1 && selectedFilters.group1.has(r[f1Key])) ||
-                    (anyGroup2 && selectedFilters.group2.has(r[f2Key])) ||
-                    (anyGroup3 && selectedFilters.group3.has(r[f3Key])) ||
-                    (anyStatus && selectedFilters.status.has(r.status))
-                );
-            })
+            .filter(r =>
+                (anyGroup1 && selectedFilters.group1.has(r[f1Key])) ||
+                (anyGroup2 && selectedFilters.group2.has(r[f2Key])) ||
+                (anyGroup3 && selectedFilters.group3.has(r[f3Key])) ||
+                (anyStatus && selectedFilters.status.has(r.status))
+            )
             .map(r => r.id);
-    }, [rawRows, selectedFilters, f1Key, f2Key, f3Key]);
+    }, [rawRows, selectedFilters, f1Key, f2Key, f3Key, phoneID]);
 
     // при любом изменении matchingIds — помечаем их галочками
     useEffect(() => {
+        if (!wasInitialized.current) {
+            wasInitialized.current = true;
+            if (phoneID && rawRows.some(r => r.id === phoneID)) {
+                setSelectedIds(new Set([phoneID]));
+                return;
+            }
+            setSelectedIds(new Set(rawRows.map(r => r.id)));
+            return;
+        }
+
         setSelectedIds(new Set(matchingIds));
-    }, [matchingIds]);
+    }, [matchingIds, rawRows, phoneID]);
 
     const allSelected = rawRows.length > 0 && rawRows.every(r => selectedIds.has(r.id));
     const toggleSelectAll = () =>
@@ -139,7 +156,7 @@ const GroupActionModal: React.FC<Props> = ({
     }
 
     const handleConfirm = () => {
-        // 1) Группируем выделенные ID по проектам
+
         const groups = Array.from(selectedIds).reduce<Record<string, number[]>>((acc, id) => {
             const proj = idToProject[id];
             if (!proj) return acc;
@@ -160,15 +177,17 @@ const GroupActionModal: React.FC<Props> = ({
                     project_name,
                     ids,
                 })
-                // socket.emit('delete_phone', {
-                //     worker,
-                //     session_key: sessionKey,
-                //     project_name,
-                //     ids,
-                // });
+                socket.emit('delete_phone', {
+                    worker,
+                    session_key: sessionKey,
+                    project_name,
+                    ids,
+                });
             });
             Swal.fire('Готово', 'Запросы на удаление отправлены', 'success');
-
+            if (onAfterAction) {
+                onAfterAction()
+            }
         } else if (action?.action_type === 'code') {
                 const targetName = action.code_filename.replace(/\.py$/, '');
                 const foundModule = modules?.find(m => m.filename.replace(/\.py$/, '') === targetName);
@@ -178,12 +197,44 @@ const GroupActionModal: React.FC<Props> = ({
 
                 type KwargDef = { source: string; default?: string };
                 const argDefs = Object.values(foundModule.kwargs || {}) as KwargDef[];
-
+                console.log("groupedByContactInfoargDefs: ", argDefs)
+                console.log("groupsgroupsgroupsgroupsgroupsgroupsgroups12342312: ", groups)
                 Object.entries(groups).forEach(([project_name, ids]) => {
-                    ids.forEach(id => {
-                        const contact = rawRows.find((p: any) => p.id === id);
-                        const contactInfo = contact?.contact_info ?? {};
+                    const idToContact = ids.map(id => {
+                        const contact = rawRows.find(r => r.id === id);
+                        return {
+                            id,
+                            contactInfo: contact?.contact_info ?? {},
+                            project: contact?.project ?? project_name,
+                        };
+                    });
 
+                    const groupedByContactInfo = new Map<string, { ids: number[]; contactInfo: any; project: string }>();
+
+                    idToContact.forEach(({ id, contactInfo, project }) => {
+                        // 👉 строим подмножество contactInfo только по используемым source
+                        const usedFields = argDefs.reduce<Record<string, string>>((acc, { source, default: def }) => {
+                            if (!source) return acc;
+
+                            const value = contactInfo[source];
+                            acc[source] = (value !== undefined && value !== null && value !== '') ? value : (def ?? '');
+                            return acc;
+                        }, {});
+
+                        const hashKey = JSON.stringify(usedFields);
+
+                        if (!groupedByContactInfo.has(hashKey)) {
+                            groupedByContactInfo.set(hashKey, {
+                                ids: [],
+                                contactInfo: usedFields,
+                                project,
+                            });
+                        }
+                        groupedByContactInfo.get(hashKey)!.ids.push(id);
+                    });
+                    console.log("groupedByContactInfo: ", groupedByContactInfo)
+
+                    groupedByContactInfo.forEach(({ ids: groupedIds, contactInfo, project }) => {
                         const kwargs: Record<string, string> = {};
                         argDefs.forEach(({ source, default: def }) => {
                             if (!source) return;
@@ -191,25 +242,30 @@ const GroupActionModal: React.FC<Props> = ({
                         });
 
                         socket.emit('run_module', {
-                            uuid:        "",
-                            b_uuid:      "",
+                            uuid: "",
+                            b_uuid: "",
                             worker,
                             session_key: sessionKey,
-                            projects: {[contact?.project]: kwargs},
-                            filename:    foundModule.filename.replace(/\.py$/, ''),
+                            projects: { [project]: kwargs },
+                            filename: foundModule.filename.replace(/\.py$/, ''),
                             common_code: foundModule.common_code,
                         });
+
+                        console.log(`[modal/run_module] project=${project}, ids=[${groupedIds.join(', ')}], kwargs=`, kwargs);
                     });
                 });
 
-            } else {
+            if (onAfterAction) {
+                onAfterAction()
+            }
+        } else {
             Swal.fire('Ошибка', 'Неподдерживаемый тип действия', 'error');
         }
 
         onClose();
     };
 
-    // загрузка данных при открытии
+
     useEffect(() => {
         if (!isOpen) return;
         setLoading(true);
@@ -227,7 +283,12 @@ const GroupActionModal: React.FC<Props> = ({
                 const allRows: RawRow[] = flattenRows(raw);
                 const filtered = allRows.filter(r => ids.includes(r.id));
                 setRawRows(filtered);
-                setSelectedIds(new Set(filtered.map(r => r.id)));
+                setSelectedIds(() => {
+                    if (phoneID && filtered.some(r => r.id === phoneID)) {
+                        return new Set([phoneID]);
+                    }
+                    return new Set(filtered.map(r => r.id));
+                });
                 setSelectedFilters({
                     group1: new Set(),
                     group2: new Set(),

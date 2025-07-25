@@ -13,8 +13,7 @@ import TasksDashboard, {ApiRow, OptionType, Preset} from "./components/taskDashb
 import stylesButton from './components/callControlPanel/index.module.css';
 import axios from "axios";
 import {ManagerPanel} from "./components/managerPanel";
-
-
+import Swal from "sweetalert2";
 
 export interface ModuleData {
     start_modes: string[];
@@ -42,17 +41,24 @@ const App: React.FC = () => {
     const [assignedKey, setAssignedKey] = useState('');
     const [isLoading,    setIsLoading]    = useState(false);
     const [specialKey, setSpecialKey] = useState<string>('')
-    // const [showTasksDashboard, setShowTasksDashboard] = useState<boolean>(false);
+
     const [modules, setModules] = useState<ModuleData[]>([]);
     const [monoModules, setMonoModules] = useState<MonoProjectsModuleData>({})
-    const [scriptProject, setScriptProject] = useState<string>("")
+    const [scriptProject, setScriptProject] = useState<string>("");
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
     const [expressCall, setExpressCall] = useState<boolean>(false)
 
+    const [phoneID, setPhoneID] = useState<number|null>(null)
+
+    useEffect(() => console.log("phoneID:", phoneID ),[phoneID])
     const { start: defaultStart, end: defaultEnd } = getInitialDateRange();
     const [startDate, setStartDate] = useState<Date | null>(defaultStart);
     const [endDate, setEndDate]     = useState<Date | null>(defaultEnd);
-    const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
+    const [selectedStatus, setSelectedStatus] = useState<string | null>(() => {
+        const saved = localStorage.getItem('selectedStatus');
+        console.log("saved: ", saved)
+        return saved !== null ? saved : null;
+    });
 
     const [openedGroup, setOpenedGroup] = useState<any[]>([]);
     const [phonesData, setPhonesData] = useState<any[]>([])
@@ -65,17 +71,20 @@ const App: React.FC = () => {
     const startModulesRanRef = useRef<boolean>(false);
     const { sessionKey } = store.getState().operator
 
-    // useEffect(() => {
-    //     if (selectedCall && )
-    //
-    // },[selectedCall])
+    useEffect(() => {
+        if (selectedStatus !== null) {
+            localStorage.setItem('selectedStatus', selectedStatus);
+
+        } else {
+            localStorage.setItem('selectedStatus', "");
+        }
+    }, [selectedStatus]);
 
     const [prefix, setPrefix] = useState<string>('')
     const [get_callcenter, setGet_callcenter] = useState<boolean>(false)
     const [scriptDir, setScriptDir] = useState<"inbound" | "outbound" >("inbound")
     // const [currentPresetPage, setCurrentPresetPage]         = useState(1);
     const [presets, setPresets] = useState<OptionType[]>([]);
-
     const [showTasksDashboard, setShowTasksDashboard] = useState<boolean>(() => {
         const saved = localStorage.getItem('showTasksDashboard');
         return saved !== null ? JSON.parse(saved) : false;
@@ -85,7 +94,7 @@ const App: React.FC = () => {
         const saved = localStorage.getItem('tasksCurrentPage');
         return saved !== null ? parseInt(saved, 10) : 1;
     });
-
+    useEffect(() => console.log("currentPresetPage: ", currentPresetPage),[currentPresetPage])
     const [selectedPreset, setSelectedPreset] = useState<OptionType | null>(() => {
         const saved = localStorage.getItem('tasksSelectedPreset');
         return saved ? JSON.parse(saved) as OptionType : null;
@@ -138,10 +147,23 @@ const App: React.FC = () => {
         tomorrow.setDate(tomorrow.getDate() + 1);
         return { start: today, end: tomorrow };
     }
+    const logoutShownRef = useRef(false);
 
-// Внутри компонента App:
+    const handleLogout = () => {
+        if (logoutShownRef.current) return;
 
-// И эффект, который будет сохранять изменения в localStorage:
+        logoutShownRef.current = true;
+
+        window.location.href = "https://my.glagol.ai/accounts/login/?next=/projects/";
+    };
+
+    useEffect(() => {
+        socket.on('logout', handleLogout);
+        return () => {
+            socket.off('logout', handleLogout);
+        };
+    }, []);
+
     useEffect(() => {
         const now = new Date().toISOString();
         localStorage.setItem(
@@ -164,13 +186,7 @@ const App: React.FC = () => {
     }, [currentPresetPage]);
 
 // 3) selectedPreset
-    useEffect(() => {
-        if (selectedPreset) {
-            localStorage.setItem('tasksSelectedPreset', JSON.stringify(selectedPreset));
-        } else {
-            localStorage.removeItem('tasksSelectedPreset');
-        }
-    }, [selectedPreset]);
+
 
     useEffect(() => console.log("scriptProject: ", scriptProject),[scriptProject])
     useEffect(() => {
@@ -388,7 +404,12 @@ const App: React.FC = () => {
             setOutActivePhone(null);
             setGet_callcenter(false);
             setOutActiveProjectName('');
+            setPhoneID(null)
             setAssignedKey('');
+            setOpenedGroup([])
+            setPhonesData([])
+            setOpenedPhones([])
+            setGroupIDs([])
         }
     }, [activeCall, postActive]);
 
@@ -425,24 +446,27 @@ const App: React.FC = () => {
         const getOuboundProject = (msg:any) => {
             setScriptDir("outbound")
             setActiveProjectName(msg.project_name)
+            if (expressCall){
+                setPhoneID(msg.phone_line[0].id)
+            }
         }
         socket.on('get_out_start', getOuboundProject);
         return () => {
             socket.off('get_out_start', getOuboundProject);
         };
     },[])
-    useEffect(()=> {
-        if (postActive && sessionKey) {
-            socket.emit('get_fs_report', {
-                session_key: sessionKey,
-                sip_login: sipLogin,
-                level: 0,
-                date_range: "",
-                phone_search: "",
-            });
-            setCurrentPage(1)
-        }
-    },[showScriptPanel, postActive, sessionKey])
+    // useEffect(()=> {
+    //     if (postActive && sessionKey) {
+    //         socket.emit('get_fs_report', {
+    //             session_key: sessionKey,
+    //             sip_login: sipLogin,
+    //             level: 0,
+    //             date_range: "",
+    //             phone_search: "",
+    //         });
+    //         setCurrentPage(1)
+    //     }
+    // },[showScriptPanel, postActive, sessionKey])
 
     useEffect(() => {
         const handleFsDiaDes = (msg: any) => {
@@ -469,7 +493,7 @@ const App: React.FC = () => {
 
         const handleCheckExpress = (check: any) => {
             console.log("check_express response:", check);
-            if (check.express === true && check.assigned_key) {
+            if (check.express && check.assigned_key) {
                 setShowTasksDashboard(true)
                 setAssignedKey(check.assigned_key);
                 setExpressCall(check.express)
@@ -481,6 +505,7 @@ const App: React.FC = () => {
                     session_key: sessionKey,
                     project_name: activeProjectName,
                     phones: [activeCalls[0].cid_num],
+                    express: check.express
                 });
             }
         };
@@ -502,6 +527,15 @@ const App: React.FC = () => {
                     });
 
                 }
+            }
+            if (expressCall) {
+                socket.emit("accept_express_call",{
+                    worker,
+                    session_key: sessionKey,
+                    assigned_key: assignedKey,
+                    sip_login: sipLogin,
+                    project_name: msg.project_name
+                })
             }
         };
 
@@ -591,11 +625,11 @@ const App: React.FC = () => {
                 console.log('OUT1121flatPhones:', flatPhones);
 
                 const phoneNumber = selectedCall.b_line_num;
-                if (!phoneNumber) return;
+                if (!phoneID) return;
 
                 // ✅ Фильтруем группы, где хотя бы один телефон совпадает
                 const matchedGroups = allGroups.filter(group =>
-                    group.some(item => item.phone === phoneNumber)
+                    group.some(item => item.id === phoneID)
                 );
                 console.log("matchedGroups:", matchedGroups);
 
@@ -629,16 +663,16 @@ const App: React.FC = () => {
         };
 
         fetchPresetsAndCheckPhone();
-    }, [selectedCall]);
+    }, [selectedCall, phoneID]);
 
     useEffect(() => {
         const handleFsStatus = (msg: any) => {
             dispatch(setFsStatus(msg));
-            // if (msg.status === "Available (On Demand)" && msg.state === "Idle") {
-            //     setPostActive(true);
-            // } else if (msg.status === "Available (On Demand)" && msg.state !== "Idle") {
-            //     setPostActive(false);
-            // }
+            if (msg.status === "Available (On Demand)" && msg.state === "Idle") {
+                setPostActive(true);
+            } else if (msg.status === "Available (On Demand)" && msg.state !== "Idle") {
+                setPostActive(false);
+            }
         };
 
         const handleFsCalls = (msg: any) => {
@@ -684,19 +718,6 @@ const App: React.FC = () => {
             socket.emit('get_callcenter_queues', requestParams);
         }
     }, [activeCall, activeCalls]);
-    //TODO fix
-    // socket.on('data_saved', () => {
-    //     const sessionKey = store.getState().operator.sessionKey;
-    //     const sipLogin   = getCookies('sip_login') || '';
-    //
-    //     socket.emit('get_fs_report', {
-    //         session_key:  sessionKey,
-    //         sip_login:    sipLogin,
-    //         level:        0,
-    //         date_range:   '',
-    //         phone_search: '',
-    //     });
-    // });
 
     const findNameProject = (projectName: string)=> {
         if (!projectName) return "";
@@ -742,6 +763,8 @@ const App: React.FC = () => {
                 groupProjects={groupProjects}
                 setManagerPanel={setManagerPanel}
                 managerPanel={managerPanel}
+                setPhoneID={setPhoneID}
+                phoneID={phoneID}
             />
 
             {managerPanel ? (
@@ -791,28 +814,17 @@ const App: React.FC = () => {
                                     {!postActive && !activeCall && openedPhones.length > 0 && (
                                         <div style={{ marginLeft: 13, marginRight: 14 }}>
                                             {groupProjects.length > 1 && (
-                                                <div
-                                                    style={{
-                                                        display: "flex",
-                                                        gap: "8px",
-                                                        marginBottom: "6px",
-                                                        marginLeft: "25px",
-                                                    }}
-                                                >
-                                                    {groupProjects.map((proj) => {
+                                                <div style={{ display: "flex", gap: "8px", marginBottom: "6px", marginLeft: "25px" }}>
+                                                    {groupProjects.map(proj => {
                                                         const isActive = scriptProject === proj;
                                                         return (
                                                             <button
                                                                 key={proj}
-                                                                className={`${stylesButton.projectButton} ${
-                                                                    isActive ? stylesButton.active : ""
-                                                                }`}
+                                                                className={`${stylesButton.projectButton} ${isActive ? stylesButton.active : ""}`}
                                                                 style={{
-                                                                    color: isActive ? "#fff" : projectColors[proj],
-                                                                    backgroundColor: isActive
-                                                                        ? projectColors[proj]
-                                                                        : "transparent",
-                                                                    borderColor: projectColors[proj],
+                                                                    color:        isActive ? "#fff" : projectColors[proj],
+                                                                    background:   isActive ? projectColors[proj] : "transparent",
+                                                                    borderColor:  projectColors[proj],
                                                                 }}
                                                                 onClick={() => setScriptProject(proj)}
                                                             >
@@ -880,6 +892,8 @@ const App: React.FC = () => {
                                             momoProjectRepo={momoProjectRepo}
                                             startModulesRanRef={startModulesRanRef}
                                             expressCall={expressCall}
+                                            phoneID={phoneID}
+                                            setPhoneID={setPhoneID}
                                         />
                                     )}
                                 </div>
@@ -946,7 +960,6 @@ const App: React.FC = () => {
                                     monoModules={monoModules}
                                     setMonoModules={setMonoModules}
                                     expressCall={expressCall}
-
                                 />
                             )}
                         </div>

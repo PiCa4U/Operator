@@ -122,14 +122,16 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
         }
 
         setIsLoading(true);
-        socket.emit('get_fs_report', {
-            worker,
-            session_key: sessionKey,
-            sip_login: sipLogin,
-            level: (currentPage - 1) * 10,
-            date_range: dateRangeString,
-            phone_search: searchParams.phone,
-        });
+        if (sessionKey) {
+            socket.emit('get_fs_report', {
+                worker,
+                session_key: sessionKey,
+                sip_login: sipLogin,
+                level: (currentPage - 1) * 10,
+                date_range: dateRangeString,
+                phone_search: searchParams.phone,
+            });
+        }
     }, [searchParams, currentPage, worker, sessionKey, sipLogin, roomId]);
 
     function cleanProjectName(name: string = ''): string {

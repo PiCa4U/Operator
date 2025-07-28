@@ -835,6 +835,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 'assigned_key': assignedKey,
                 'base_fields':baseFieldValues,
                 'log_status':'saved',
+                'comment': comment,
                 'phone_status': resultText,
                 'special_key':outActivePhone?.special_key,
                 'project_name':outActiveProjectName

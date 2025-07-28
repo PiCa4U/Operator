@@ -1,7 +1,7 @@
 import SearchableSelect from "../../../callControlPanel/components/select";
-import React, {FC, useEffect, useState} from "react";
+import React, {FC, useEffect, useMemo, useState} from "react";
 import {useSelector} from "react-redux";
-import {RootState} from "../../../../redux/store";
+import {RootState, store} from "../../../../redux/store";
 import {ActionOption, ApiRow} from "../../index";
 
 
@@ -20,6 +20,12 @@ export const AssignComp:FC<Props> = ({
     const { monitorUsers } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
+
+    const {
+        sipLogin   = '',
+        worker     = '',
+    } = store.getState().credentials;
+
     console.log("row: ", row)
     const parsedRows: { id_list: number[] }[] = rows instanceof Set
         ? Array.from(rows).map((rowStr: string) => ({
@@ -30,6 +36,30 @@ export const AssignComp:FC<Props> = ({
         console.log("parsedRows: ", parsedRows)
 
     }
+
+    const operatorOptions = useMemo(() => {
+        const entries = Object.entries(monitorUsers || {})
+            .filter(([_, data]) => data.post_obrabotka === true);
+
+        // Разделяем текущего оператора и остальных
+        const currentOperatorEntry = entries.find(([login]) => login === sipLogin);
+        const otherEntries = entries.filter(([login]) => login !== sipLogin);
+
+        const currentOption = currentOperatorEntry
+            ? {
+                id: currentOperatorEntry[0],
+                name: `${currentOperatorEntry[1].name}` || currentOperatorEntry[0]
+            }
+            : null;
+
+        const otherOptions = otherEntries.map(([login, data]) => ({
+            id: login,
+            name: `${data.name}` || login
+        }));
+
+        return currentOption ? [currentOption, ...otherOptions] : otherOptions;
+    }, [monitorUsers, sipLogin]);
+
     const [operValue, setOperValue] = useState<string>("")
 
     return(
@@ -51,13 +81,7 @@ export const AssignComp:FC<Props> = ({
             <SearchableSelect
                 value={operValue}
                 onChange={setOperValue}
-                options={Object.entries(monitorUsers)
-                    .filter(([_, u]) => u.type === "operator")
-                    .map(([_, u]) => ({
-                        id: u.login,
-                        name: u.name || u.login
-                    }))
-                }
+                options={operatorOptions}
                 placeholder="Оператор..."
                 augmentSaved={false}
             />

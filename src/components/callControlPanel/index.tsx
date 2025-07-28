@@ -238,6 +238,7 @@ interface CallControlPanelProps {
     expressCall: boolean
     phoneID?: number | null
     setPhoneID?: (phoneID: number | null) => void
+    setSelectedCall: (call: CallData | null) => void
 }
 
 type PhoneGroup = {
@@ -285,7 +286,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                startModulesRanRef,
                                                                expressCall,
                                                                phoneID,
-                                                               setPhoneID
+                                                               setPhoneID,
+                                                               setSelectedCall
                                                            }) => {
     // Из cookies
     const { sessionKey } = store.getState().operator
@@ -331,8 +333,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const [groupModalOpen, setGroupModalOpen] = useState(false);
 
-    const moduleProjectMapRef = useRef<Record<number, string>>({});
-
     useEffect(() => {
         if (hasActiveCall && !openedPhones && outboundCall) {
             socket.emit("get_project_fields",{
@@ -342,8 +342,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             })
         }
     },[hasActiveCall, openedPhones, outActiveProjectName, outboundCall, sessionKey, worker])
-
-    // const [projectsData, setProjectsData] = useState<ProjectFieldsResponse | null>(null);
 
     const getPhonesByIds = (ids: number[]) => {
         return openedPhones?.filter(p => ids.includes(p.id)) || [];
@@ -438,38 +436,48 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const prevCallRef = useRef<ActiveCall | null>(null);
 
+// useEffect для openedPhones в tuskMode
     useEffect(() => {
-        if (openedPhones && tuskMode){
+        if (openedPhones && tuskMode) {
             const projects = Array.from(new Set(openedPhones.map(p => p.project)));
-            // const projects = ["group_project_2", "group_project_1"];
-
-            socket.emit("get_project_fields",{
+            console.log("AGNAINDANSDN")
+            socket.emit("get_project_fields", {
                 projects: projects,
                 session_key: sessionKey,
                 worker
-            })
-        } if (activeCalls[0]?.direction === "inbound" && activeProject) {
-            socket.emit("get_project_fields",{
+            });
+        }
+    }, [openedPhones, tuskMode, sessionKey, worker]);
+
+// useEffect для входящего звонка
+    useEffect(() => {
+        if (activeCalls[0]?.direction === "inbound" && activeProject) {
+            socket.emit("get_project_fields", {
                 projects: [activeProject],
                 session_key: sessionKey,
                 worker
-            })
+            });
+        }
+    }, [activeCalls, activeProject, sessionKey, worker]);
 
-        } if (!hasActiveCall && !postActive && call?.project_name) {
-            const projectNames = Object.keys(call.projects).map((proj => cleanProjectName(proj)))
-            if(projectNames.length === 1 && projectNames[0] === "outbound") {
-                socket.emit("get_project_fields",{
+// useEffect для постобработки или завершённого звонка
+    useEffect(() => {
+        if (!hasActiveCall && !postActive && call?.project_name) {
+            const projectNames = Object.keys(call.projects).map((proj => cleanProjectName(proj)));
+            if (projectNames.length === 1 && projectNames[0] === "outbound") {
+                socket.emit("get_project_fields", {
                     projects: [call.variable_last_arg],
                     session_key: sessionKey,
                     worker
-                })
+                });
             } else {
-                socket.emit("get_project_fields",{
+                socket.emit("get_project_fields", {
                     projects: projectNames,
                     session_key: sessionKey,
                     worker
-                })
+                });
             }
+
             console.log("projectNames: ", projectNames)
             const projectName = projectNames[0];
             const projectDataArray = Object.values(call.projects) as Array<{
@@ -478,25 +486,26 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 comment: string;
                 base_fields: Record<string, string>;
             }>;
-            // if (!manualCallRef.current) {
-                setValues({ [projectName]: {} });
-            // }
+
+            setValues({ [projectName]: {} });
+
             const firstProjectData = projectDataArray[0];
             const baseFields = firstProjectData?.base_fields || {};
             console.log("baseFieldsbaseFieldsbaseFieldsbaseFields: ", baseFields)
+
             const sanitized: Record<string, string> = {};
             Object.entries(baseFields).forEach(([fid, val]) => {
                 if (!fid.startsWith("AS_")) return;
                 sanitized[fid] = String(val);
             });
-            // if (!manualCallRef.current) {
-                setValues({ [projectName]: sanitized });
-            // }
+
+            console.log("sanitized: ", sanitized)
+            setValues({ [projectName]: sanitized });
             console.log("valueanotherOneTRADE1")
         }
+    }, [call, hasActiveCall, postActive, sessionKey, worker]);
 
-    },[call, openedPhones, activeProject, activeCalls, tuskMode, hasActiveCall, postActive, sessionKey, worker])
-
+    useEffect(() => console.log("activeProject: ", activeProject),[activeProject])
     useEffect(() => console.log("selectedProjs: ", selectedProjects),[selectedProjects])
 // ────────────────────────────────────────────────────────────────────────────────
     const handleProjectFields = (data: {
@@ -626,43 +635,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             // можно было опираться на них, если вам нужны оба набора полей:
             setBasicFields(merged);
         }
-        // Если tuskMode выключен, работаем только с basicFields
-        // else {
-        //     const map = new Map<string, MergedField>();
-        //
-        //     Object.entries(data.as_is_dict).forEach(([projName, fields]) => {
-        //         if (!selectedProjects.includes(projName)) return;
-        //         fields.forEach(f => {
-        //             const key = [
-        //                 f.field_name,
-        //                 f.field_type,
-        //                 f.field_vals || "",
-        //                 (f as any).spatial_group || "",
-        //             ].join("|");
-        //             if (!map.has(key)) {
-        //                 map.set(key, {
-        //                     id: key,
-        //                     label: f.field_name,
-        //                     type: f.field_type,
-        //                     values: f.field_vals,
-        //                     projects: [projName],
-        //                     fieldIds: { [projName]: f.field_id },
-        //                     spatialGroup: (f as any).spatial_group,
-        //                 });
-        //             } else {
-        //                 const e = map.get(key)!;
-        //                 if (!e.projects.includes(projName)) {
-        //                     e.projects.push(projName);
-        //                     e.fieldIds[projName] = f.field_id;
-        //                 }
-        //             }
-        //         });
-        //     });
-        //
-        //     // Только basicFields, без mergedFields и без инициализации значений
-        //     setBasicFields(Array.from(map.values()));
-    //     }
-    // };
+
 // ✅ Правильная инициализация значений:
 
     useEffect(() => {
@@ -1115,6 +1088,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 setComment(v);
                 break;
             default:
+                    console.log("ASDFGHJKLKJHGF")
                     setValues(prev => ({
                         ...prev,
                         [project]: {
@@ -1691,40 +1665,55 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     }, [phoneGroups]);
 
 
-    const handleSetTusk = () => {
+    const handleSetTusk = async () => {
         if (!selectedPreset?.preset.group_by || !openedPhones?.length) return;
 
-        // Группировка openedPhones по project_name
         const groupedByProject: Record<string, typeof openedPhones> = {};
         for (const phone of openedPhones) {
             const proj = phone.project || "unknown";
             if (!groupedByProject[proj]) groupedByProject[proj] = [];
             groupedByProject[proj].push(phone);
         }
-        console.log("groupedByProject: ", groupedByProject)
-        Object.entries(groupedByProject).forEach(([project_name, phones]) => {
-            const sample = phones[0];
-            const filter_by: Record<string, string> = {};
 
-            selectedPreset.preset.group_by.forEach(groupField => {
-                if (sample && groupField in sample) {
-                    filter_by[groupField] = sample[groupField];
-                }
+        try {
+            const requests = Object.entries(groupedByProject).map(([project_name, phones]) => {
+                const sample = phones[0];
+                const filter_by: Record<string, string> = {};
+
+                selectedPreset.preset.group_by.forEach(groupField => {
+                    if (sample && groupField in sample) {
+                        filter_by[groupField] = sample[groupField];
+                    }
+                });
+
+                if (!Object.keys(filter_by).length) return null;
+
+                return axios.put('/api/v1/phones/update', {
+                    glagol_parent: "fs.at.akc24.ru",
+                    project_name,
+                    filter_by,
+                    update: {
+                        manager: sipLogin
+                    }
+                });
+            }).filter(Boolean);
+
+            await Promise.all(requests);
+
+            Swal.fire({
+                icon: 'success',
+                title: 'Группа закреплена',
+                text: 'Выбранная группа успешно закреплена за оператором.'
             });
-
-            if (!Object.keys(filter_by).length) return;
-
-            axios.put('/api/v1/phones/update', {
-                glagol_parent: "fs.at.akc24.ru",
-                project_name,
-                filter_by,
-                update: {
-                    manager: sipLogin
-                }
-            }).catch((err: any) => {
-                console.error(`Ошибка обновления менеджера для проекта ${project_name}`, err);
+        } catch (err) {
+            console.error('Ошибка при закреплении группы:', err);
+            // Уведомление об ошибке (опционально)
+            Swal.fire({
+                icon: 'error',
+                title: 'Ошибка',
+                text: 'Произошла ошибка при закреплении группы.'
             });
-        });
+        }
     };
     const renderContactInfoSelector = (
         phone: string,
@@ -1808,9 +1797,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         zIndex: 1,
                     }}
                 >
-          <span className="material-icons" style={{ marginTop: 4 }}>
-            close
-          </span>
+                  <span className="material-icons" style={{ marginTop: 4 }}>
+                    close
+                  </span>
                 </button>
 
                 {/* Первая карточка: свободный ввод номера */}
@@ -2212,6 +2201,36 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         {new Date(call?.datetime_start || "0").toLocaleString()}
                     </strong>
                 </div>
+                <button
+                    onClick={() => {
+                        setOpenedPhones?.([]);
+                        setOpenedGroup?.([]);
+                        setPhonesData?.([]);
+                        startModulesRanRef.current = false;
+                        if (setActiveProjectName) {
+                            setActiveProjectName("")
+                        }
+                        if (momoProjectRepo && momoProjectRepo.current && setTuskMode) {
+                            setTuskMode(false);
+                            onClose();
+                        }
+                        setSelectedCall(null)
+                    }}
+                    className="btn btn-outline-light text text-dark"
+                    style={{
+                        position: 'absolute',
+                        top: 20,
+                        right: 20,
+                        padding: '4px 8px',
+                        fontSize: 14,
+                        lineHeight: 1,
+                        zIndex: 1,
+                    }}
+                >
+                  <span className="material-icons" style={{ marginTop: 4 }}>
+                    close
+                  </span>
+                </button>
                 {!hasActiveCall && call?.record_name && (
                     <div className="mb-3">
                         <audio controls style={{ width: '100%' }}>
@@ -2658,7 +2677,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                             <div
                                                                                 key={f.id}
                                                                                 style={{
-                                                                                    gridColumn: `span ${f.width || 12}`,
+                                                                                    gridColumn: `span ${fullWidthCard ? (f.width || 12) : 12}`,
                                                                                     alignSelf: 'start',
                                                                                 }}
                                                                             >
@@ -2759,7 +2778,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
                                                         {orphanFields.map((f: any) => {
                                                             const fieldId = f.fieldIds[proj];
-                                                            const spanField = f.width ?? 12;
+                                                            const spanField = fullWidthCard ? (f.width || 12) : 12;
 
                                                             return (
                                                                 <div
@@ -2913,28 +2932,29 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 </button>
                             </div>
                         )}
-
-                        {/* Постобработка */}
-                        {postActive && (
-                            <div className="mt-3">
-                                <p>Постобработка: осталось {postSeconds} сек.</p>
+                        <div style={{display: "flex", flexDirection: "column", gap: 16}}>
+                            {postActive && (
+                                <div className="mt-3">
+                                    <p>Постобработка: осталось {postSeconds} сек.</p>
+                                    <button
+                                        className="btn btn-outline-success"
+                                        onClick={handlePostSave}
+                                        // disabled={isLoading}
+                                    >
+                                        Сохранить и вернуться на линию
+                                    </button>
+                                </div>
+                            )}
+                            {(tuskMode && openedPhones && !hasActiveCall) && (
                                 <button
                                     className="btn btn-outline-success"
-                                    onClick={handlePostSave}
-                                    // disabled={isLoading}
+                                    onClick={handleSetTusk}
+                                    style={{width: 250}}
                                 >
-                                    Сохранить и вернуться на линию
+                                    Закрепить за мной
                                 </button>
-                            </div>
-                        )}
-                        {(tuskMode && openedPhones && !hasActiveCall && !postActive) && (
-                            <button
-                                className="btn btn-outline-success"
-                                onClick={handleSetTusk}
-                            >
-                                Закрепить за мной
-                            </button>
-                        )}
+                            )}
+                        </div>
                         {(tuskMode) &&
                             <div className="d-flex justify-end mb-3">
                                 <label style={{ cursor: 'pointer', fontWeight: 500, display: "flex", gap: 8, marginTop: 8}}>
@@ -2953,27 +2973,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 </div>
             </div>
             {renderSecondCall()}
-            {tuskMode && (hasActiveCall || postActive) && (
-                <div style={{ display: 'flex', gap: 8, marginBottom: 16, marginLeft: 16 }}>
-                    {groupProjects.map(proj => {
-                        const isActive = activeProject === proj;
-                        return (
-                            <button
-                                key={proj}
-                                onClick={() => setActiveProjectName?.(proj)}
-                                className={`${stylesButton.projectButton} ${isActive ? stylesButton.active : ''}`}
-                                style={{
-                                    color: isActive ? '#fff' : projectColors[proj],
-                                    backgroundColor: isActive ? projectColors[proj] : 'transparent',
-                                    borderColor: projectColors[proj]
-                                }}
-                            >
-                                {findNameProject(proj)}
-                            </button>
-                        );
-                    })}
-                </div>
-            )}
 
             <GroupActionModal
                 isOpen={groupModalOpen}

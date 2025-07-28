@@ -51,7 +51,7 @@ const App: React.FC = () => {
     const [phoneID, setPhoneID] = useState<number|null>(null)
     useEffect(() => console.log("expressCall:", expressCall ),[expressCall])
 
-    useEffect(() => console.log("phoneID:", phoneID ),[phoneID])
+    useEffect(() => console.log("scriptProject:", scriptProject ),[scriptProject])
     const { start: defaultStart, end: defaultEnd } = getInitialDateRange();
     const [startDate, setStartDate] = useState<Date | null>(defaultStart);
     const [endDate, setEndDate]     = useState<Date | null>(defaultEnd);
@@ -320,7 +320,7 @@ const App: React.FC = () => {
         if (groupProjects.length > 0) {
             setScriptProject(groupProjects[0]);
         } else if (openedPhones.length){
-            setScriptProject(''); // или null
+            setScriptProject('');
         }
     }, [groupProjects, openedPhones.length]);
 
@@ -411,6 +411,7 @@ const App: React.FC = () => {
             setPhonesData([])
             setOpenedPhones([])
             setGroupIDs([])
+            setExpressCall(false)
         }
     }, [activeCall, postActive]);
 
@@ -529,6 +530,7 @@ const App: React.FC = () => {
 
                 }
             }
+            console.log()
             if (expressCall) {
                 socket.emit("accept_express_call",{
                     worker,
@@ -549,7 +551,7 @@ const App: React.FC = () => {
             socket.off('check_express', handleCheckExpress);
             socket.off('get_out_start', handleGetPhoneLine);
         };
-    }, [outboundCall, sessionKey, worker, activeCalls, assignedKey, activeProjectName]);
+    }, [outboundCall, sessionKey, worker, activeCalls, assignedKey, activeProjectName, expressCall]);
 
     function extractPhoneGroups(obj: any): any[][] {
         const groups: any[][] = [];
@@ -720,7 +722,7 @@ const App: React.FC = () => {
             };
             socket.emit('get_callcenter_queues', requestParams);
         }
-    }, [activeCall, activeCalls]);
+    }, [activeCall, activeCalls, get_callcenter, outboundCall]);
 
     const findNameProject = (projectName: string)=> {
         if (!projectName) return "";
@@ -808,8 +810,6 @@ const App: React.FC = () => {
                                 {/* ScriptPanel */}
                                 <div
                                     style={{
-                                        // при fullWidthCard: скрипт идёт ПОСЛЕ карточки, на всю ширину
-                                        // иначе: слева, на 50%
                                         order: fullWidthCard ? 2 : 1,
                                         flex: fullWidthCard ? '0 0 100%' : '0 0 48%',
                                     }}
@@ -871,6 +871,7 @@ const App: React.FC = () => {
                                             outActiveProjectName={outActiveProjectName}
                                             assignedKey={assignedKey}
                                             isLoading={isLoading}
+                                            setSelectedCall={setSelectedCall}
                                             setIsLoading={setIsLoading}
                                             specialKey={specialKey}
                                             setModules={setModules}
@@ -953,6 +954,7 @@ const App: React.FC = () => {
                                     setIsLoading={setIsLoading}
                                     specialKey={specialKey}
                                     setModules={setModules}
+                                    setSelectedCall={setSelectedCall}
                                     modules={modules}
                                     prefix={prefix}
                                     outboundCall={outboundCall}

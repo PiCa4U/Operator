@@ -101,6 +101,10 @@ const PresetSelectorTable: React.FC<Props> = ({
     const { monitorUsers } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
+    const {
+        sipLogin   = '',
+        worker     = '',
+    } = store.getState().credentials;
 
     const [presets, setPresets] = useState<OptionType[]>([]);
     const [selectedActionOption, setSelectedActionOption] = useState<ActionOption | null>(null);
@@ -117,15 +121,29 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [flatPhones, setFlatPhones] = useState<any[]>([])
     const [expressStates, setExpressStates] = useState<Record<string, ExpressState>>({});
     const [expressConfig, setExpressConfig] = useState<Record<string, any>>({});
-
+    console.log("monitorUsers: ", monitorUsers)
     const operatorOptions = useMemo(() => {
-        return Object.entries(monitorUsers || {})
-            .filter(([_, data]) => data.type === 'operator')
-            .map(([login, data]) => ({
-                id: login,
-                name: `${data.name} (${data.login})` || login
-            }));
-    }, [monitorUsers]);
+        const entries = Object.entries(monitorUsers || {})
+            .filter(([_, data]) => data.post_obrabotka === true);
+
+        // Разделяем текущего оператора и остальных
+        const currentOperatorEntry = entries.find(([login]) => login === sipLogin);
+        const otherEntries = entries.filter(([login]) => login !== sipLogin);
+
+        const currentOption = currentOperatorEntry
+            ? {
+                id: currentOperatorEntry[0],
+                name: `${currentOperatorEntry[1].name} (${currentOperatorEntry[1].login})` || currentOperatorEntry[0]
+            }
+            : null;
+
+        const otherOptions = otherEntries.map(([login, data]) => ({
+            id: login,
+            name: `${data.name} (${data.login})` || login
+        }));
+
+        return currentOption ? [currentOption, ...otherOptions] : otherOptions;
+    }, [monitorUsers, sipLogin]);
 
     const [modalOpen, setModalOpen] = useState(false);
     const [modalIds, setModalIds] = useState<number[]>([]);
@@ -146,10 +164,6 @@ const PresetSelectorTable: React.FC<Props> = ({
 
 
     const glagolParent = "fs.at.glagol.ai";
-    const {
-        sipLogin   = '',
-        worker     = '',
-    } = store.getState().credentials;
 
     const defaultStatusToState = useRef<boolean>(false)
 

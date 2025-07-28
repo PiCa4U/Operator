@@ -1174,11 +1174,11 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     <div className="row col-12 my-0 py-0 mx-0 pr-0 pl-0" id="ver_place">
                         <p className="mt-0 mb-1">Версия {fsStatus?.version || '2.0.00'}</p>
                     </div>
-                    {/*<div className="row col-12 pr-0">*/}
-                    {/*    <a data-name="sharp_stop" id="exit" className="btn btn-outline-danger mr-3" href="/worker_main/">*/}
-                    {/*        Назад*/}
-                    {/*    </a>*/}
-                    {/*</div>*/}
+                    <div className="row col-12 pr-0">
+                        <a data-name="sharp_stop" id="exit" className="btn btn-outline-danger mr-3" href="https://my.glagol.ai/login_work/">
+                            Выход
+                        </a>
+                    </div>
                 </div>
             </div>
 

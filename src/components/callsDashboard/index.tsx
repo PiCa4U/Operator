@@ -217,6 +217,23 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
         setEndDate(end);
     };
 
+    function formatUTCDateToLocal(datetimeStr: string): string {
+        if (!datetimeStr) return '';
+
+        // Преобразуем "2025-07-28 14:39:32" → ISO-формат
+        const isoStr = datetimeStr.replace(' ', 'T') + 'Z'; // теперь это "2025-07-28T14:39:32Z"
+        const date = new Date(isoStr);
+
+        return date.toLocaleString('ru-RU', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+        });
+    }
+
     return (
         <div className="container-fluid" style={{ marginLeft: 0 }}>
             {/* Блок с поиском (дата + телефон) и кнопками */}
@@ -324,7 +341,7 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
                                 className="font-weight-bold mb-2 mt-2 ml-2 align-items-center"
                                 style={{ fontSize: '13px' }}
                             >
-                                {phoneNumber} | {call.datetime_start} | {callDuration}
+                                {phoneNumber} | {formatUTCDateToLocal(call.datetime_start)} | {callDuration}
                                 {hideReportFields && (
                                     <span className="text-warning font-weight-bold ml-2">
                                                     Перевод вызова
@@ -373,7 +390,7 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
                                         className="font-weight-bold mb-2 mt-2 ml-2"
                                         style={{ fontSize: '13px' }}
                                     >
-                                        {phoneNumber} | {call.datetime_start} | {callDuration}
+                                        {phoneNumber} | {formatUTCDateToLocal(call.datetime_start)} | {callDuration}
                                     </p>
                                 </div>
                             );

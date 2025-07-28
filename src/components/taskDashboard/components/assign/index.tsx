@@ -3,6 +3,7 @@ import React, {FC, useEffect, useMemo, useState} from "react";
 import {useSelector} from "react-redux";
 import {RootState, store} from "../../../../redux/store";
 import {ActionOption, ApiRow} from "../../index";
+import Swal from "sweetalert2";
 
 
 interface Props {
@@ -64,7 +65,6 @@ export const AssignComp:FC<Props> = ({
 
     return(
         <div
-
             style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -74,25 +74,31 @@ export const AssignComp:FC<Props> = ({
                 borderStyle: "solid",
                 padding: "0.7rem 0.7rem",
                 borderRadius: "0.75rem",
-                // backgroundColor: "#e6e6e6"
             }}
-
         >
-            <SearchableSelect
-                value={operValue}
-                onChange={setOperValue}
-                options={operatorOptions}
-                placeholder="Оператор..."
-                augmentSaved={false}
-            />
+            <div style={{ maxWidth: 250, width: '100%' }}>
+                <SearchableSelect
+                    value={operValue}
+                    onChange={setOperValue}
+                    options={operatorOptions}
+                    placeholder="Оператор..."
+                    augmentSaved={false}
+                />
+            </div>
             <button
                 className="btn btn-outline-light text-dark"
                 onClick={() => {
                     if (row) {
-                        processRows([row], opt, operValue)
+                        processRows([row], opt, operValue);
                     } else if (parsedRows.length) {
                         parsedRows.forEach((list, i) => {
                             processRows([list as ApiRow], opt, operValue, parsedRows.length, i + 1);
+                        });
+                    } else {
+                        Swal.fire({
+                            icon: 'warning',
+                            title: 'Не выбрано ни одной строки',
+                            text: 'Пожалуйста, выберите хотя бы одну строку для назначения.',
                         });
                     }
                 }}

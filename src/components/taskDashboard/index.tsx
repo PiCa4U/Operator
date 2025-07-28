@@ -115,13 +115,11 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc'|'desc' }|null>(null);
     const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
     const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
-    const [assignOperator, setAssignOperator] = useState<string | null>(null);
-    const [assignOperatorMap, setAssignOperatorMap] = useState<Record<number, Record<string, string>>>({});
 
     const [flatPhones, setFlatPhones] = useState<any[]>([])
     const [expressStates, setExpressStates] = useState<Record<string, ExpressState>>({});
     const [expressConfig, setExpressConfig] = useState<Record<string, any>>({});
-    console.log("monitorUsers: ", monitorUsers)
+    console.log("presets: ", presets)
     const operatorOptions = useMemo(() => {
         const entries = Object.entries(monitorUsers || {})
             .filter(([_, data]) => data.post_obrabotka === true);
@@ -154,12 +152,27 @@ const PresetSelectorTable: React.FC<Props> = ({
 
 
     useEffect(() => {
-        if (selectedPreset) {
-            localStorage.setItem('tasksSelectedPreset', JSON.stringify(selectedPreset));
-        } else {
+        if (!selectedPreset || !selectedPreset.preset?.id) return;
+
+        const freshPreset = presets.find(p => p.preset.id === selectedPreset.preset.id);
+
+        if (!freshPreset) {
+            // Пресета больше нет в списке — удалить
             localStorage.removeItem('tasksSelectedPreset');
+            return;
         }
-    }, [selectedPreset]);
+
+        const isDifferent = JSON.stringify(freshPreset) !== JSON.stringify(selectedPreset);
+
+        if (isDifferent) {
+            // Если пресет обновился в списке — заменить
+            setSelectedPreset(freshPreset);
+            localStorage.setItem('tasksSelectedPreset', JSON.stringify(freshPreset));
+        } else {
+            // Если тот же, но обновился selectedPreset — записать в localStorage
+            localStorage.setItem('tasksSelectedPreset', JSON.stringify(selectedPreset));
+        }
+    }, [selectedPreset, presets]);
 
 
 
@@ -776,7 +789,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                         flex: '0 1 auto'
                     }}
                 >
-                    {[
+                    {role === "manager" ? [
                         { label: "Проект:", value: findNameProject(project) },
                         { label: "Express активен:", value: state.active ? "Да" : "Нет" },
                         { label: "Операторов в ожидании:", value: state.agents.length },
@@ -785,9 +798,29 @@ const PresetSelectorTable: React.FC<Props> = ({
                         <div key={idx}>
                             <strong>{item.label}</strong> {item.value}
                         </div>
-                    ))}
+                    )) :
+                        [
+                            { label: "Проект:", value: findNameProject(project) },
+                            { label: "Express активен:", value: state.active ? "Да" : "Нет" },
+                        ].map((item, idx) => (
+                            <div key={idx}>
+                                <strong>{item.label}</strong>{" "}
+                                <span
+                                    style={
+                                        item.label === "Express активен:"
+                                            ? {
+                                                color: item.value === "Да" ? "#0BB918" : "#f33333",
+                                                fontWeight: 500
+                                            }
+                                            : {}
+                                    }
+                                >
+                                    {item.value}
+                                </span>
+                            </div>
+                        ))}
 
-                    <div className="mt-2 d-flex gap-2">
+                    {role === "manager" && <div className="mt-2 d-flex gap-2">
                         {state.active ? (
                             <button
                                 className="btn btn-outline-danger"
@@ -803,7 +836,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 Запустить
                             </button>
                         )}
-                    </div>
+                    </div>}
                 </div>
 
             ))}
@@ -829,7 +862,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     },[selectedRows])
     return (
         <div>
-            {role === 'manager' && renderExpressCards()}
+            {renderExpressCards()}
             <div className="card p-4 ml-4">
                 <div
                     style={{
@@ -842,102 +875,121 @@ const PresetSelectorTable: React.FC<Props> = ({
                 >
                 {/* Пресеты */}
 
-                    <div style={{ width: 250 }}>
-                        <SearchableSelect
-                            value={selectedPreset ? selectedPreset.preset.id : ''}
-                            isSearchable
-                            onChange={val => {
-                                if (selectedPreset && String(selectedPreset.preset.id) === val) {
-                                    return;
-                                }
+                    <div
+                        style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: 16,
+                            marginBottom: 8,
+                            alignItems: 'flex-end',
+                        }}
+                    >
+                        {/* Пресет */}
+                        <div style={{ flex: '0 0 250px' }}>
+                            <SearchableSelect
+                                value={selectedPreset ? selectedPreset.preset.id : ''}
+                                isSearchable
+                                onChange={val => {
+                                    if (selectedPreset && String(selectedPreset.preset.id) === val) return;
+                                    const p = presets.find(x => String(x.preset.id) === val);
+                                    if (p) {
+                                        setTableData([]);
+                                        setSelectedPreset(p);
+                                    }
+                                }}
+                                options={presets.map(p => ({
+                                    id: p.value,
+                                    name: p.label,
+                                }))}
+                                placeholder="Выберите пресет..."
+                            />
+                        </div>
 
-                                const p = presets.find(x => String(x.preset.id) === val);
-                                if (p) {
-                                    setTableData([]);
-                                    setSelectedPreset(p);
-                                }
-                            }}
-                            options={presets.map(p => ({
-                                id:   p.value,
-                                name: p.label,
-                            }))}
-                            placeholder="Выберите пресет..."
-                        />
+                        {/* Поиск */}
+                        <div style={{ flex: '0 0 250px' }}>
+                            <input
+                                type="text"
+                                placeholder="Поиск..."
+                                value={searchTerm}
+                                onChange={e => setSearchTerm(e.target.value)}
+                                className="form-control"
+                            />
+                        </div>
 
-                    </div>
+                        {/* Статус */}
+                        <div style={{ flex: '0 0 250px' }}>
+                            <SearchableSelect
+                                value={selectedStatus ?? ''}
+                                onChange={(val: string) => setSelectedStatus(val)}
+                                isSearchable
+                                options={statusOptions.map(s => ({
+                                    id: s,
+                                    name: statusLabels[s] || s
+                                }))}
+                                placeholder="Выберите статус..."
+                            />
+                        </div>
 
-                    {selectedPreset && (
-                        <>
-                            <div style={{ width: 250 }}>
-                                <input
-                                    type="text"
-                                    placeholder="Поиск..."
-                                    value={searchTerm}
-                                    onChange={e => setSearchTerm(e.target.value)}
-                                    className="form-control"
-                                />
-                            </div>
-                            <div style={{ width: 250 }}>
-                                <SearchableSelect
-                                    value={selectedStatus ?? ''}
-                                    onChange={(val: string) => {
-                                        setSelectedStatus(val);
-                                    }}
-                                    isSearchable
-                                    options={statusOptions.map(s => ({
-                                        id: s,
-                                        name: statusLabels[s] || s
-                                    }))}
-                                    placeholder="Выберите статус..."
-                                />
-                            </div>
-                            <div style={{ width: 250 }}>
-                                <DatePicker
-                                    selected={startDate}
-                                    onChange={handleDateChange}
-                                    startDate={startDate}
-                                    endDate={endDate}
-                                    selectsRange
-                                    placeholderText="Выберите период"
-                                    className="form-control"
-                                    dateFormat="dd.MM.yyyy"
-                                />
-                            </div>
-                            <div style={{ width: 250 }}>
-                                <SearchableSelect
-                                    value={selectedOperator ?? ''}
-                                    onChange={(val: string) => setSelectedOperator(val)}
-                                    isSearchable
-                                    options={operatorOptions}
-                                    placeholder="Выберите оператора..."
-                                />
-                            </div>
+                        {/* Дата */}
+                        <div style={{ flex: '0 0 250px' }}>
+                            <DatePicker
+                                selected={startDate}
+                                onChange={handleDateChange}
+                                startDate={startDate}
+                                endDate={endDate}
+                                selectsRange
+                                placeholderText="Выберите период"
+                                className="form-control"
+                                dateFormat="dd.MM.yyyy"
+                            />
+                        </div>
 
-                            {/* Действия */}
-                            <div style={{ width: 250 }}>
-                                <SearchableSelect
-                                    value={selectedActionOption ? selectedActionOption.value : ''}
-                                    onChange={(val: string) => {
-                                        const found = actionOptions.find(opt => opt.value === val) ?? null;
-                                        setSelectedActionOption(found);
-                                    }}
-                                    isSearchable={false}
-                                    options={actionOptions.map(a => ({
-                                        id:   a.value,
-                                        name: a.label
-                                    }))}
-                                    placeholder="Выберите действие..."
+                        {/* Оператор */}
+                        <div style={{ flex: '0 0 250px' }}>
+                            <SearchableSelect
+                                value={selectedOperator ?? ''}
+                                onChange={(val: string) => setSelectedOperator(val)}
+                                isSearchable
+                                options={operatorOptions}
+                                placeholder="Выберите оператора..."
+                            />
+                        </div>
+
+                        {/* Действие */}
+                        <div style={{ flex: '0 0 250px' }}>
+                            <SearchableSelect
+                                value={selectedActionOption ? selectedActionOption.value : ''}
+                                onChange={(val: string) => {
+                                    const found = actionOptions.find(opt => opt.value === val) ?? null;
+                                    setSelectedActionOption(found);
+                                }}
+                                isSearchable={false}
+                                options={actionOptions.map(a => ({
+                                    id: a.value,
+                                    name: a.label
+                                }))}
+                                placeholder="Выберите действие..."
+                            />
+                        </div>
+
+                        {/* AssignComp или кнопка */}
+                        {selectedActionOption?.action.action_type === "assign" ? (
+                            <div
+                                style={{
+                                    flex: '0 0 auto',
+                                    minWidth: 400,
+                                    maxWidth: '100%',
+                                    overflow: 'hidden',
+                                }}
+                            >
+                                <AssignComp
+                                    opt={selectedActionOption}
+                                    rows={selectedRows}
+                                    processRows={processRows}
                                 />
                             </div>
-                            {selectedActionOption?.action.action_type === "assign" ? (
-                                <div style={{ minWidth: 400 }}>
-                                    <AssignComp
-                                        opt={selectedActionOption}
-                                        rows={selectedRows}
-                                        processRows={processRows}
-                                    />
-                                </div>
-                            ) : (
+                        ) : (
+                            <div style={{ flex: '0 0 auto' }}>
                                 <button
                                     onClick={() => {
                                         const keys = Array.from(selectedRows);
@@ -950,10 +1002,10 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 >
                                     Обработать
                                 </button>
-                            )}
+                            </div>
+                        )}
+                    </div>
 
-                        </>
-                    )}
                 </div>
 
                 {loading && <div>Загрузка данных...</div>}

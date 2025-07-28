@@ -155,7 +155,7 @@ const App: React.FC = () => {
 
         logoutShownRef.current = true;
 
-        window.location.href = "https://my.glagol.ai/accounts/login/?next=/projects/";
+        window.location.href = "https://my.glagol.ai/login_work/";
     };
 
     useEffect(() => {

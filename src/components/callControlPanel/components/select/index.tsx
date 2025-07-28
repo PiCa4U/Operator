@@ -103,11 +103,10 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
         color: '#999',
         '&:hover': { color: '#333' },
     }),
-    menu: base => ({
+    menu: (base) => ({
         ...base,
+        maxWidth: 250,
         width: '100%',
-        boxSizing: 'border-box',
-        zIndex: 9999,
     }),
 
     option: (base, { isFocused }) => ({
@@ -153,6 +152,7 @@ const SearchableSelect: React.FC<Props> = ({
             isSearchable
             options={finalOpts}
             isClearable
+            menuPortalTarget={document.body}
             value={selected}
             onChange={opt =>
                 onChange((opt as SingleValue<Option>)?.value ?? '')

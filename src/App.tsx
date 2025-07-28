@@ -49,6 +49,7 @@ const App: React.FC = () => {
     const [expressCall, setExpressCall] = useState<boolean>(false)
 
     const [phoneID, setPhoneID] = useState<number|null>(null)
+    useEffect(() => console.log("expressCall:", expressCall ),[expressCall])
 
     useEffect(() => console.log("phoneID:", phoneID ),[phoneID])
     const { start: defaultStart, end: defaultEnd } = getInitialDateRange();
@@ -201,8 +202,8 @@ const App: React.FC = () => {
     } = store.getState().credentials;
 
     const role =
-        // "manager"
-        monitorUsers[sipLogin]?.type || "operator"
+        "manager"
+        // monitorUsers[sipLogin]?.type || "operator"
 
     const [outboundID, setOutboundID] = useState<number | null>(null)
     // const [selectedPreset, setSelectedPreset] = useState<OptionType | null>(null);
@@ -454,7 +455,7 @@ const App: React.FC = () => {
         return () => {
             socket.off('get_out_start', getOuboundProject);
         };
-    },[])
+    },[expressCall])
     // useEffect(()=> {
     //     if (postActive && sessionKey) {
     //         socket.emit('get_fs_report', {
@@ -575,6 +576,7 @@ const App: React.FC = () => {
 
         const fetchPresetsAndCheckPhone = async () => {
             try {
+
                 let myPresets = presets;
                 if (presets.length === 0) {
                     const response = await axios.post<Preset[]>('/api/v1/get_preset_list', {
@@ -613,6 +615,7 @@ const App: React.FC = () => {
                     group_table: matchedPreset.preset.group_table,
                     role,
                 });
+                console.log("FUCKED")
                 const projectIdData = response2.data;
                 console.log("OUT1121projectIdData:", projectIdData);
 
@@ -663,7 +666,7 @@ const App: React.FC = () => {
         };
 
         fetchPresetsAndCheckPhone();
-    }, [selectedCall, phoneID]);
+    }, [selectedCall, phoneID, selectedPreset, presets, projectPool, worker, projectPoolForCall]);
 
     useEffect(() => {
         const handleFsStatus = (msg: any) => {

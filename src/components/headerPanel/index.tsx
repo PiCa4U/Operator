@@ -123,6 +123,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         (state: RootState) => state.operator.monitorData
     );
 
+    const [autocallEnabled, setAutocallEnabled] = useState(() => {
+        return localStorage.getItem('autocallEnabled') === 'true';
+    });
     const fsStatus = useSelector(
         (state: RootState) => state.operator.fsStatus,
         isEqual
@@ -175,6 +178,12 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     //         projectPool.find(p => p.project_name === projectName).out_gateways[2].prefix
     //     return projectGateawayPrefix
     // }
+
+    const toggleAutocall = () => {
+        const newState = !autocallEnabled;
+        setAutocallEnabled(newState);
+        localStorage.setItem('autocallEnabled', String(newState));
+    };
     useEffect(() => {
         if (activeCalls.length > 0 && Object.keys(activeCalls[0]).length > 0) {
             setHasActiveCall(true);
@@ -441,7 +450,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         };
 
         fetchPresetsAndCheckPhone();
-    }, [outActiveProjectName, outActivePhone]);
+    }, [outActiveProjectName, outActivePhone, phoneID]);
 
     useEffect(() => {
         const handleGetPhoneToCall = (msg: any) => {
@@ -611,32 +620,33 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         };
     }, [allProjects, assignedKey, specialKey, outActiveProjectName, projectPoolForCall, roomId, sessionKey, sipLogin, worker]);
 
-    // Автодозвон (раз в 30 секунд)
     useEffect(() => {
-        const interval = setInterval(() => {
-            if (
-                !hasActiveCall &&
-                projectPoolForCall.length > 0 &&
-                getRegisteredSofia(fsStatus.sofia_status) &&
-                fsStatus.state === "Waiting" &&
-                (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
-            ) {
-                console.log("OOOOHHHH")
-                socket.emit('outbound_call_get', {
-                    assign: true,
-                    batch: 1,
-                    // break: true,
-                    worker,
-                    interface: "glagol",
-                    sip_login: sipLogin,
-                    session_key: sessionKey,
-                    projects_pool: projectPoolForCall,
-                    start_type: "auto"
-                });
-            }
-        }, 10000);
-        return () => clearInterval(interval);
-    }, [hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, projectPoolForCall, fsStatus.state, fsStatus.status]);
+        if (autocallEnabled) {
+            const interval = setInterval(() => {
+                if (
+                    !hasActiveCall &&
+                    projectPoolForCall.length > 0 &&
+                    getRegisteredSofia(fsStatus.sofia_status) &&
+                    fsStatus.state === "Waiting" &&
+                    (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
+                ) {
+                    console.log("OOOOHHHH")
+                    socket.emit('outbound_call_get', {
+                        assign: true,
+                        batch: 1,
+                        // break: true,
+                        worker,
+                        interface: "glagol",
+                        sip_login: sipLogin,
+                        session_key: sessionKey,
+                        projects_pool: projectPoolForCall,
+                        start_type: "auto"
+                    });
+                }
+            }, 10000);
+            return () => clearInterval(interval);
+        }
+    }, [autocallEnabled, hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, projectPoolForCall, fsStatus.state, fsStatus.status]);
 
     useEffect(() => {
         const handleGetOutStart = (msg: any) => {
@@ -1096,6 +1106,13 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 >
                     Панель менеджера
                 </button>
+                <button
+                    className={`btn mx-1 ml-2 ${autocallEnabled ?'btn-outline-success' : 'btn-outline-primary'}`}
+                    onClick={toggleAutocall}
+                >
+                    Автообзвон: {autocallEnabled ? 'Вкл' : 'Выкл'}
+                </button>
+
             </>
         );
     };

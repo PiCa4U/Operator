@@ -13,7 +13,7 @@ import {
     UserAgent,
     UserAgentOptions
 } from 'sip.js';
-import type {TurnCredentials} from '../../../../web_phone/my-app/src/redux/operatorSlice';
+import type {TurnCredentials} from '../redux/operatorSlice';
 
 export interface SipUA {
     session: Session | null;

@@ -1,17 +1,51 @@
-import {Filters} from "./components/filters";
-import {useMemo} from "react";
-import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
-import {useSelector} from "react-redux";
+import React, { useEffect, useMemo, useState } from "react";
+import { Filters } from "./components/filters";
+// импортируй свой монитор (или временную заглушку)
+import  OperatorsManagment  from "./components/operatorManagment";
 
+type TabKey = "filters" | "operators";
 
-export const ManagerPanel = () => {
+export const ManagerPanel: React.FC = () => {
+    const [active, setActive] = useState<TabKey>(() => {
+        return (localStorage.getItem("managerPanel.activeTab") as TabKey) || "filters";
+    });
 
+    useEffect(() => {
+        localStorage.setItem("managerPanel.activeTab", active);
+    }, [active]);
 
-    return(
+    const tabs = useMemo(
+        () => ([
+            { key: "filters" as const, label: "Отчёты" },
+            { key: "operators" as const, label: "Операторы" },
+        ]),
+        []
+    );
+
+    return (
         <div className="card col ml-0">
+            <div className="card-header">
+                <ul className="nav nav-tabs card-header-tabs">
+                    {tabs.map(t => (
+                        <li className="nav-item" key={t.key}>
+                            <button
+                                type="button"
+                                className={`nav-link ${active === t.key ? "active" : ""}`}
+                                onClick={() => setActive(t.key)}
+                                // немного доступности
+                                aria-current={active === t.key ? "page" : undefined}
+                            >
+                                {t.label}
+                            </button>
+                        </li>
+                    ))}
+                </ul>
+            </div>
+
             <div className="card-body">
-                <Filters />
+                {active === "filters" && <Filters />}
+                {/*{active === "operators" && <OperatorsManagment />}*/}
             </div>
         </div>
-    )
-}
+    );
+};

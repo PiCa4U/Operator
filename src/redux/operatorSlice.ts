@@ -35,12 +35,17 @@ export interface MonitorData {
     monitorCallcenter: Record<string, string[]>;
 }
 
+export interface TurnCredentials {
+    urls: string[];
+    username: string;
+    credential: string;
+}
 export interface OperatorState {
     fsReport: any;
     fsStatus: any;
     activeCalls: any;
     roomId: string;
-    sessionKey: string;          // <-- добавили
+    sessionKey: string;
     name: string;
     monitorData: MonitorData;
     fsReasons: {
@@ -49,6 +54,8 @@ export interface OperatorState {
         as_is_dict: FieldDefinition[];
     } | null;
     userStatuses: Record<string, UserStatus>;
+    ha1: string;
+    turnCreds: TurnCredentials | null;
 
 }
 
@@ -75,6 +82,9 @@ const initialState: OperatorState = {
     },
     fsReasons: null,
     userStatuses: {},
+    ha1: "",
+    turnCreds: null,
+
 };
 
 // Мемоизированный селектор для полной коллекции проектов для оператора
@@ -159,7 +169,12 @@ const operatorSlice = createSlice({
                 state.userStatuses = action.payload;
             }
         },
-
+        setHa1(state, action: PayloadAction<string>) {
+            state.ha1 = action.payload;
+        },
+        setTurnCreds(state, action: PayloadAction<TurnCredentials>) {
+            state.turnCreds = action.payload;
+        },
     },
 });
 
@@ -173,6 +188,8 @@ export const {
     setFsReasons,
     setSessionKey,
     setUserStatuses,
+    setHa1,
+    setTurnCreds,
 } = operatorSlice.actions;
 
 export default operatorSlice.reducer;

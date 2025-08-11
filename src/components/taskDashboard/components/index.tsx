@@ -72,6 +72,11 @@ const GroupActionModal: React.FC<Props> = ({
         status: new Set(),
     });
 
+    const [modulesInFlight, setModulesInFlight] = useState(0);
+    const modulesCompletedRef = useRef(0);
+    const moduleStartModalRef = useRef(false);
+
+
     useEffect(() => {
         onSelectionChange?.(Array.from(selectedIds));
     }, [selectedIds, onSelectionChange]);
@@ -141,6 +146,41 @@ const GroupActionModal: React.FC<Props> = ({
         setSelectedIds(new Set(matchingIds));
     }, [matchingIds, rawRows, phoneID]);
 
+    useEffect(() => {
+        if (modulesInFlight === 0 || !moduleStartModalRef.current ) return
+        console.log("COMPLETEMODALOPENTRUE")
+        const handleComplete = () => {
+            console.log("modulesCompletedRef.current: ", modulesCompletedRef.current)
+            modulesCompletedRef.current += 1;
+            if (modulesCompletedRef.current >= modulesInFlight) {
+                Swal.fire("Готово", "Все модули завершены", "success");
+                onAfterAction?.();
+                moduleStartModalRef.current = false
+                setModulesInFlight(0)
+                modulesCompletedRef.current = 0
+                onClose();
+            }
+        };
+
+        const onRunModule = (data: any) => {
+            if (data?.worker || data?.session_key) return;
+
+            handleComplete();
+        };
+
+        const onRunModuleError = (data: any) => {
+            handleComplete();
+        };
+
+        socket.on("run_module", onRunModule);
+        socket.on("error", onRunModuleError);
+
+        return () => {
+            socket.off("run_module", onRunModule);
+            socket.off("error", onRunModuleError);
+        };
+    }, [modulesInFlight]);
+
     const allSelected = rawRows.length > 0 && rawRows.every(r => selectedIds.has(r.id));
     const toggleSelectAll = () =>
         setSelectedIds(prev => allSelected ? new Set() : new Set(rawRows.map(r => r.id)));
@@ -156,7 +196,6 @@ const GroupActionModal: React.FC<Props> = ({
     }
 
     const handleConfirm = () => {
-
         const groups = Array.from(selectedIds).reduce<Record<string, number[]>>((acc, id) => {
             const proj = idToProject[id];
             if (!proj) return acc;
@@ -171,12 +210,6 @@ const GroupActionModal: React.FC<Props> = ({
         // 2) В зависимости от типа действия шлём нужные ивенты
         if (action?.action_type === 'delete') {
             Object.entries(groups).forEach(([project_name, ids]) => {
-                console.log("args: ", {
-                    worker,
-                    session_key: sessionKey,
-                    project_name,
-                    ids,
-                })
                 socket.emit('delete_phone', {
                     worker,
                     session_key: sessionKey,
@@ -184,8 +217,8 @@ const GroupActionModal: React.FC<Props> = ({
                     ids,
                 });
             });
-            Swal.fire('Готово', 'Запросы на удаление отправлены', 'success');
             if (onAfterAction) {
+                Swal.fire("Готово", "Контакты удалены успешно", "success");
                 onAfterAction()
             }
         } else if (action?.action_type === 'code') {
@@ -197,8 +230,8 @@ const GroupActionModal: React.FC<Props> = ({
 
                 type KwargDef = { source: string; default?: string };
                 const argDefs = Object.values(foundModule.kwargs || {}) as KwargDef[];
-                console.log("groupedByContactInfoargDefs: ", argDefs)
-                console.log("groupsgroupsgroupsgroupsgroupsgroupsgroups12342312: ", groups)
+                let pendingCount = 0;
+
                 Object.entries(groups).forEach(([project_name, ids]) => {
                     const idToContact = ids.map(id => {
                         const contact = rawRows.find(r => r.id === id);
@@ -232,7 +265,6 @@ const GroupActionModal: React.FC<Props> = ({
                         }
                         groupedByContactInfo.get(hashKey)!.ids.push(id);
                     });
-                    console.log("groupedByContactInfo: ", groupedByContactInfo)
 
                     groupedByContactInfo.forEach(({ ids: groupedIds, contactInfo, project }) => {
                         const kwargs: Record<string, string> = {};
@@ -240,6 +272,7 @@ const GroupActionModal: React.FC<Props> = ({
                             if (!source) return;
                             kwargs[source] = contactInfo[source] ?? def ?? '';
                         });
+                        pendingCount += 1;
 
                         socket.emit('run_module', {
                             uuid: "",
@@ -254,15 +287,21 @@ const GroupActionModal: React.FC<Props> = ({
                         console.log(`[modal/run_module] project=${project}, ids=[${groupedIds.join(', ')}], kwargs=`, kwargs);
                     });
                 });
-
-            if (onAfterAction) {
-                onAfterAction()
+            if (pendingCount > 0) {
+                moduleStartModalRef.current = true
+                setModulesInFlight(pendingCount);
+                modulesCompletedRef.current = 0;
             }
+
+            // if (onAfterAction) {
+            //     onAfterAction()
+            // }
         } else {
             Swal.fire('Ошибка', 'Неподдерживаемый тип действия', 'error');
         }
-
-        onClose();
+        if (action?.action_type !== 'code') {
+            onClose();
+        }
     };
 
 

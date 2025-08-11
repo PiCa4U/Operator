@@ -7,7 +7,7 @@ import Swal from "sweetalert2";
 import EditableFields from "./components";
 import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
 import SearchableSelect from "./components/select";
-import {ModuleData, MonoProjectsModuleData} from "../../App";
+import {ModuleData, MonoProjectsModuleData} from "../mainApp";
 import styles from "../taskDashboard/components/checkbox.module.css";
 import GroupActionModal from "../taskDashboard/components";
 import {OptionType, Preset} from "../taskDashboard";
@@ -248,6 +248,11 @@ type PhoneGroup = {
         contact_info: Record<string, string>;
     }>;
 };
+
+const container = document.getElementById('root');
+if (!container) throw new Error('Root container not found');
+const rawFsServer = (container.dataset as any).fsServer;
+const fsServer = rawFsServer || 'wwstest.glagol.ai';
 
 const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                specialKey,
@@ -1271,6 +1276,16 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             //     sip_login: sipLogin,
             //     worker
             // })
+
+            if (openedPhones) {
+                const ids = openedPhones?.map((item) => item.id)
+                socket.emit("group_lock_off", {
+                    ids,
+                    session_key: sessionKey,
+                    worker
+                })
+            }
+
             setIsParams(false)
             setPostActive(true)
             setPostSeconds(POST_LIMIT);
@@ -2235,7 +2250,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     <div className="mb-3">
                         <audio controls style={{ width: '100%' }}>
                             <source
-                                src={`https://my.glagol.ai/get_cc_audio/${(call.project_name || '').replace('@', '_at_')}/${call.record_name}`}
+                                src={`https://my.glagol.ai/get_cc_audio/${fsServer}/${call.record_name}`}
                                 type="audio/mpeg"
                             />
                             Ваш браузер не поддерживает аудиоплеер

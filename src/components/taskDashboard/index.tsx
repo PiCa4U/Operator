@@ -143,6 +143,10 @@ const PresetSelectorTable: React.FC<Props> = ({
         return currentOption ? [currentOption, ...otherOptions] : otherOptions;
     }, [monitorUsers, sipLogin]);
 
+    const [modulesInFlight, setModulesInFlight] = useState(0);
+    const modulesCompletedRef = useRef(0);
+    const moduleStartTableRef = useRef(false)
+
     const [modalOpen, setModalOpen] = useState(false);
     const [modalIds, setModalIds] = useState<number[]>([]);
     const [modalAction, setModalAction] = useState<Action | null>(null);
@@ -227,7 +231,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     useEffect(()=> console.log("selectedRows: ", selectedRows))
 
     useEffect(() => {
-        if (role === 'manager' && selectedPreset) {
+        if (selectedPreset) {
             const projects = selectedPreset.preset.projects;
 
             Promise
@@ -461,8 +465,42 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         setTimeout(() => {
             isReloadingRef.current = false;
-        }, 2000); // можно чуть больше — 3 сек, если надо
+        }, 2000);
     };
+
+    useEffect(() => {
+        if (modalOpen || modulesInFlight === 0 || !moduleStartTableRef.current) return
+        const handleComplete = () => {
+            modulesCompletedRef.current += 1;
+            // console.log("modulesCompletedRef.current: ", modulesCompletedRef.current)
+            if (modulesCompletedRef.current >= modulesInFlight) {
+
+                Swal.fire("Готово", "Все модули завершены", "success");
+                moduleStartTableRef.current = false
+                modulesCompletedRef.current = 0
+                loadGroupedPhones();
+
+            }
+        };
+
+        const onRunModuleSuccess = (data: any) => {
+            console.log("✅ run_module_success:", data);
+            handleComplete();
+        };
+
+        const onRunModuleError = (data: any) => {
+            console.warn("❌ run_module_error:", data);
+            handleComplete();
+        };
+
+        socket.on("run_module", onRunModuleSuccess);
+        socket.on("error", onRunModuleError);
+
+        return () => {
+            socket.off("run_module", onRunModuleSuccess);
+            socket.off("error", onRunModuleError);
+        };
+    }, [modulesInFlight]);
 
     useEffect(() => console.log("actionOptions: ", actionOptions),[actionOptions])
     // Внутри PresetSelectorTable:
@@ -491,7 +529,7 @@ const PresetSelectorTable: React.FC<Props> = ({
 
             type KwargDef = { source: string; default?: string };
             const argDefs = Object.values(foundModule.kwargs || {}) as KwargDef[];
-
+            let pendingCount = 0;
             // groups: Record<project_name, number[]>
             Object.entries(groups).forEach(([project_name, ids]) => {
                 const idToContact = ids.map(id => {
@@ -517,7 +555,9 @@ const PresetSelectorTable: React.FC<Props> = ({
                     groupedByContactInfo.get(hashKey)!.ids.push(id);
                 });
 
+
                 groupedByContactInfo.forEach(({ ids: groupedIds, kwargs }) => {
+                    pendingCount += 1;
                     socket.emit('run_module', {
                         uuid: "",
                         b_uuid: "",
@@ -530,8 +570,15 @@ const PresetSelectorTable: React.FC<Props> = ({
 
                     console.log(`[run_module] project=${project_name}, ids=[${groupedIds.join(', ')}], kwargs=`, kwargs);
                 });
+
+
             });
-            loadGroupedPhones()
+            // loadGroupedPhones()
+            if (pendingCount > 0) {
+                moduleStartTableRef.current = true
+                setModulesInFlight(pendingCount);
+                modulesCompletedRef.current = 0;
+            }
 
         } else if (act.action_type === 'assign') {
         Object.entries(groups).forEach(([project_name, ids]) => {
@@ -560,6 +607,7 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         });
         if (allCount === count) {
+            Swal.fire("Готово", "Операторы назначены", "success");
             loadGroupedPhones()
         }
     }
@@ -570,9 +618,10 @@ const PresetSelectorTable: React.FC<Props> = ({
                 });
             });
             loadGroupedPhones()
+            Swal.fire("Готово", "Контакты удалены успешно", "success");
         }
 
-        Swal.fire("Готово", "Операции отправлены на сервер", "success");
+
         // loadGroupedPhones()
     };
 
@@ -596,9 +645,9 @@ const PresetSelectorTable: React.FC<Props> = ({
             return Swal.fire("Нечего обрабатывать", "Отметьте хотя бы одну строку", "info");
         }
 
-        if (actionOpt?.action.action_type === "assign") {
-
-        }
+        // if (actionOpt?.action.action_type === "assign") {
+        //
+        // }
         // 3) Если клик из строки и ровно один ID в одной строке — мгновенно обрабатываем
         if (isRowClick && rows.length === 1 && rows[0].id_list.length === 1) {
             return processRows(rows, opt!);
@@ -759,7 +808,7 @@ const PresetSelectorTable: React.FC<Props> = ({
 
 
     useEffect(() => {
-        if (role !== 'manager' || !Object.keys(expressConfig).length) return;
+        if (!Object.keys(expressConfig).length) return;
 
         // Сразу получаем первый раз
         fetchStatuses();
@@ -773,36 +822,40 @@ const PresetSelectorTable: React.FC<Props> = ({
         return () => clearInterval(intervalId);
     }, [expressConfig, role]);
 
-    const renderExpressCards = () => (
-        <div
-            // className="d-flex flex-row flex-wrap gap-3 ps-3 ml-4"
-            style={{marginLeft:30, display: "flex", flexDirection: "row", flexWrap: "wrap", gap: 20}}
-        >
-            {Object.entries(expressStates).map(([project, state]) => (
-                <div
-                    key={project}
-                    className="card"
-                    style={{
-                        minWidth: '220px',
-                        padding: 16,
-                        borderRadius: 8,
-                        flex: '0 1 auto'
-                    }}
-                >
-                    {role === "manager" ? [
-                        { label: "Проект:", value: findNameProject(project) },
-                        { label: "Express активен:", value: state.active ? "Да" : "Нет" },
-                        { label: "Операторов в ожидании:", value: state.agents.length },
-                        { label: "Активных вызовов:", value: state.calls },
-                    ].map((item, idx) => (
-                        <div key={idx}>
-                            <strong>{item.label}</strong> {item.value}
-                        </div>
-                    )) :
-                        [
+    const renderExpressCards = () => {
+        const entries = Object.entries(expressStates)
+            .filter(([_, state]) => role === "manager" || state.active); // ← фильтруем только активные для операторов
+
+        return (
+            <div
+                style={{
+                    marginLeft: 30,
+                    display: "flex",
+                    flexDirection: "row",
+                    flexWrap: "wrap",
+                    gap: 20
+                }}
+            >
+                {entries.map(([project, state]) => (
+                    <div
+                        key={project}
+                        className="card"
+                        style={{
+                            minWidth: '220px',
+                            padding: 16,
+                            borderRadius: 8,
+                            flex: '0 1 auto'
+                        }}
+                    >
+                        {(role === "manager" ? [
                             { label: "Проект:", value: findNameProject(project) },
                             { label: "Express активен:", value: state.active ? "Да" : "Нет" },
-                        ].map((item, idx) => (
+                            { label: "Операторов в ожидании:", value: state.agents.length },
+                            { label: "Активных вызовов:", value: state.calls },
+                        ] : [
+                            { label: "Проект:", value: findNameProject(project) },
+                            { label: "Express активен:", value: state.active ? "Да" : "Нет" },
+                        ]).map((item, idx) => (
                             <div key={idx}>
                                 <strong>{item.label}</strong>{" "}
                                 <span
@@ -815,33 +868,36 @@ const PresetSelectorTable: React.FC<Props> = ({
                                             : {}
                                     }
                                 >
-                                    {item.value}
-                                </span>
+                                {item.value}
+                            </span>
                             </div>
                         ))}
 
-                    {role === "manager" && <div className="mt-2 d-flex gap-2">
-                        {state.active ? (
-                            <button
-                                className="btn btn-outline-danger"
-                                onClick={() => handleStopExpress(project, state.express_id)}
-                            >
-                                Остановить
-                            </button>
-                        ) : (
-                            <button
-                                className="btn btn-outline-success"
-                                onClick={() => handleStartExpress(project)}
-                            >
-                                Запустить
-                            </button>
+                        {role === "manager" && (
+                            <div className="mt-2 d-flex gap-2">
+                                {state.active ? (
+                                    <button
+                                        className="btn btn-outline-danger"
+                                        onClick={() => handleStopExpress(project, state.express_id)}
+                                    >
+                                        Остановить
+                                    </button>
+                                ) : (
+                                    <button
+                                        className="btn btn-outline-success"
+                                        onClick={() => handleStartExpress(project)}
+                                    >
+                                        Запустить
+                                    </button>
+                                )}
+                            </div>
                         )}
-                    </div>}
-                </div>
+                    </div>
+                ))}
+            </div>
+        );
+    };
 
-            ))}
-        </div>
-    );
 
     const  mockDataForStatus = []
     const handleDateChange = (dates: [Date | null, Date | null]) => {

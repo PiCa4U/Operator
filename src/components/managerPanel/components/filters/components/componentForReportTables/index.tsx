@@ -1,7 +1,7 @@
 import React, {FC, useEffect, useRef, useState} from "react";
 import SearchableSelect from "../../../../../callControlPanel/components/select";
 import ChartContainer from "../charts";
-import {MyChartData} from "../../index";
+import {ChartConfig, MyChartData} from "../../index";
 import {ChartDataTable} from "../table";
 
 
@@ -49,6 +49,8 @@ type Props = {
     getInfo: () => void;
     charts: MyChartData[];
     setCharts: (charts: MyChartData[]) => void;
+    chartConfigs: ChartConfig[];
+    setChartConfig: (chartConfigs: ChartConfig[]) => void;
 };
 
 export const ComponentForReportTables: FC<Props> = ({
@@ -67,9 +69,11 @@ export const ComponentForReportTables: FC<Props> = ({
                                                         getInfo,
                                                         charts,
                                                         setCharts,
+                                                        chartConfigs,
+                                                        setChartConfig,
                                                     }) => {
     const timeoutRef = useRef<number | null>(null);
-
+    useEffect(() => console.log("charts: ", charts),[charts])
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const newColor = e.target.value;
         if (timeoutRef.current !== null) {
@@ -128,8 +132,11 @@ export const ComponentForReportTables: FC<Props> = ({
                         style={{ padding: "2px 6px", fontSize: 12 }}
                         onClick={() => {
                             const updatedCharts = charts.filter((_, i) => i !== index);
+                            const updatedConfigs = chartConfigs.filter((_, i) => i !== index);
                             setCharts(updatedCharts);
+                            setChartConfig(updatedConfigs);
                         }}
+
                     >
                         ✕
                     </button>
@@ -138,7 +145,6 @@ export const ComponentForReportTables: FC<Props> = ({
         </div>
     );
 
-    useEffect(() => console.log("table: ", table))
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {renderButtons()}

@@ -24,6 +24,11 @@ type Props = {
     reports: any[];
 };
 
+const container = document.getElementById('root');
+if (!container) throw new Error('Root container not found');
+const rawFsServer = (container.dataset as any).fsServer;
+const fsServer = rawFsServer || 'wwstest.glagol.ai';
+
 export const ReportCard: FC<Props> = ({ selectedReport, fieldsData, reports }) => {
     const call = reports.find((item) => item.channel_direction === "internal");
     const iconCol = call?.total_direction === "outbound" ? "#f26666" : "#7cd420";
@@ -73,7 +78,7 @@ export const ReportCard: FC<Props> = ({ selectedReport, fieldsData, reports }) =
                     <div className="mb-3">
                         <audio controls style={{ width: "100%" }}>
                             <source
-                                src={`https://my.glagol.ai/get_cc_audio/${(call.project_name || "").replace("@", "_at_")}/${call.record_name}`}
+                                src={`https://my.glagol.ai/get_cc_audio/${fsServer}/${call.record_name}`}
                                 type="audio/mpeg"
                             />
                             Ваш браузер не поддерживает аудиоплеер

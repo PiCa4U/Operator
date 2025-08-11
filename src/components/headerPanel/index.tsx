@@ -179,11 +179,55 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     //     return projectGateawayPrefix
     // }
 
+    useEffect(() => {
+        if (
+            !showTasksDashboard &&
+            autocallEnabled &&
+            !hasActiveCall &&
+            projectPoolForCall.length > 0 &&
+            getRegisteredSofia(fsStatus.sofia_status) &&
+            fsStatus.state === "Waiting" &&
+            (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
+        ) {
+            socket.emit('outbound_call_get', {
+                assign: true,
+                batch: 1,
+                worker,
+                interface: "glagol",
+                sip_login: sipLogin,
+                session_key: sessionKey,
+                projects_pool: projectPoolForCall,
+                start_type: "auto"
+            });
+        }
+    }, [showTasksDashboard]);
+
     const toggleAutocall = () => {
         const newState = !autocallEnabled;
         setAutocallEnabled(newState);
         localStorage.setItem('autocallEnabled', String(newState));
+
+        if (
+            newState &&
+            !hasActiveCall &&
+            projectPoolForCall.length > 0 &&
+            getRegisteredSofia(fsStatus.sofia_status) &&
+            fsStatus.state === "Waiting" &&
+            (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
+        ) {
+            socket.emit('outbound_call_get', {
+                assign: true,
+                batch: 1,
+                worker,
+                interface: "glagol",
+                sip_login: sipLogin,
+                session_key: sessionKey,
+                projects_pool: projectPoolForCall,
+                start_type: "auto"
+            });
+        }
     };
+
     useEffect(() => {
         if (activeCalls.length > 0 && Object.keys(activeCalls[0]).length > 0) {
             setHasActiveCall(true);

@@ -95,10 +95,18 @@ export interface MyChartData {
     type: 'line' | 'bar';
     data: ChartPoint[];
 }
+export interface ChartConfig {
+    data: string;
+    modify: string;
+    interval: string;
+    line: string;
+    color: string;
+}
 
 export const Filters = () => {
     const [filters, setFilters] = useState<any[]>([]);
     const [activeFilters, setActiveFilters] = useState<FilterItem[]>([]);
+    useEffect(() => console.log("activeFilters: ", activeFilters),[activeFilters])
     const [selectedFilterId, setSelectedFilterId] = useState<string | null>(null);
     const [reportList, setReportList] = useState<any[]>([])
     const [selectedReport, setSelectedReport] = useState<any>(null)
@@ -121,6 +129,44 @@ export const Filters = () => {
     const [modify, setModify] = useState<string>("none")
     const [color, setColor] = useState("#e66464");
     const [charts, setCharts] = useState<MyChartData[]>([]);
+    const [chartConfigs, setChartConfigs] = useState<ChartConfig[]>([]);
+
+    useEffect(() => console.log("chartConfigs: ", chartConfigs),[chartConfigs])
+
+    const rebuildCharts = async () => {
+        const filter_dict = buildFilterJson(activeFilters);
+        const newCharts: MyChartData[] = [];
+
+        const timezone_offset = -new Date().getTimezoneOffset() / 60;
+
+        for (const config of chartConfigs) {
+            try {
+                const res = await axios.post("/api/v1/communications/charts", {
+                    filter_dict: filter_dict,
+                    interval: config.interval,
+                    modify: config.modify,
+                    chart: config.data,
+                    timezone_offset
+                });
+
+                const chartLabels = `${dataOptions.find(item => item.id === config.data)?.name} (${modifyOptions.find(item => item.id === config.modify)?.name})`;
+
+                const labels: string[] = res.data.chart.labels;
+                const values: number[] = res.data.chart.data;
+
+                newCharts.push({
+                    label: chartLabels,
+                    color: config.color,
+                    type: config.line === 'Гистограмма' ? 'bar' : 'line',
+                    data: labels.map((x, i) => ({ x, y: values[i] })),
+                });
+            } catch (e) {
+                console.error("Ошибка при обновлении графика", e);
+            }
+        }
+
+        setCharts(newCharts);
+    };
 
     useEffect(() => {
         const fetchData = async () => {
@@ -203,9 +249,14 @@ export const Filters = () => {
                     break;
 
                 case "date":
-                    if (value.preset) result.dates.push(value.preset);
+                    if (value.preset === "custom" && value.start && value.end) {
+                        const startStr = value.start.toISOString().split("T")[0];
+                        const endStr = value.end.toISOString().split("T")[0];
+                        result.dates.push(`${startStr} TO ${endStr}`);
+                    } else if (value.preset) {
+                        result.dates.push(value.preset);
+                    }
                     break;
-
                 case "comment":
                     if (value) result.comments.push(value);
                     break;
@@ -341,6 +392,7 @@ export const Filters = () => {
             setProjectPool(projectsPool)
             setReportList([report]);
             setPage(pageNumber);
+            await rebuildCharts();
 
             if (response.data.total_count) {
                 setTotalCount(response.data.total_count);
@@ -424,13 +476,14 @@ export const Filters = () => {
 
     const getInfo = async () => {
         const filter_dict = buildFilterJson(activeFilters);
-
+        const timezone_offset = -new Date().getTimezoneOffset() / 60;
         try {
             const response = await axios.post("/api/v1/communications/charts", {
-                ...filter_dict,
+                filter_dict,
                 interval,
                 modify,
                 chart: data,
+                timezone_offset
             });
             const chartLabels = `${dataOptions.find(item => item.id === data)?.name} (${modifyOptions.find(item => item.id === modify)?.name})`
             const labels: string[] = response.data.chart.labels;
@@ -442,6 +495,8 @@ export const Filters = () => {
                 type: line === 'Гистограмма' ? 'bar' : 'line',
                 data: labels.map((x, i) => ({ x, y: values[i] })),
             };
+            const newConfig: ChartConfig = { data, modify, interval, line, color };
+            setChartConfigs(prev => [...prev, newConfig]);
 
             setCharts(prev => [...prev, newChart]);
         } catch (err) {
@@ -570,6 +625,8 @@ export const Filters = () => {
                         getInfo={getInfo}
                         charts={charts}
                         setCharts={setCharts}
+                        chartConfigs={chartConfigs}
+                        setChartConfig={setChartConfigs}
                     />
                     )}
             </div>}

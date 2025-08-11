@@ -13,6 +13,21 @@ export const ReportList: FC<Props> = ({ reportList, setSelectedReport }) => {
         alignItems: 'stretch',
     });
 
+    const formatDateAndTime = (datetimeStr: string) => {
+        if (!datetimeStr) return { date: "—", time: "—" };
+
+        const utcDate = new Date(datetimeStr + "Z");
+        const localDate = utcDate;
+
+        const pad = (n: number) => n.toString().padStart(2, "0");
+
+        const date = `${pad(localDate.getDate())}.${pad(localDate.getMonth() + 1)}.${localDate.getFullYear()}`;
+        const time = `${pad(localDate.getHours())}:${pad(localDate.getMinutes())}:${pad(localDate.getSeconds())}`;
+
+        return { date, time };
+    };
+
+
     const getInnerStyle = (addRightBorder: boolean, borderColor: string): React.CSSProperties => ({
         flex: 1,
         padding: '4px 6px',
@@ -55,6 +70,7 @@ export const ReportList: FC<Props> = ({ reportList, setSelectedReport }) => {
             {Array.isArray(reportList) && reportList.length > 0 && reportList.map((call, idx) => {
                 const isError = !call.project_names || call.project_names.length === 0;
                 const borderColor = isError ? '#dc3545' : '#17a2b8';
+                const { date, time } = formatDateAndTime(call.datetime_start);
 
                 return (
                     <div
@@ -90,8 +106,8 @@ export const ReportList: FC<Props> = ({ reportList, setSelectedReport }) => {
                             </div>
                         </div>
 
-                        <div style={getCellStyle()}><div style={getInnerStyle(true, borderColor)}>{call.date_start || "—"}</div></div>
-                        <div style={getCellStyle()}><div style={getInnerStyle(true, borderColor)}>{call.time_start || "—"}</div></div>
+                        <div style={getCellStyle()}><div style={getInnerStyle(true, borderColor)}>{date}</div></div>
+                        <div style={getCellStyle()}><div style={getInnerStyle(true, borderColor)}>{time}</div></div>
                         <div style={getCellStyle()}><div style={getInnerStyle(true, borderColor)}>{call.duration || "—"}</div></div>
                         <div style={getCellStyle()}><div style={getInnerStyle(true, borderColor)}>{call.operator_name || "—"}</div></div>
                         <div style={getCellStyle()}>

@@ -1,4 +1,4 @@
-import React from "react";
+import React, {useEffect} from "react";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 
@@ -33,6 +33,12 @@ export const DateField: React.FC<Props> = ({ value, onChange }) => {
             onChange({ preset: "custom", start: today, end: today });
         }
     };
+
+    useEffect(() => {
+        if (!value) {
+            onChange({ preset: "today" });
+        }
+    }, []);
 
     const handleRangeChange = (dates: [Date | null, Date | null]) => {
         const [start, end] = dates;

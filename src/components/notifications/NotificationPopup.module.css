@@ -1,24 +1,142 @@
-/* NotificationPopup.module.css */
+:root {
+    --bg: rgba(20, 22, 26, 0.6);
+    --card: rgba(22, 24, 28, 0.55);
+    --border: rgba(255, 255, 255, 0.12);
+    --text: #e9edf1;
+    --muted: #a8b0b9;
+    --green: #0BB918;
+    --red: #f33333;
+    --shadow: 0 20px 60px rgba(0,0,0,0.45), 0 4px 16px rgba(0,0,0,0.25);
+}
+
+/* --- Overlay --- */
 .overlay {
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0,0,0,0.5);
-    display: flex;
-    justify-content: center;
-    align-items: center;
+    position: fixed; inset: 0;
+    display: grid; place-items: center;
+    background: radial-gradient(120% 120% at 50% 50%, rgba(0,0,0,0.65), rgba(0,0,0,0.75));
+    backdrop-filter: blur(6px);
     z-index: 9999;
+    animation: fadeIn .18s ease-out both;
 }
+
+@keyframes fadeIn {
+    from { opacity: .0; }
+    to   { opacity: 1; }
+}
+
+/* --- Popup --- */
 .popup {
-    background: #fff;
-    padding: 24px;
-    border-radius: 8px;
-    text-align: center;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    width: min(560px, calc(100vw - 32px));
+    border-radius: 24px;
+    padding: 22px 22px 18px;
+    position: relative;
+    color: var(--text);
+    background:
+            linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)) padding-box,
+            linear-gradient(135deg, rgba(255,255,255,0.35), rgba(255,255,255,0.05)) border-box;
+    border: 1px solid transparent;
+    box-shadow: var(--shadow);
 }
-.buttons > button {
-    margin: 0 8px;
-    padding: 8px 16px;
-    font-size: 16px;
+
+/* декоративная «свечение» */
+.ringGlow {
+    position: absolute; inset: -2px;
+    border-radius: 24px;
+    background: radial-gradient(120% 100% at 50% 0%,
+    rgba(11, 185, 24, 0.18), rgba(255,255,255,0) 60%);
+    pointer-events: none;
+    filter: blur(8px);
 }
-.accept { background: #4caf50; color: white; }
-.reject { background: #f44336; color: white; }
+
+/* --- Header --- */
+.header { display: flex; flex-direction: column; gap: 4px; padding: 2px 4px 10px; }
+.title { font-weight: 700; letter-spacing: .2px; font-size: 18px; }
+.subtitle { font-size: 12px; color: var(--muted); }
+
+/* --- Caller --- */
+.callerRow {
+    display: grid;
+    grid-template-columns: 72px 1fr;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 4px 18px;
+}
+
+.avatarWrap { position: relative; width: 72px; height: 72px; }
+.avatar, .avatarFallback {
+    width: 100%; height: 100%;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    object-fit: cover;
+    background: linear-gradient(180deg, #2a2f36, #1d2026);
+    display: grid; place-items: center;
+    font-weight: 700; font-size: 26px; color: #fff;
+}
+.pulse {
+    position: absolute; inset: -8px;
+    border-radius: 50%;
+    border: 2px solid rgba(11, 185, 24, 0.4);
+    animation: pulse 1.8s ease-out infinite;
+}
+@keyframes pulse {
+    0% { transform: scale(0.9); opacity: .75; }
+    70% { transform: scale(1.2); opacity: 0; }
+    100% { transform: scale(1.2); opacity: 0; }
+}
+
+.callerInfo { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.callerName {
+    font-size: 22px; font-weight: 700; letter-spacing: .2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.callerHint { font-size: 12px; color: var(--muted); }
+
+/* --- Buttons --- */
+.buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    padding-top: 6px;
+}
+
+.btn {
+    position: relative;
+    display: inline-flex; align-items: center; justify-content: center;
+    gap: 10px;
+    height: 48px; padding: 0 18px;
+    border-radius: 14px; border: 1px solid var(--border);
+    background: rgba(255,255,255,0.04);
+    color: var(--text);
+    font-weight: 600;
+    transition: transform .06s ease, background .2s ease, box-shadow .2s ease;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.18);
+    outline: none;
+}
+.btn:focus-visible { box-shadow: 0 0 0 3px rgba(255,255,255,0.18), 0 8px 20px rgba(0,0,0,0.18); }
+
+.btnIcon { font-size: 18px; line-height: 0; }
+
+/* Принять */
+.accept {
+    background: linear-gradient(180deg, rgba(11,185,24,0.18), rgba(11,185,24,0.10));
+    border-color: rgba(11,185,24,0.35);
+}
+.accept:hover { transform: translateY(-1px); background: rgba(11,185,24,0.22); }
+.accept:active { transform: translateY(0); }
+
+/* Отклонить */
+.reject {
+    background: linear-gradient(180deg, rgba(243,51,51,0.18), rgba(243,51,51,0.10));
+    border-color: rgba(243,51,51,0.35);
+}
+.reject:hover { transform: translateY(-1px); background: rgba(243,51,51,0.22); }
+.reject:active { transform: translateY(0); }
+
+/* mobile tweaks */
+@media (max-width: 480px) {
+    .callerRow { grid-template-columns: 56px 1fr; gap: 12px; }
+    .avatarWrap { width: 56px; height: 56px; }
+    .callerName { font-size: 18px; }
+    .buttons { grid-template-columns: 1fr; }
+    .btn { height: 46px; }
+}

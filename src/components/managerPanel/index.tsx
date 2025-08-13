@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Filters } from "./components/filters";
 // импортируй свой монитор (или временную заглушку)
-import  OperatorsManagment  from "./components/operatorManagment";
+import {OperatorsTab}  from "./components/operatorManagment";
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 type TabKey = "filters" | "operators";
 
@@ -9,6 +10,7 @@ export const ManagerPanel: React.FC = () => {
     const [active, setActive] = useState<TabKey>(() => {
         return (localStorage.getItem("managerPanel.activeTab") as TabKey) || "filters";
     });
+    const [client] = useState(() => new QueryClient());
 
     useEffect(() => {
         localStorage.setItem("managerPanel.activeTab", active);
@@ -44,7 +46,11 @@ export const ManagerPanel: React.FC = () => {
 
             <div className="card-body">
                 {active === "filters" && <Filters />}
-                {/*{active === "operators" && <OperatorsManagment />}*/}
+                {active === 'operators' && (
+                    <QueryClientProvider client={client}>
+                        <OperatorsTab />
+                    </QueryClientProvider>
+                )}
             </div>
         </div>
     );

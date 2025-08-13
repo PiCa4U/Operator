@@ -1,45 +1,72 @@
 // src/App.tsx
-import React, { useEffect, useState } from 'react';
-import { useSelector, useDispatch } from 'react-redux';
-import {RootState, store} from './redux/store';
-import { setTurnCreds, setHa1 } from './redux/operatorSlice'; // ваш слайс
-import { socket } from './socket';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useSelector } from 'react-redux';
+import { RootState, store } from './redux/store';
 import { SipProvider } from './context/SipContext';
-import MainApp from "./components/mainApp"; // компонент, который показывает «Ждём…»
+import MainApp from './components/mainApp';
+import { enableWebRTC, disableWebRTC } from './socket';
+
+type PhoneMode = 'softphone' | 'webrtc';
 
 export default function App() {
-    const {
-        sipLogin   = '',
-        worker     = '',
-    } = store.getState().credentials;
-
-    // 1) Читаем из Redux те значения, которые нам нужны для инициализации SIP
+    const { sipLogin = '' } = store.getState().credentials;
     const { ha1, turnCreds } = useSelector((s: RootState) => s.operator);
 
-    // 2) Локальный флаг «готовности»: true, когда и ha1, и turnCreds пришли
-    const [ready, setReady] = useState(false);
+    const [mode, setMode] = useState<PhoneMode>(() => {
+        const saved = localStorage.getItem('phone_mode') as PhoneMode | null;
+        return saved === 'softphone' || saved === 'webrtc' ? saved : 'webrtc';
+    });
 
-    // 4) Как только оба значения есть — переключаем ready
+    // включаем/выключаем подписки сокета под режим
     useEffect(() => {
-        if (ha1 && turnCreds) {
-            setReady(true);
-        }
-    }, [ha1, turnCreds]);
+        localStorage.setItem('phone_mode', mode);
+        if (mode === 'webrtc') enableWebRTC();
+        else disableWebRTC();
+        return () => disableWebRTC(); // safety при размонтировании
+    }, [mode]);
 
-    // 5) Пока не готовы — показываем экран ожидания
+    // готовность нужна только для WebRTC
+    const ready = useMemo(() => {
+        return mode === 'softphone' ? true : Boolean(ha1 && turnCreds);
+    }, [mode, ha1, turnCreds]);
+
+    const ModeSwitch = (
+        <div style={{ display: 'flex', gap: 8, padding: 8 }}>
+            <button
+                className={mode === 'webrtc' ? 'btn btn-success' : 'btn btn-outline-success'}
+                onClick={() => setMode('webrtc')}
+            >WebRTC</button>
+            <button
+                className={mode === 'softphone' ? 'btn btn-primary' : 'btn btn-outline-primary'}
+                onClick={() => setMode('softphone')}
+            >Softphone</button>
+        </div>
+    );
+
     if (!ready) {
-        return <div>Подготовка софтфона, ждём TURN-креды…</div>
+        return (
+            <div style={{ padding: 16 }}>
+                {ModeSwitch}
+                <div>Подготовка WebRTC: ждём TURN/HA1…</div>
+            </div>
+        );
     }
 
-    // 6) Как только готовы — монтируем провайдер и всю логику WebPhone
     return (
-        <SipProvider
-            userId={sipLogin}
-            ha1={ha1}
-            wsServer="wss://24webrtc.ru/ws"
-            turnCreds={turnCreds}
-        >
-            <MainApp />
-        </SipProvider>
+        <>
+            <div style={{marginLeft: 40}}>
+                {ModeSwitch}
+            </div>
+            <SipProvider
+                enabled={mode === 'webrtc'}
+                userId={sipLogin}
+                ha1={ha1!}
+                wsServer="wss://24webrtc.ru/ws"
+                turnCreds={turnCreds!}
+            >
+                <MainApp />
+            </SipProvider>
+
+        </>
     );
 }

@@ -162,12 +162,12 @@ const MainApp: React.FC = () => {
         window.location.href = "https://my.glagol.ai/login_work/";
     };
 
-    useEffect(() => {
-        socket.on('logout', handleLogout);
-        return () => {
-            socket.off('logout', handleLogout);
-        };
-    }, []);
+    // useEffect(() => {
+    //     socket.on('logout', handleLogout);
+    //     return () => {
+    //         socket.off('logout', handleLogout);
+    //     };
+    // }, []);
 
     useEffect(() => {
         const now = new Date().toISOString();
@@ -791,7 +791,7 @@ const MainApp: React.FC = () => {
         return found ? found.glagol_name : projectName;
     }
 
-    const { incoming, clearIncoming, remoteAudioRef, localAudioRef, answerCall, hangUp } = useSip();
+    const {enabled, incoming, clearIncoming, remoteAudioRef, localAudioRef, answerCall, hangUp } = useSip();
     const onAccept = () => {
         if (!incoming) return;
         answerCall().then(() => {
@@ -807,30 +807,34 @@ const MainApp: React.FC = () => {
         clearIncoming();
     };
 
+
     return (
         <div className="container-fluid">
-            {/* Аудио для удалённого потока */}
-            <audio
-                ref={remoteAudioRef}
-                autoPlay
-                hidden
-            />
-
-            {/* Аудио для локального потока (mute/unmute) */}
-            <audio
-                ref={localAudioRef}
-                autoPlay
-                muted
-                hidden
-            />
-
-            {incoming && incoming.state === SessionState.Initial && (
-                <NotificationPopup
-                    direction="inbound"
-                    from={incoming.remoteIdentity.uri.user}
-                    onAccept={onAccept}
-                    onReject={onReject}
+            {enabled && (
+                <>
+                    {/* Аудио для удалённого потока */}
+                <audio
+                    ref={remoteAudioRef}
+                    autoPlay
+                    hidden
                 />
+
+                {/* Аудио для локального потока (mute/unmute) */}
+                <audio
+                    ref={localAudioRef}
+                    autoPlay
+                    muted
+                    hidden
+                />
+
+                {incoming && incoming.state === SessionState.Initial && (
+                    <NotificationPopup
+                        from={incoming.remoteIdentity.uri.user}
+                        onAccept={onAccept}
+                        onReject={onReject}
+                    />
+                )}
+                </>
             )}
             {/* Шапка с панелью управления (HeaderPanel) */}
             <HeaderPanel

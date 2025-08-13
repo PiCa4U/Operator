@@ -1,54 +1,67 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+// src/context/SipContext.tsx
+import React, {createContext, createRef, useContext} from 'react';
+import type { RefObject } from 'react';
 import type { Invitation } from 'sip.js';
 import { useSipUA, SipUA } from '../hooks/useSipUA';
+import type { TurnCredentials } from '../redux/operatorSlice';
 
-type SipProviderProps = React.PropsWithChildren<{
-    userId: string;
-    ha1: string;
-    wsServer: string;
-    turnCreds?: any;
-}>;
-
-interface SipContextValue extends SipUA {
-    incoming: Invitation | null;
+export interface SipContextValue extends SipUA {
+    enabled: boolean;
     clearIncoming(): void;
 }
 
-const SipContext = createContext<SipContextValue | null>(null);
+const noop = () => {};
+const dummyRemoteRef = ({ current: null } as unknown) as React.RefObject<HTMLAudioElement>;
+const dummyLocalRef  = ({ current: null } as unknown) as React.RefObject<HTMLAudioElement>;
 
-export const SipProvider: React.FC<SipProviderProps> = ({
-                                                            userId,
-                                                            ha1,
-                                                            wsServer,
-                                                            turnCreds,
-                                                            children
-                                                        }) => {
-    const ua = useSipUA({ userId, ha1, wsServer, turnCreds });
-    const [incoming, setIncoming] = useState<Invitation | null>(null);
+const defaultValue: SipContextValue = {
+    enabled: false,
+    session: null,
+    makeCall: async () => {},
+    answerCall: async () => {},
+    hangUp: () => {},
+    holdCall: async () => {},
+    unholdCall: async () => {},
+    muteLocal: () => {},
+    incoming: null,
+    status: null,
+    remoteAudioRef: dummyRemoteRef,
+    localAudioRef: dummyLocalRef,
+    userAgent: null,
+    clearIncoming: () => {},
+};
 
-    // Обновляем локальный incoming, когда у ua появляется новый звонок
-    useEffect(() => {
-        if (ua.incoming) {
-            setIncoming(ua.incoming);
-        }
-    }, [ua.incoming]);
+const SipContext = createContext<SipContextValue>(defaultValue);
 
-    const clearIncoming = () => {
-        ua.incoming?.dispose?.();
-        setIncoming(null);
-    };
+export function SipProvider({
+                                enabled,
+                                userId,
+                                ha1,
+                                wsServer,
+                                turnCreds,
+                                children,
+                            }: React.PropsWithChildren<{
+    enabled: boolean;
+    userId: string;
+    ha1: string;
+    wsServer: string;
+    turnCreds: TurnCredentials;
+}>) {
+    const ua = useSipUA({ enabled, userId, ha1, wsServer, turnCreds });
 
     return (
-        <SipContext.Provider value={{ ...ua, incoming, clearIncoming }}>
+        <SipContext.Provider
+            value={{
+                enabled,
+                ...ua,
+                clearIncoming: () => ua.incoming?.dispose?.(),
+            }}
+        >
             {children}
         </SipContext.Provider>
     );
-};
+}
 
-export function useSip(): SipContextValue {
-    const ctx = useContext(SipContext);
-    if (!ctx) {
-        throw new Error('useSip must be used within a <SipProvider>');
-    }
-    return ctx;
+export function useSip() {
+    return useContext(SipContext);
 }

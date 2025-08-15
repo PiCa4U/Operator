@@ -13,8 +13,8 @@ if (!container) throw new Error('Root container not found');
 const { sipLogin: rawSipLogin, fsServer: rawFsServer, worker: rawWorker } =
     container.dataset as Partial<Record<string, string>>;
 const fsServer = rawFsServer || 'wwstest.glagol.ai';
-const sipLogin = rawSipLogin || '1000';
-const worker   = rawWorker   || '4.fs@akc24.ru';
+const sipLogin = rawSipLogin || '1012';
+const worker   = rawWorker   || '1.fs@akc24.ru';
 
 const SOCKET_URL = `wss://${fsServer}`;
 export const socket = io(`${SOCKET_URL}`, { transports: ['websocket'] });
@@ -55,7 +55,7 @@ function requestHa1AndTurn() {
     if (!webrtcEnabled) return;
     if (!sessionKey || !sipLogin || !worker) return;
 
-    socket.emit("fs_ha1", { session_key: sessionKey, sip_login: sipLogin, worker });
+    socket.emit("fs_ha1", { session_key: sessionKey,method: "POST", sip_login: sipLogin, worker });
     socket.emit("fs_turn", { session_key: sessionKey, sip_login: sipLogin, worker });
 }
 
@@ -67,7 +67,7 @@ function startAuthIntervals() {
         if (!webrtcEnabled) return;
         const { sessionKey } = store.getState().operator;
         if (sessionKey && sipLogin && worker) {
-            socket.emit("fs_ha1", { session_key: sessionKey, sip_login: sipLogin, worker });
+            socket.emit("fs_ha1", { session_key: sessionKey,method: "POST", sip_login: sipLogin, worker });
         }
     }, 160000);
 
@@ -87,7 +87,10 @@ function stopAuthIntervals() {
 }
 
 /** ===== WebRTC подписки (вкл/выкл) — только HA1/TURN ===== */
-function onHa1(data: { ha1: string }) { if (webrtcEnabled) store.dispatch(setHa1(data.ha1)); }
+function onHa1(data: { ha1: string }) { if (webrtcEnabled) {
+    console.log("ha1FUKED")
+    store.dispatch(setHa1(data.ha1))
+}; }
 function onTurn(data: any)             { if (webrtcEnabled) store.dispatch(setTurnCreds(data)); }
 
 export function enableWebRTC() {

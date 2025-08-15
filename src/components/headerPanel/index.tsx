@@ -8,6 +8,9 @@ import isEqual from "lodash/isEqual";
 import ModeSwitch, {Mode} from './components/switch';
 import {OptionType, Preset} from "../taskDashboard";
 import axios from "axios";
+import {SignalsToaster} from "../../features/signals/SignalsToaster";
+import {NotificationsPanel} from "../../features/signals/NotificationsPanel";
+import {SignalsBell} from "../../features/signals/SignalsBell";
 
 // types.ts
 export interface Project {
@@ -116,6 +119,10 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         sipLogin   = '',
         worker     = '',
     } = store.getState().credentials;
+
+    const isManager = role === "manager";          // твоя логика роли
+    const [notifOpen, setNotifOpen] = useState(false);
+
     const roomId = useSelector((state: RootState) => state.room.roomId) || 'default_room';
     const userStatuses      = useSelector((state: RootState) => state.operator.userStatuses);
     const dispatch = useDispatch();
@@ -1166,6 +1173,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             <div className="card col ml-3">
                 <div className="card-body" id="glagol_play_text">
                     <div className="row col-12 pr-0" id="status_user">
+
                         <div className="mt-0 mb-0 mr-3">
                             <div className="row ml-0 pl-0">
                                 <p
@@ -1185,6 +1193,13 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                             </p>
                         </div>
                         {renderButtons()}
+                        {isManager && (
+                            <>
+                                <SignalsBell managerLogin={sipLogin} onOpen={()=>setNotifOpen(true)} />
+                                <SignalsToaster managerLogin={sipLogin} />
+                                <NotificationsPanel managerLogin={sipLogin} open={notifOpen} onClose={()=>setNotifOpen(false)} />
+                            </>
+                        )}
                     </div>
                 </div>
             </div>

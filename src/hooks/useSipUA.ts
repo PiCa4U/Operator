@@ -6,6 +6,8 @@ import {
 } from 'sip.js';
 import type { TurnCredentials } from '../redux/operatorSlice';
 import { ToneManager } from '../telephony/ToneManager';
+import { socket } from '../socket';
+import { store } from '../redux/store';
 
 export interface SipUA {
     session: Session | null;
@@ -21,6 +23,7 @@ export interface SipUA {
     localAudioRef: React.MutableRefObject<HTMLAudioElement | null>;
     userAgent: UserAgent | null;
 }
+
 type SipResponseLite = {
     message?: { statusCode?: number; body?: string; getHeader?: (h: string) => string | undefined };
     statusCode?: number;
@@ -29,15 +32,11 @@ type SipResponseLite = {
 };
 type AnyAudioRef = { current: HTMLAudioElement | null };
 
+// utils
 function safeSetSrcObject(ref: AnyAudioRef, val: MediaStream | null) {
     if (ref.current) (ref.current as any).srcObject = val;
 }
-function safeSetSrc(ref: AnyAudioRef, url: string) {
-    if (ref.current) ref.current.src = url;
-}
-async function safePlay(ref: AnyAudioRef) {
-    try { await ref.current?.play(); } catch {}
-}
+async function safePlay(ref: AnyAudioRef) { try { await ref.current?.play(); } catch {} }
 
 // --- SDP модификатор G.711
 const filterG711: SessionDescriptionHandlerModifier = desc => {
@@ -65,44 +64,58 @@ const responseHasSDP = (res: any) => {
     return (ctype && /sdp/i.test(ctype)) || (typeof body === 'string' && body.includes('m=audio'));
 };
 
+// данные из контейнера (как у тебя)
+const container = document.getElementById('root');
+if (!container) throw new Error('Root container not found');
+const { sipLogin: rawSipLogin, worker: rawWorker } =
+    container.dataset as Partial<Record<string, string>>;
+const sipLogin = rawSipLogin || '1012';
+const worker   = rawWorker   || '1.fs@akc24.ru';
+
+type ClearReason = 'shutdown' | 'restart';
+
 export function useSipUA(config: {
     enabled: boolean;
     userId: string;
     ha1: string;
     wsServer: string;
     turnCreds?: TurnCredentials | null;
+    onCleared?: () => void;     // вызовется только при shutdown
 }): SipUA {
-    const { enabled, userId, ha1, wsServer, turnCreds } = config;
+    const { enabled, userId, ha1, wsServer, turnCreds, onCleared } = config;
+    const { sessionKey } = store.getState().operator;
 
-    const uaRef = useRef<UserAgent | null>(null);
-    const registererRef = useRef<Registerer | null>(null);
-    const sessionRef = useRef<Session | null>(null);
-    const localStreamRef = useRef<MediaStream | null>(null);
+    const uaRef             = useRef<UserAgent | null>(null);
+    const registererRef     = useRef<Registerer | null>(null);
+    const sessionRef        = useRef<Session | null>(null);
+    const localStreamRef    = useRef<MediaStream | null>(null);
 
     const [incoming, setIncoming] = useState<Invitation | null>(null);
-    const [status, setStatus] = useState<SessionState | null>(null);
+    const [status,   setStatus]   = useState<SessionState | null>(null);
 
     const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
-    const localAudioRef = useRef<HTMLAudioElement | null>(null);
+    const localAudioRef  = useRef<HTMLAudioElement | null>(null);
 
-    const initInProgressRef = useRef(false);
-    const restartingRef = useRef(false);
-    const pendingRestartRef = useRef(false);
-    const latestTurnCredsRef = useRef<TurnCredentials | null>(turnCreds ?? null);
+    const initInProgressRef    = useRef(false);
+    const restartingRef        = useRef(false);
+    const pendingRestartRef    = useRef(false);
+    const latestTurnCredsRef   = useRef<TurnCredentials | null>(turnCreds ?? null);
 
-    const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const regListenerRef = useRef<((st: RegistererState) => void) | null>(null);
-    const transportListenerRef = useRef<((st: TransportState) => void) | null>(null);
+    const pingTimerRef         = useRef<ReturnType<typeof setInterval> | null>(null);
+    const regListenerRef       = useRef<((st: RegistererState)=>void) | null>(null);
+    const transportListenerRef = useRef<((st: TransportState)=>void) | null>(null);
 
-    const aliveRef = useRef(true);
+    const aliveRef             = useRef(true);
     useEffect(() => () => { aliveRef.current = false; }, []);
 
-    // --- ToneManager
+    // ToneManager
     const tonesRef = useRef<ToneManager | null>(null);
-    useEffect(() => {
-        tonesRef.current = new ToneManager();
-        return () => tonesRef.current?.stopAll();
-    }, []);
+    useEffect(() => { tonesRef.current = new ToneManager(); return () => tonesRef.current?.stopAll(); }, []);
+
+    // признаки запуска и отправки DELETE
+    const wasStartedRef  = useRef(false);
+    const sentDeleteRef  = useRef(false);
+    useEffect(() => { if (enabled) sentDeleteRef.current = false; }, [enabled]);
 
     const isInCall = () =>
         !!sessionRef.current && sessionRef.current.state !== SessionState.Terminated;
@@ -151,11 +164,11 @@ export function useSipUA(config: {
                 }
             };
             reg.stateChange.addListener(onState);
-            reg.unregister({ all: true }).catch(() => resolve());
+            reg.unregister({ all }).catch(() => resolve());
         });
     }
 
-    async function clearUA() {
+    async function clearUA(reason: ClearReason = 'shutdown') {
         tonesRef.current?.stopAll();
 
         if (pingTimerRef.current) { clearInterval(pingTimerRef.current); pingTimerRef.current = null; }
@@ -170,18 +183,30 @@ export function useSipUA(config: {
             }
         } catch {}
 
-        try { await unregisterAndWait(true); } catch {}
+        // try { await unregisterAndWait(true); } catch {}
         try { await uaRef.current?.stop(); } catch {}
+
+        // Удаляем HA1 только при реальном выключении WebRTC
+        if (reason === 'shutdown' && wasStartedRef.current && !sentDeleteRef.current && sessionKey) {
+            sentDeleteRef.current = true;
+            socket.emit('fs_ha1', {
+                session_key: sessionKey,
+                method: 'DELETE',
+                sip_login: sipLogin,
+                worker,
+            });
+            onCleared?.();
+        }
 
         uaRef.current = null;
         registererRef.current = null;
+        wasStartedRef.current = false;
 
         if (localStreamRef.current) {
             localStreamRef.current.getTracks().forEach(t => t.stop());
             localStreamRef.current = null;
         }
-
-        safeSetSrcObject(localAudioRef, null);
+        safeSetSrcObject(localAudioRef,  null);
         safeSetSrcObject(remoteAudioRef, null);
     }
 
@@ -227,6 +252,7 @@ export function useSipUA(config: {
                 }
             };
 
+            // keep-alive для ws
             pingTimerRef.current = setInterval(() => {
                 const ws = (ua.transport as any)?._ws as WebSocket | undefined;
                 if (ws?.readyState === WebSocket.OPEN) ws.send('\r\n');
@@ -242,6 +268,7 @@ export function useSipUA(config: {
             ua.transport.stateChange.addListener(onTransportState);
 
             await ua.start();
+            wasStartedRef.current = true;
             await registerer.register();
 
             regListenerRef.current = st => {
@@ -274,20 +301,23 @@ export function useSipUA(config: {
 
         restartingRef.current = true;
         try {
-            await clearUA();
+            await clearUA('restart');      // << ключевое отличие
             await initUA(creds);
         } finally {
             restartingRef.current = false;
         }
     }
 
+    // главный свитч
     useEffect(() => {
-        if (!enabled) { void clearUA(); return; }
+        if (!enabled) { void clearUA('shutdown'); return; }
         if (!userId || !wsServer || !turnCreds) return;
         latestTurnCredsRef.current = turnCreds;
         if (!uaRef.current) void initUA(turnCreds);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [enabled, userId, wsServer]);
 
+    // обновление TURN
     useEffect(() => {
         if (!enabled) return;
         if (!turnCreds) return;
@@ -298,6 +328,7 @@ export function useSipUA(config: {
         void restartUAWith(turnCreds);
     }, [enabled, turnCreds]);
 
+    // обновление HA1
     useEffect(() => {
         if (!enabled) return;
         const ua = uaRef.current, reg = registererRef.current;
@@ -309,7 +340,6 @@ export function useSipUA(config: {
 
     const makeCall = async (target: string) => {
         const ua = uaRef.current; if (!ua || !enabled) return;
-
         const uri = UserAgent.makeURI(`sip:${target}@24webrtc.ru`) as URI;
         const inviter = new Inviter(ua, uri);
 
@@ -324,11 +354,9 @@ export function useSipUA(config: {
                         if (!responseHasSDP(response)) {
                             tonesRef.current?.play('ringback');
                         } else {
-                            // 180 с SDP — ждём early media
                             tonesRef.current?.stopAll();
                         }
                     } else if (status === 183) {
-                        // обычно 183 приходит с SDP
                         tonesRef.current?.stopAll();
                     }
                 },
@@ -362,9 +390,9 @@ export function useSipUA(config: {
         const s = sessionRef.current || incoming;
         if (!s) return;
         switch (s.state) {
-            case SessionState.Established: s.bye(); break;
+            case SessionState.Established:  s.bye(); break;
             case SessionState.Initial:
-            default: s.dispose();
+            default:                        s.dispose();
         }
     };
 

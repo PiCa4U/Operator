@@ -5,6 +5,9 @@ import { RootState, store } from './redux/store';
 import { SipProvider } from './context/SipContext';
 import MainApp from './components/mainApp';
 import { enableWebRTC, disableWebRTC } from './socket';
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "./queryClient";
+
 
 type PhoneMode = 'softphone' | 'webrtc';
 
@@ -53,8 +56,9 @@ export default function App() {
     }
 
     return (
-        <>
-            <div style={{marginLeft: 40}}>
+        <QueryClientProvider client={queryClient}>
+
+        <div style={{marginLeft: 40}}>
                 {ModeSwitch}
             </div>
             <SipProvider
@@ -67,6 +71,6 @@ export default function App() {
                 <MainApp />
             </SipProvider>
 
-        </>
+        </QueryClientProvider>
     );
 }

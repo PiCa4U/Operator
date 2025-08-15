@@ -1,13 +1,15 @@
 // src/types/agents.ts
 export type Role = "operator" | "manager";
-export type AgentPresence = "online" | "offline" | "break";
+export type AgentPresence = string;
 
 export interface Agent {
+    fs_status: boolean;
     login: string;
     name: string;
     role: Role;
     department?: string | null;
     postobrabotka: boolean;     // робот/не робот
+    post_obrabotka:boolean
     projects?: string[];        // tiers, может отсутствовать
     status?: AgentPresence;     // если приходит из монитора
     online?: boolean;           // если бек присылает булевый онлайн

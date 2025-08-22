@@ -2,8 +2,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Filters } from "./components/filters";
 import { OperatorsTab } from "./components/operatorManagment";
+import { LogsTab } from "./components/integrations/components/LogsTab"
 
-type TabKey = "filters" | "operators";
+type TabKey = "filters" | "operators" | "logs";
 
 export const ManagerPanel: React.FC = () => {
     const [active, setActive] = useState<TabKey>(
@@ -18,6 +19,7 @@ export const ManagerPanel: React.FC = () => {
         () => [
             { key: "filters" as const, label: "Отчёты" },
             { key: "operators" as const, label: "Операторы" },
+            { key: "logs" as const, label: "Логи" },
         ],
         []
     );
@@ -26,7 +28,7 @@ export const ManagerPanel: React.FC = () => {
         <div className="card col ml-0">
             <div className="card-header">
                 <ul className="nav nav-tabs card-header-tabs">
-                    {tabs.map(t => (
+                    {tabs.map((t) => (
                         <li className="nav-item" key={t.key}>
                             <button
                                 type="button"
@@ -44,6 +46,7 @@ export const ManagerPanel: React.FC = () => {
             <div className="card-body">
                 {active === "filters" && <Filters />}
                 {active === "operators" && <OperatorsTab />}
+                {active === "logs" && <LogsTab />}
             </div>
         </div>
     );

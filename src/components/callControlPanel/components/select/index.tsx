@@ -3,7 +3,6 @@ import Select, {
     StylesConfig,
     GroupBase,
     SingleValue,
-    ClearIndicatorProps,
 } from 'react-select';
 import { ReasonItem, ResultItem } from '../../index';
 
@@ -16,10 +15,11 @@ interface Option {
 interface Props {
     value: string | number;
     onChange: (val: string) => void;
-    options: Array<ReasonItem | ResultItem | { id: string | number; name: string; }>;
+    options: Array<ReasonItem | ResultItem | { id: string | number; name: string }>;
     placeholder?: string;
     augmentSaved?: boolean;
-    isSearchable?: boolean
+    isSearchable?: boolean;
+    zIndexMenu?: number;          // <- опционально: можно переопределить z-index меню
 }
 
 const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
@@ -28,9 +28,8 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
         width: '100%',
         minWidth: 0,
         boxSizing: 'border-box',
-        height: 'calc(1.5em + .75rem + 2px)'
+        height: 'calc(1.5em + .75rem + 2px)',
     }),
-
     control: (base, { isFocused }) => ({
         ...base,
         border: '1px solid #ced4da',
@@ -39,16 +38,10 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
         height: 'calc(1.5em + .75rem + 2px)',
         minHeight: 'calc(1.5em + .75rem + 2px)',
         padding: 0,
-        boxShadow: isFocused
-            ? '0 0 0 .2rem rgba(65, 212, 146, .25)'
-            : 'none',
+        boxShadow: isFocused ? '0 0 0 .2rem rgba(65, 212, 146, .25)' : 'none',
         cursor: 'pointer',
-
-        '&:hover': {
-            borderColor: '#ced4da',
-        },
+        '&:hover': { borderColor: '#ced4da' },
     }),
-
     valueContainer: (base) => ({
         ...base,
         display: 'flex',
@@ -60,7 +53,6 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
         flex: 1,
         minWidth: 0,
     }),
-
     placeholder: (base) => ({
         ...base,
         lineHeight: 'calc(1.5em + .75rem + 2px)',
@@ -73,8 +65,6 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
         width: 'auto',
         minWidth: 2,
     }),
-
-
     singleValue: (base) => ({
         ...base,
         overflow: 'hidden',
@@ -85,7 +75,6 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
         minWidth: 0,
         maxWidth: '100%',
     }),
-
     dropdownIndicator: (base) => ({
         ...base,
         padding: 0,
@@ -93,30 +82,32 @@ const customStyles: StylesConfig<Option, false, GroupBase<Option>> = {
         display: 'flex',
         alignItems: 'center',
     }),
-
     indicatorSeparator: () => ({ display: 'none' }),
-
-    clearIndicator: base => ({
+    clearIndicator: (base) => ({
         ...base,
         padding: '0 8px',
         cursor: 'pointer',
         color: '#999',
         '&:hover': { color: '#333' },
     }),
+    // главное: меню и портал
+    menuPortal: (base) => ({
+        ...base,
+        zIndex: 9999,               // поднимаем над любыми карточками/листами
+    }),
     menu: (base) => ({
         ...base,
+        zIndex: 9999,
         maxWidth: 250,
         width: '100%',
     }),
-
-    option: (base, { isFocused }) => ({
+    option: (base, { isFocused, isSelected }) => ({
         ...base,
-        backgroundColor: isFocused ? '#f8f9fa' : 'white',
+        backgroundColor: isSelected ? '#e9ecef' : isFocused ? '#f8f9fa' : 'white',
         color: '#212529',
         cursor: 'pointer',
     }),
 };
-
 
 const SearchableSelect: React.FC<Props> = ({
                                                value,
@@ -124,42 +115,54 @@ const SearchableSelect: React.FC<Props> = ({
                                                options,
                                                placeholder = 'выберите...',
                                                augmentSaved = false,
-                                               isSearchable = true
+                                               isSearchable = true,
+                                               zIndexMenu, // если захочешь переопределить
                                            }) => {
     const stringValue = value != null ? String(value) : '';
 
     // 1) статические опции
-    const staticOpts: Option[] = options.map(o => ({
+    const staticOpts: Option[] = options.map((o) => ({
         value: String(o.id),
         label: o.name,
     }));
 
-    // 2) если нужно «дозаписать» текущее value, и его нет в staticOpts — делаем это
-    const finalOpts: Option[] = augmentSaved && stringValue
-        ? (
-            staticOpts.some(o => o.value === stringValue)
+    // 2) дозаписываем сохранённое значение, если его нет в списке
+    const finalOpts: Option[] =
+        augmentSaved && stringValue
+            ? staticOpts.some((o) => o.value === stringValue)
                 ? staticOpts
                 : [{ value: stringValue, label: stringValue }, ...staticOpts]
-        )
-        : staticOpts;
+            : staticOpts;
 
-    // 3) находим выбранный
-    const selected: Option | null =
-        finalOpts.find(o => o.value === stringValue) ?? null;
+    // 3) выбранный
+    const selected: Option | null = finalOpts.find((o) => o.value === stringValue) ?? null;
+
+    // SSR-guard для portal target
+    const portalTarget: HTMLElement | undefined =
+        typeof document !== 'undefined' ? document.body : undefined;
 
     return (
         <Select<Option, false>
-            isSearchable
-            options={finalOpts}
+            isSearchable={isSearchable}
             isClearable
-            menuPortalTarget={document.body}
+            options={finalOpts}
             value={selected}
-            onChange={opt =>
-                onChange((opt as SingleValue<Option>)?.value ?? '')
+            onChange={(opt: SingleValue<Option>) => onChange(opt?.value ?? '')}
+            styles={
+                zIndexMenu
+                    ? {
+                        ...customStyles,
+                        menuPortal: (base) => ({ ...base, zIndex: zIndexMenu }),
+                        menu: (base) => ({ ...base, zIndex: zIndexMenu, maxWidth: 250, width: '100%' }),
+                    }
+                    : customStyles
             }
-            styles={customStyles}
             placeholder={placeholder}
             menuPlacement="auto"
+            menuPortalTarget={portalTarget}
+            menuPosition="fixed"           // важное: фиксированное позиционирование
+            menuShouldBlockScroll={true}   // тело не скроллится при открытом меню
+            menuShouldScrollIntoView={false}
         />
     );
 };

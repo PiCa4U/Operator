@@ -1,49 +1,63 @@
 // src/telephony/ToneManager.ts
-export class ToneManager {
-    private cache = new Map<string, HTMLAudioElement>();
+type ToneKey = 'ringback' | 'busy' | 'reorder' | 'incoming';
 
-    constructor() {
-        const tones: Record<'ringback'|'busy'|'reorder', string> = {
-            ringback: '/tones/ringback.mp3',
-            busy:     '/tones/busy.mp3',
-            reorder:  '/tones/reorder.mp3',
-        };
-        (Object.keys(tones) as Array<keyof typeof tones>).forEach((name) => {
-            const a = new Audio(tones[name]);
-            a.preload = 'auto';
-            a.loop = name === 'ringback';
-            a.volume = 0.7;
-            a.addEventListener('error', () => {
-                // поможет быстро понять, что не так
-                // загляни в Network: должен быть 200 и корректный Content-Type
-                // (audio/mpeg для mp3)
-                // @ts-ignore
-                console.error(`[ToneManager] audio load error: ${name} -> ${a.src}`, a.error);
-            });
-            this.cache.set(name, a);
+type Sources = Partial<Record<ToneKey, string>>;
+
+export class ToneManager {
+    private cache = new Map<ToneKey, HTMLAudioElement>();
+
+    constructor(opts?: { sources?: Sources; volume?: number }) {
+        if (opts?.sources) this.setSources(opts.sources);
+        this.setVolume(opts?.volume ?? 0.7);
+    }
+
+    /** задать/переопределить ссылки на звуки */
+    setSources(srcs: Sources) {
+        (Object.keys(srcs) as ToneKey[]).forEach((name) => {
+            const url = srcs[name];
+            if (!url) return;
+            let a = this.cache.get(name);
+            if (!a) {
+                a = new Audio();
+                a.preload = 'auto';
+                a.loop = name === 'ringback';        // как у тебя было
+                a.addEventListener('error', () => {
+                    // @ts-ignore
+                    console.error(`[ToneManager] audio load error: ${name} -> ${a!.src}`, a!.error);
+                });
+                this.cache.set(name, a);
+            }
+            a.src = url;
         });
     }
 
-    async play(name: 'ringback'|'busy'|'reorder') {
+    setVolume(v: number) {
+        const val = Math.min(1, Math.max(0, v));
+        this.cache.forEach(a => { a.volume = val; });
+    }
+
+    async play(name: ToneKey) {
         this.stopAll();
         const a = this.cache.get(name);
         if (!a) return;
         try {
             a.currentTime = 0;
             await a.play();
-        } catch (e) {
+        } catch {
             const resume = () => {
-                a.play().finally(() => {
+                a!.play().finally(() => {
                     window.removeEventListener('click', resume);
                     window.removeEventListener('keydown', resume);
+                    window.removeEventListener('pointerdown', resume);
                 });
             };
             window.addEventListener('click', resume, { once: true });
             window.addEventListener('keydown', resume, { once: true });
+            window.addEventListener('pointerdown', resume, { once: true });
         }
     }
 
-    stop(name: 'ringback'|'busy'|'reorder') {
+    stop(name: ToneKey) {
         const a = this.cache.get(name);
         if (!a) return;
         a.pause();

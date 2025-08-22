@@ -876,18 +876,21 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
     }, [runningModulesCount]);
 
-    const handleModuleRun = (mod: ModuleData, common_code?: false, proj?: string) => {
-        // if (!tuskMode) {
-        //     console.warn('Запуск модулей вне tuskMode пока не поддерживается');
-        //     return;
-        // }
+// добавил четвёртый аргумент options с флагом manual
+    const handleModuleRun = (
+        mod: ModuleData,
+        common_code?: false,
+        proj?: string,
+        options?: { manual?: boolean }
+    ) => {
         if (!monoModules) {
             console.warn('Описание monoModules отсутствует');
             return;
         }
 
-        // setRunningModulesCount(1)
-        // 1) Собираем список проектов, в которых нужно запустить модуль
+        const manual = Boolean(options?.manual);
+
+        // 1) Определяем список проектов (как было)
         const projectList: string[] = mod.common_code || tuskMode
             ? Object.entries(monoModules)
                 .filter(([_, mods]) => mods.some(m => m.filename === mod.filename))
@@ -898,24 +901,21 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     ? [cleanProjectName(Object.keys(call.projects)[0])]
                     : call
                         ? [call.variable_last_arg]
-                        : [""]
-
+                        : [""];
 
         if (projectList.length === 0) {
             console.warn(`Не найдено ни одного проекта для модуля ${mod.filename}`);
             return;
         }
 
-        // 2) Составляем для каждого проекта свой набор параметров
+        // 2) Собираем kwargs по проектам (как было)
+// 2) Собираем kwargs по проектам (как было)
         const projectsPayload: Record<string, Record<string, string>> = {};
-
         projectList.forEach(project => {
-            // для общих модулей берём spec.kwargs из monoModules[project],
-            // для обычных — из самого mod
             const projectMod = monoModules[project].find(m => m.filename === mod.filename) || mod;
             const specKwargs = projectMod.kwargs || {};
             const fieldMap   = values[project] || baseFieldValues;
-            const kw: Record<string,string> = {};
+            const kw: Record<string, string> = {};
 
             Object.entries(specKwargs).forEach(([inputName, spec]: [string, any]) => {
                 const key = spec.source;
@@ -961,6 +961,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 kw[key] = value;
             });
 
+            if (manual && kw.user == null) {
+                kw.user = String(worker ?? '');
+            }
+
+            if (kw.project == null) {
+                kw.project = project;
+            }
             projectsPayload[project] = kw;
         });
 
@@ -975,7 +982,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             projects:    projectsPayload,
         };
 
-        // 4) Шлём один emit
         socket.emit('run_module', payload);
     };
 
@@ -1153,7 +1159,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         if (startModules.length && (hasActiveCall || call)) {
             console.log("startModules")
             setRunningModulesCount(startModules.length)
-            startModules.forEach(mod => handleModuleRun(mod));
+            startModules.forEach(mod => handleModuleRun(mod, false, undefined, { manual: true }));
             startModulesRanRef.current = true;
             return;
         }
@@ -1163,7 +1169,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         if (startModules.length && tuskMode && countPhones > 0 && !postActive) {
             console.log("TUSKMODESTART")
             setRunningModulesCount(startModules.length)
-            startModules.forEach(mod => handleModuleRun(mod));
+            startModules.forEach(mod => handleModuleRun(mod, false, undefined, { manual: true }));
             startModulesRanRef.current = true;
         }
     }, [
@@ -2127,7 +2133,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         <button
                             key={idx}
                             onClick={() => {
-                                handleModuleRun(mod)
+                                handleModuleRun(mod, false, undefined, { manual: true });
                                 setRunningModulesCount(1)
                             }}
                             className="btn btn-outline-success"
@@ -2149,7 +2155,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             <button
                                 key={`common-${mod.filename}-${idx}`}
                                 onClick={() => {
-                                    handleModuleRun(mod, false)
+                                    handleModuleRun(mod, false, undefined, { manual: true });
                                     setRunningModulesCount(1)
                                 }}
                                 className="btn btn-outline-dark"
@@ -2167,7 +2173,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 <button
                                     key={`${proj}-${mod.filename}-${idx}`}
                                     onClick={() => {
-                                        handleModuleRun(mod, false, proj)
+                                        handleModuleRun(mod, false, proj, { manual: true });
                                         setRunningModulesCount(1)
                                     }}
                                     className="btn"

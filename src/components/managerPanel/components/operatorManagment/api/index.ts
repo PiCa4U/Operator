@@ -31,7 +31,11 @@ type ApiUsersResponse = {
 
 export async function getAgents(): Promise<Agent[]> {
     const resp: AxiosResponse<ApiUsersResponse> = await axios.get("/api/v1/users", {
-        params: { glagol_parent },
+        params: {
+            glagol_parent,
+            // TODO TEST
+            // glagol_service:"4.fs.at.akc24.ru"
+        },
     });
 
     const usersObj = resp.data?.users ?? {};

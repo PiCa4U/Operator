@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef } from "react";
 import { useManagerSignals } from "./useManagerSignals";
 import { readHistory } from "./local";
 import type { SignalItem } from "./api";
+import {formatOperator, formatOperatorLine, useOperatorsDirectory} from "./useOperatorsDirectory";
 
 const color = (t:string) =>
     t==="warning" ? "#f59e0b" :
@@ -11,6 +12,7 @@ const color = (t:string) =>
 
 export const NotificationsPanel: React.FC<{ managerLogin?: string; open: boolean; onClose: () => void }> = ({ managerLogin, open, onClose }) => {
     const { query, markAllAsReadNow } = useManagerSignals(managerLogin);
+    const { data: opDir } = useOperatorsDirectory();           // ← добавили
     const enteredUnread = useRef<number[] | null>(null);
 
     // при открытии один раз фиксируем «кто непрочитан» и шлём массовую прочитку
@@ -64,8 +66,9 @@ export const NotificationsPanel: React.FC<{ managerLogin?: string; open: boolean
                                 </div>
                                 <div className="text-muted" style={{whiteSpace:"pre-wrap"}}>{n.message}</div>
                                 <div className="mt-1" style={{fontSize:12,color:"#6b7280"}}>
-                                    Оператор: {n.login}{n.department ? ` · Отдел: ${n.department}` : ""}
+                                    Оператор: {formatOperatorLine(n.login, opDir, n.department, /*showLogin*/ true)}
                                 </div>
+
                             </div>
                         );
                     })}

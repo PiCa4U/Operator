@@ -221,14 +221,7 @@ export const Filters = () => {
     }, [selectedReport]);
 
     function buildFilterJson(filters: FilterItem[]) {
-        const result: any = {
-            projects: [],
-            users: [],
-            comments: [],
-            dates: [],
-            length: [],
-            phones: []
-        };
+        const result: any = {};
 
         for (const filter of filters) {
             const { fieldId, value } = filter;
@@ -236,38 +229,54 @@ export const Filters = () => {
             if (!value) continue;
 
             switch (fieldId) {
-                case "project":
-                    result.projects.push({
+                case "project": {
+                    const project = {
                         project_name: value.projectId,
                         reasons: value.reasons || [],
                         results: value.results || [],
-                    });
+                    };
+                    if (!result.projects) result.projects = [];
+                    result.projects.push(project);
                     break;
+                }
 
                 case "operator":
-                    result.users.push(...value);
+                    if (value.length) {
+                        if (!result.users) result.users = [];
+                        result.users.push(...value);
+                    }
                     break;
 
                 case "date":
                     if (value.preset === "custom" && value.start && value.end) {
                         const startStr = value.start.toISOString().split("T")[0];
                         const endStr = value.end.toISOString().split("T")[0];
+                        if (!result.dates) result.dates = [];
                         result.dates.push(`${startStr} TO ${endStr}`);
                     } else if (value.preset) {
+                        if (!result.dates) result.dates = [];
                         result.dates.push(value.preset);
                     }
                     break;
+
                 case "comment":
-                    if (value) result.comments.push(value);
+                    if (value) {
+                        if (!result.comments) result.comments = [];
+                        result.comments.push(value);
+                    }
                     break;
 
                 case "phoneNumber":
-                    if (value) result.phones.push(value);
+                    if (value) {
+                        if (!result.phones) result.phones = [];
+                        result.phones.push(value);
+                    }
                     break;
 
                 case "dialogDuration":
                     if (value && value.comparison && value.seconds >= 0) {
                         const op = value.comparison === "gt" ? ">" : "<";
+                        if (!result.length) result.length = [];
                         result.length.push([op, value.seconds]);
                     }
                     break;
@@ -279,6 +288,7 @@ export const Filters = () => {
 
         return result;
     }
+
 
     useEffect(() => {
         async function fetchFilters() {

@@ -21,12 +21,14 @@ const {
     sipLogin: rawSipLogin,
     fsServer: rawFsServer,
     worker: rawWorker,
+    chatServer: rawChatServer, // <= NEW
+    codeServer: rawCodeServer, // <= NEW
 } = container.dataset as Partial<Record<string, string>>;
 
 // Значения по умолчанию, если data-атрибутов нет
-const sipLogin = rawSipLogin || '1012';
+const sipLogin = rawSipLogin || '1000';
 const fsServer = rawFsServer || 'wwstest.glagol.ai';
-const worker   = rawWorker   || '1.fs@akc24.ru';
+const worker   = rawWorker   || '4.fs@akc24.ru';
 
 // Настройка базового URL для axios
 axios.defaults.baseURL = `https://${fsServer}`;

@@ -122,7 +122,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     const isManager = role === "manager";          // твоя логика роли
     const [notifOpen, setNotifOpen] = useState(false);
-
     const roomId = useSelector((state: RootState) => state.room.roomId) || 'default_room';
     const userStatuses      = useSelector((state: RootState) => state.operator.userStatuses);
     const dispatch = useDispatch();
@@ -133,6 +132,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const [autocallEnabled, setAutocallEnabled] = useState(() => {
         return localStorage.getItem('autocallEnabled') === 'true';
     });
+
     const fsStatus = useSelector(
         (state: RootState) => state.operator.fsStatus,
         isEqual
@@ -1149,14 +1149,17 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                         />
                     </div>
                 </div>
-                <button
-                    name="script_look"
-                    id="script_look"
-                    className="btn btn-outline-light text text-dark mx-1 ml-2"
-                    onClick={() => setManagerPanel(!managerPanel)}
-                >
-                    Панель менеджера
-                </button>
+                {role === "manager" &&
+                    <button
+                        name="script_look"
+                        id="script_look"
+                        className="btn btn-outline-light text text-dark mx-1 ml-2"
+                        onClick={() => setManagerPanel(!managerPanel)}
+                    >
+                        Панель менеджера
+                    </button>
+                }
+
                 <button
                     className={`btn mx-1 ml-2 ${autocallEnabled ?'btn-outline-success' : 'btn-outline-primary'}`}
                     onClick={toggleAutocall}

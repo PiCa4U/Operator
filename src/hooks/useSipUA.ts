@@ -8,6 +8,7 @@ import type { TurnCredentials } from '../redux/operatorSlice';
 import { ToneManager } from '../telephony/ToneManager';
 import { socket } from '../socket';
 import { store } from '../redux/store';
+import { readExternalConfig, subscribeExternalConfig, AppExternalConfig } from '../externalConfig';
 
 export interface SipUA {
     session: Session | null;
@@ -64,13 +65,13 @@ const responseHasSDP = (res: any) => {
     return (ctype && /sdp/i.test(ctype)) || (typeof body === 'string' && body.includes('m=audio'));
 };
 
-// данные из контейнера (как у тебя)
+// данные из контейнера
 const container = document.getElementById('root');
 if (!container) throw new Error('Root container not found');
 const { sipLogin: rawSipLogin, worker: rawWorker } =
     container.dataset as Partial<Record<string, string>>;
-const sipLogin = rawSipLogin || '1012';
-const worker   = rawWorker   || '1.fs@akc24.ru';
+const sipLogin = rawSipLogin || '1000';
+const worker   = rawWorker   || '4.fs@akc24.ru';
 
 type ClearReason = 'shutdown' | 'restart';
 
@@ -108,9 +109,43 @@ export function useSipUA(config: {
     const aliveRef             = useRef(true);
     useEffect(() => () => { aliveRef.current = false; }, []);
 
-    // ToneManager
-    const tonesRef = useRef<ToneManager | null>(null);
-    useEffect(() => { tonesRef.current = new ToneManager(); return () => tonesRef.current?.stopAll(); }, []);
+    // ---- ToneManager с внешним конфигом
+    const tonesRef   = useRef<ToneManager | null>(null);
+    const extCfgRef  = useRef<AppExternalConfig>(readExternalConfig());
+
+    useEffect(() => {
+        const buildSources = (cfg: AppExternalConfig) => {
+            const base = cfg.assetsBase;
+            const t = cfg.tones || {};
+            const pick = (k: 'ringback'|'busy'|'reorder'|'incoming') =>
+                t[k] || (base ? `${base}/tones/${k}.mp3` : undefined);
+            return {
+                ringback: pick('ringback'),
+                busy:     pick('busy'),
+                reorder:  pick('reorder'),
+                incoming: pick('incoming')
+            };
+        };
+
+        const tm = new ToneManager({
+            sources: buildSources(extCfgRef.current),
+            volume:  extCfgRef.current.volume ?? 0.7
+        });
+        tonesRef.current = tm;
+
+        // приём поздних обновлений с хоста
+        const unsub = subscribeExternalConfig((next) => {
+            extCfgRef.current = {
+                assetsBase: next.assetsBase ?? extCfgRef.current.assetsBase,
+                tones: { ...(extCfgRef.current.tones||{}), ...(next.tones||{}) },
+                volume: typeof next.volume === 'number' ? next.volume : extCfgRef.current.volume
+            };
+            tm.setSources(buildSources(extCfgRef.current));
+            if (typeof extCfgRef.current.volume === 'number') tm.setVolume(extCfgRef.current.volume);
+        });
+
+        return () => { tm.stopAll(); unsub(); };
+    }, []);
 
     // признаки запуска и отправки DELETE
     const wasStartedRef  = useRef(false);
@@ -120,13 +155,26 @@ export function useSipUA(config: {
     const isInCall = () =>
         !!sessionRef.current && sessionRef.current.state !== SessionState.Terminated;
 
+    // контроль «тона окончания», чтобы его не обрывал Terminated
+    const endTonePlayedRef = useRef(false);
+    const endToneUntilRef  = useRef(0);
+    function playEndToneOnce(ms = 1500) {
+        if (endTonePlayedRef.current) return;
+        endTonePlayedRef.current = true;
+        tonesRef.current?.stopAll();
+        tonesRef.current?.play('reorder');
+        endToneUntilRef.current = Date.now() + ms;
+        setTimeout(() => tonesRef.current?.stopAll(), ms);
+    }
+
     function bind(s: Session) {
         sessionRef.current = s;
+        endTonePlayedRef.current = false;
+        endToneUntilRef.current  = 0;
 
         (s.delegate ??= {}).onBye = () => {
-            tonesRef.current?.stopAll();
-            tonesRef.current?.play('reorder');
-            setTimeout(() => tonesRef.current?.stopAll(), 1500);
+            // BYE приходит с сервера/удалённой стороны → играем "конец" здесь
+            playEndToneOnce(1500);
         };
 
         s.stateChange.addListener(st => {
@@ -141,7 +189,12 @@ export function useSipUA(config: {
             }
 
             if (st === SessionState.Terminated) {
-                tonesRef.current?.stopAll();
+                const remaining = endToneUntilRef.current - Date.now();
+                if (remaining > 0) {
+                    setTimeout(() => tonesRef.current?.stopAll(), remaining);
+                } else {
+                    tonesRef.current?.stopAll();
+                }
                 setIncoming(null); setStatus(null); sessionRef.current = null;
                 if (pendingRestartRef.current) {
                     pendingRestartRef.current = false;
@@ -186,7 +239,6 @@ export function useSipUA(config: {
         // try { await unregisterAndWait(true); } catch {}
         try { await uaRef.current?.stop(); } catch {}
 
-        // Удаляем HA1 только при реальном выключении WebRTC
         if (reason === 'shutdown' && wasStartedRef.current && !sentDeleteRef.current && sessionKey) {
             sentDeleteRef.current = true;
             socket.emit('fs_ha1', {
@@ -301,7 +353,7 @@ export function useSipUA(config: {
 
         restartingRef.current = true;
         try {
-            await clearUA('restart');      // << ключевое отличие
+            await clearUA('restart');
             await initUA(creds);
         } finally {
             restartingRef.current = false;
@@ -381,6 +433,7 @@ export function useSipUA(config: {
     const answerCall = async (): Promise<void> => {
         if (!enabled) return;
         if (!incoming || incoming.state !== SessionState.Initial) return;
+        tonesRef.current?.stopAll();
         await incoming.accept({ sessionDescriptionHandlerModifiers: [filterG711] });
     };
 
@@ -390,7 +443,7 @@ export function useSipUA(config: {
         const s = sessionRef.current || incoming;
         if (!s) return;
         switch (s.state) {
-            case SessionState.Established:  s.bye(); break;
+            case SessionState.Established:  s.bye(); break;   // «конец» прозвучит в onBye
             case SessionState.Initial:
             default:                        s.dispose();
         }

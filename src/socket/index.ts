@@ -13,8 +13,8 @@ if (!container) throw new Error('Root container not found');
 const { sipLogin: rawSipLogin, fsServer: rawFsServer, worker: rawWorker } =
     container.dataset as Partial<Record<string, string>>;
 const fsServer = rawFsServer || 'wwstest.glagol.ai';
-const sipLogin = rawSipLogin || '1012';
-const worker   = rawWorker   || '1.fs@akc24.ru';
+const sipLogin = rawSipLogin || '1000';
+const worker   = rawWorker   || '4.fs@akc24.ru';
 
 const SOCKET_URL = `wss://${fsServer}`;
 export const socket = io(`${SOCKET_URL}`, { transports: ['websocket'] });

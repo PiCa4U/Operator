@@ -4,11 +4,13 @@ import { createPortal } from "react-dom";
 import { SignalItem } from "./api";
 import { useManagerSignals } from "./useManagerSignals";
 import { appendHistory } from "./local";
+import {formatOperator, formatOperatorLine, useOperatorsDirectory} from "./useOperatorsDirectory";
 
 const icon: Record<string,string> = { info:"ℹ️", warning:"⚠️", error:"⛔", success:"✅" };
 
 export const SignalsToaster: React.FC<{ managerLogin?: string }> = ({ managerLogin }) => {
     const { newForUi, markOneAsRead } = useManagerSignals(managerLogin);
+    const { data: opDir } = useOperatorsDirectory();           // ← добавили
     const [stack, setStack] = useState<SignalItem[]>([]);
 
     useEffect(() => {
@@ -16,7 +18,7 @@ export const SignalsToaster: React.FC<{ managerLogin?: string }> = ({ managerLog
         setStack(prev => {
             const ids = new Set(prev.map(p=>p.id));
             const add = newForUi.filter(n=>!ids.has(n.id));
-            if (add.length) appendHistory(managerLogin, add); // пишем в «историю»
+            if (add.length) appendHistory(managerLogin, add);
             return [...add, ...prev].slice(0, 6);
         });
     }, [newForUi, managerLogin]);
@@ -38,6 +40,13 @@ export const SignalsToaster: React.FC<{ managerLogin?: string }> = ({ managerLog
                         <strong style={{fontSize:14}}>{n.title}</strong>
                     </div>
                     <div style={{fontSize:13,color:"#374151",whiteSpace:"pre-wrap"}}>{n.message}</div>
+
+                    {/* Новая строка: имя оператора по логину */}
+                    <div style={{fontSize:12,color:"#6b7280",marginTop:6}}>
+                        Оператор: {formatOperatorLine(n.login, opDir, n.department, /*showLogin*/ true)}
+                    </div>
+
+
                     <div className="text-end mt-2">
                         <button className="btn btn-link btn-sm" onClick={(e)=>{e.stopPropagation(); close(n.id,false);}}>Скрыть</button>
                     </div>

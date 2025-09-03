@@ -1,0 +1,172 @@
+import { useEffect, useRef, useState } from "react";
+import { createChatSocket } from "./socket";
+import { uploadAndAttach, type UploadItem } from "./api";
+
+export type UiAttachment = { id: string; name: string; url?: string };
+export type Role = "client" | "operator" | "manager";
+export type UiMessage = {
+    id: string;
+    text: string;
+    created_at: string;
+    authorLogin: string | null;
+    authorName: string;
+    authorRole: Role;
+    attachments: UiAttachment[];
+    tempId?: string;
+    status?: "pending" | "sent";
+    isRead?: boolean;
+};
+
+// "YYYY-MM-DD HH:mm:ss" -> ISO (UTC)
+function toIso(s: string): string {
+    const [d, t = "00:00:00"] = s.trim().split(" ");
+    const [y, m, day] = d.split("-").map(Number);
+    const [hh, mm, ss] = t.split(":").map(Number);
+    return new Date(Date.UTC(y, (m || 1) - 1, day || 1, hh || 0, mm || 0, ss || 0)).toISOString();
+}
+
+/** коллбэки событий */
+type Handlers = {
+    onIncoming?: (msg: UiMessage) => void; // прилетело сообщение от другого участника
+    onAck?: (ack: { tempId: string; message_id: number }) => void; // ACK на наш send
+    onRead?: (message_id: number) => void; // кто-то прочитал message_id
+    onUploaded?: (p: { tempId: string; filenames: string[] }) => void; // имена после upload
+};
+
+export function useChatSocket(
+    opts: { guid: string; login: string | null } & Handlers
+) {
+    const { guid, login, onIncoming, onAck, onRead, onUploaded } = opts;
+
+    const sockRef = useRef<ReturnType<typeof createChatSocket> | null>(null);
+    const [connected, setConnected] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    // очередь tempId для сопоставления с ack (message:sent)
+    const pendingQueue = useRef<string[]>([]);
+
+    // ⬇️ держим актуальные обработчики в ref, чтобы эффект создания сокета не зависел от их идентичности
+    const handlersRef = useRef<Handlers>({});
+    useEffect(() => {
+        handlersRef.current = { onIncoming, onAck, onRead, onUploaded };
+    }, [onIncoming, onAck, onRead, onUploaded]);
+
+    // создаём/пересоздаём сокет ТОЛЬКО когда меняются guid или login
+    useEffect(() => {
+        if (!guid) return;
+
+        const s = createChatSocket(); // внутри можешь иметь autoConnect:false
+        sockRef.current = s;
+
+        const doLogin = () => s.emit("login", { guid, login });
+
+        s.on("connect", () => {
+            setConnected(true);
+            setError(null);
+            doLogin();
+        });
+        s.on("disconnect", () => setConnected(false));
+        s.on("connect_error", (e: any) => setError(e?.message || "connect_error"));
+
+        // ACK на наш message:send
+        s.on("message:sent", (payload: { status: "ok"; message_id: number }) => {
+            const tempId = pendingQueue.current.shift();
+            handlersRef.current.onAck?.({ tempId: tempId ?? "", message_id: payload.message_id });
+        });
+
+        // входящее сообщение
+        s.on("message", (p: {
+            login: string;            // "client" | glagol_service
+            message_id: number;
+            message: string;
+            storage: string[] | null;
+            created_dt?: string;
+        }) => {
+            const isClient = p.login === "client";
+            const role: Role = isClient ? "client" : "operator";
+            const attachments = Array.isArray(p.storage)
+                ? p.storage.map((name, i) => ({ id: `${p.message_id}:${i}`, name }))
+                : [];
+
+            const created_at = p.created_dt ? toIso(p.created_dt) : new Date().toISOString();
+
+            const ui = {
+                id: String(p.message_id),
+                text: p.message ?? "",
+                created_at,
+                authorLogin: isClient ? null : p.login,
+                authorName: p.login,
+                authorRole: role,
+                attachments,
+                isRead: true,
+            } as UiMessage;
+
+            handlersRef.current.onIncoming?.(ui);
+
+            // помечаем как прочитанное сразу для входящих по сокету
+            s.emit("message:read", { message_id: p.message_id });
+            handlersRef.current.onRead?.(p.message_id);
+        });
+
+        // сервер сообщает, что кто-то прочитал message_id
+        s.on("message:read", (p: { message_id: number }) => {
+            handlersRef.current.onRead?.(p.message_id);
+        });
+
+        // если createChatSocket создаёт с autoConnect:false — подключаем вручную
+        if ((s as any).connected === false && typeof s.connect === "function") {
+            s.connect();
+        }
+
+        return () => {
+            s.removeAllListeners();
+            s.disconnect();
+            sockRef.current = null;
+            setConnected(false);
+        };
+    }, [guid, login]); // <-- никаких handler deps тут больше нет
+
+    /** Отправка сообщения: message (обязателен) и storage (имена файлов, опционально).
+     *  tempId — локальный id для маппинга ACK.
+     */
+    async function send(tempId: string, text: string, files: File[] = []) {
+        try {
+            let storageNames: string[] = [];
+
+            if (files.length) {
+                const items: UploadItem[] = await uploadAndAttach(guid, files);
+                storageNames = items.map((i) => i.filename);
+
+                // наверх финальные имена (для апдейта optimistic вложений)
+                handlersRef.current.onUploaded?.({ tempId, filenames: storageNames });
+            }
+
+            pendingQueue.current.push(tempId);
+
+            sockRef.current?.emit("message:send", {
+                message: text,
+                storage: storageNames.length ? storageNames : undefined,
+            });
+        } catch (e) {
+            console.error("Не удалось отправить сообщение/загрузить файлы", e);
+            throw e;
+        }
+    }
+
+    /** отметить одно сообщение прочитанным */
+    function markRead(message_id: number) {
+        const s = sockRef.current;
+        if (!s) return;
+        s.emit("message:read", { message_id });
+    }
+
+    /** отметить пачку прочитанными (с маленькой паузой между emit) */
+    async function markManyRead(ids: number[], delayMs = 10) {
+        for (const id of ids) {
+            markRead(id);
+            if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+        }
+    }
+
+    return { connected, error, send, markRead, markManyRead };
+}

@@ -73,15 +73,6 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
         phone: phoneSearch,
     });
 
-    // useEffect(() => {
-    //     if (!isLoading && !selectedCall) {
-    //         const allCalls = [...callsToFill, ...callsFilled];
-    //         if (allCalls.length > 0) {
-    //             setSelectedCall(allCalls[0]);
-    //         }
-    //     }
-    // }, [isLoading, callsToFill, callsFilled, selectedCall, setSelectedCall]);
-
     useEffect(()=> {
         const getFsReport = (msg: any) => {
             setFsReport(msg)

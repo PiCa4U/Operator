@@ -1,4 +1,6 @@
 // utils/cookies.js
+import { useNavigate } from "react-router-dom";
+
 export const getCookies = (name: string) => {
     const cookieString = document.cookie;
     const cookies = cookieString.split(';').map(cookie => cookie.trim());

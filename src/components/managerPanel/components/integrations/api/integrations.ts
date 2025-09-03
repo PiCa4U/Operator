@@ -1,5 +1,7 @@
 // src/api/integrations.ts
 
+import axios from "axios";
+
 export type LogFilters = {
     project?: string;
     filename?: string;
@@ -164,4 +166,21 @@ export async function getIntegrationLogs(filters: LogFilters): Promise<LogsRespo
 export function trySplitPlainTextIntoItems(raw: string): LogItem[] {
     const chunks = raw.split(/\n{2,}|^-{3,}\n/m).map(s => s.trim()).filter(Boolean);
     return chunks.map((t, i) => ({ id: String(i + 1), text: t }));
+}
+
+export async function fetchProjectModules(params: {
+    glagol_parent: string;
+    project_name: string;
+}): Promise<string[]> {
+    const { glagol_parent, project_name } = params;
+
+    const { data } = await axios.get("/api/v1/modules", {
+        params: { glagol_parent, project_name },
+    });
+
+    // ожидаемый формат:
+    // { status: "success", modules: ["send_message", ...] }
+    const list = Array.isArray(data?.modules) ? data.modules : [];
+    // на всякий — уберём .py, если вдруг придёт
+    return list.map((m: string) => String(m).replace(/\.py$/i, ""));
 }

@@ -20,6 +20,7 @@ import {SessionState} from "sip.js";
 
 
 export interface ModuleData {
+    button_name: string | null;
     start_modes: string[];
     filename: string;
     id: number;
@@ -109,6 +110,7 @@ const MainApp: React.FC = () => {
         (state: RootState) => state.operator.monitorData
     );
 
+
     useEffect(() => {
         setSelectedStatus(null)
     },[selectedPreset])
@@ -162,12 +164,12 @@ const MainApp: React.FC = () => {
         window.location.href = "https://my.glagol.ai/login_work/";
     };
 
-    // useEffect(() => {
-    //     socket.on('logout', handleLogout);
-    //     return () => {
-    //         socket.off('logout', handleLogout);
-    //     };
-    // }, []);
+    useEffect(() => {
+        socket.on('logout', handleLogout);
+        return () => {
+            socket.off('logout', handleLogout);
+        };
+    }, []);
 
     useEffect(() => {
         const now = new Date().toISOString();

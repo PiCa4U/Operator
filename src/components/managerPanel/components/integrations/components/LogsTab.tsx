@@ -6,13 +6,14 @@ import {
     trySplitPlainTextIntoItems,
     type LogItem,
     type LogFilters,
+    fetchProjectModules
 } from "../api/integrations";
 
 import SearchableSelect from "../../../../callControlPanel/components/select";
 import { useSelector } from "react-redux";
 import { store } from "../../../../../redux/store";
 import { makeSelectFullProjectPool } from "../../../../../redux/operatorSlice";
-import { socket } from "../../../../../socket";
+// import { socket } from "../../../../../socket";
 
 type KVRow = { id: string; key: string; values: string };
 
@@ -322,29 +323,40 @@ export const LogsTab: React.FC = () => {
         return out;
     }
 
-    // запросим модули для всех проектов, что есть в селекте
+    // // запросим модули для всех проектов, что есть в селекте
     useEffect(() => {
-        const projects = projectOptions.map((p) => p.id);
-        if (!projects.length) return;
+        const proj = filters.project?.trim();
+        if (!proj) return;
 
-        const handler = (payload: any) => {
-            setModulesByProject((prev) => ({ ...prev, ...normalizeModules(payload) }));
-            setModulesLoading(false);
-        };
-
+        let cancelled = false;
         setModulesLoading(true);
-        socket.on("get_modules", handler);
-        socket.emit("get_modules", {
-            projects,
-            session_key: sessionKey,
-            worker,
-        });
+
+        // тот же glagol_parent, что и в других местах
+        const glagol_parent = "fs.at.akc24.ru";
+
+        fetchProjectModules({ glagol_parent, project_name: proj })
+            .then((mods) => {
+                if (cancelled) return;
+                const list: ModuleInfo[] = (mods || []).map((name, idx) => ({
+                    id: idx + 1,
+                    filename: name, // уже без .py
+                }));
+                setModulesByProject((prev) => ({ ...prev, [proj]: list }));
+            })
+            .catch((e) => {
+                if (cancelled) return;
+                console.error("fetchProjectModules error:", e);
+                setModulesByProject((prev) => ({ ...prev, [proj]: [] }));
+            })
+            .finally(() => {
+                if (!cancelled) setModulesLoading(false);
+            });
 
         return () => {
-            socket.off("get_modules", handler);
+            cancelled = true;
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [projectOptions, sessionKey, worker]);
+// eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [filters.project]);
 
     // если сменили проект и текущего filename среди модулей нет — очистим его
     useEffect(() => {

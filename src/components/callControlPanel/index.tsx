@@ -239,6 +239,8 @@ interface CallControlPanelProps {
     phoneID?: number | null
     setPhoneID?: (phoneID: number | null) => void
     setSelectedCall: (call: CallData | null) => void
+    isChating?: boolean
+    isClient?: boolean
 }
 
 type PhoneGroup = {
@@ -292,7 +294,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                expressCall,
                                                                phoneID,
                                                                setPhoneID,
-                                                               setSelectedCall
+                                                               setSelectedCall,
+                                                               isChating,
+                                                               isClient
                                                            }) => {
     // Из cookies
     const { sessionKey } = store.getState().operator
@@ -371,13 +375,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             setSelectedProjects([activeProject])
         } else if (call && call.project_name) {
             if(Object.keys(call?.projects).length   > 1 ) {
-                console.log("FUCKObject.keys(call?.projects): ", Object.keys(call?.projects))
                 setSelectedProjects(Object.keys(call?.projects))
             } else if (call.project_name === "outbound") {
-                console.log("FUCK!@#call.variable_last_arg: ", call.variable_last_arg)
                 setSelectedProjects([cleanProjectName(call.variable_last_arg)])
             } else {
-                console.log("FUCK!@#call.project_name: ",call.project_name)
                 setSelectedProjects([cleanProjectName(call.project_name)])
             }
         } else {
@@ -445,14 +446,33 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     useEffect(() => {
         if (openedPhones && tuskMode) {
             const projects = Array.from(new Set(openedPhones.map(p => p.project)));
-            console.log("AGNAINDANSDN")
-            socket.emit("get_project_fields", {
-                projects: projects,
-                session_key: sessionKey,
-                worker
-            });
+            console.log("AGNAINDANSDN", projects);
+
+            if (isClient) {
+                // клиент → тянем данные через API
+                const qs = new URLSearchParams();
+                qs.set("glagol_parent", "fs.at.akc24.ru"); // можно заменить на динамический
+                projects.forEach(p => qs.append("projects", p));
+
+                axios
+                    .get(`/api/v1/project_fields?${qs.toString()}`)
+                    .then(({ data }) => {
+                        handleProjectFields(data)
+                    })
+                    .catch(err => {
+                        console.error("Ошибка project_fields (client):", err);
+                    });
+            } else {
+                // оператор → по сокету
+                socket.emit("get_project_fields", {
+                    projects: projects,
+                    session_key: sessionKey,
+                    worker
+                });
+            }
         }
-    }, [openedPhones, tuskMode, sessionKey, worker]);
+    }, [openedPhones, tuskMode, sessionKey, worker, isClient, selectedProjects]);
+
 
 // useEffect для входящего звонка
     useEffect(() => {
@@ -526,7 +546,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             console.log("testOUTBOUNDCALLCHILDRILL: ", data.as_is_dict)
             const map = new Map<string, MergedField>();
             setGroup_instructions(data.group_instructions || null)
-
+            console.log("selectedProjects: ", selectedProjects)
             Object.entries(data.as_is_dict).forEach(([projName, fields]) => {
                 if ((selectedProjects.length && !selectedProjects.includes(projName)) || !selectedProjects.length) return;
                 fields.forEach(f => {
@@ -1340,6 +1360,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         };
         const uuid = call?.express ? call.special_key_conn : call?.total_direction === "outbound" ? call?.special_key_conn : call?.special_key_conn
         const b_uuid = call?.express ? call.special_key_conn : call?.total_direction === "outbound" ? call?.special_key_conn : call?.special_key_call
+        const phoneNumber = postCallData?.direction === 'outbound' && postCallData?.application !== 'uuid_bridge' ? postCallData.b_callee_num : postCallData?.cid_num;
 
         socket.emit("edit_call_fs", {
             b_uuid: b_uuid,
@@ -1347,6 +1368,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             session_key: sessionKey,
             worker,
             projects: projectsPayload,
+            phone: phoneNumber,
         });
         setIsLoading(true)
         socket.emit('get_fs_report', {
@@ -1443,13 +1465,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         // const b_uuid = postCallData?.b_uuid;
         // const uuid = postCallData?.b_uuid;
 
+
         socket.emit("edit_call_fs", {
             b_uuid,
             uuid,
             session_key: sessionKey,
             worker,
             projects: projectsPayload,
-            post_time
+            post_time,
+            phone: phoneNumber
         });
         socket.emit("change_state_fs", {
             sip_login: sipLogin,
@@ -1514,6 +1538,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             const sanitizedBaseFields = Object.fromEntries(
                 Object.entries(baseFieldValues).map(([k, v]) => [k, sanitize(v)])
             );
+            const phoneNumber = postCallData?.direction === 'outbound' && postCallData?.application !== 'uuid_bridge' ? postCallData.b_callee_num : postCallData?.cid_num;
 
             socket.emit("edit_call_fs", {
                 b_uuid,
@@ -1529,6 +1554,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 post_time,
                 session_key: sessionKey,
                 worker,
+                phone: phoneNumber
             });
             // socket.emit('edit_call_fs', {
             //     b_uuid: call?.special_key_call ,
@@ -1687,7 +1713,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
 
     const handleSetTusk = async () => {
-        if (!selectedPreset?.preset.group_by || !openedPhones?.length) return;
+        if ((!selectedPreset?.preset.group_by || !openedPhones?.length)) return;
 
         const groupedByProject: Record<string, typeof openedPhones> = {};
         for (const phone of openedPhones) {
@@ -1695,7 +1721,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             if (!groupedByProject[proj]) groupedByProject[proj] = [];
             groupedByProject[proj].push(phone);
         }
-
         try {
             const requests = Object.entries(groupedByProject).map(([project_name, phones]) => {
                 const sample = phones[0];
@@ -2138,7 +2163,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             }}
                             className="btn btn-outline-success"
                         >
-                            {mod.filename}
+                            {mod.button_name || mod.filename}
                         </button>
                     ))}
                 </div>
@@ -2160,7 +2185,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 }}
                                 className="btn btn-outline-dark"
                             >
-                                {mod.filename}
+                                {mod.button_name || mod.filename}
                             </button>
                         ))
                     }
@@ -2182,7 +2207,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                         color: projectColors[proj],
                                     }}
                                 >
-                                    {mod.filename}
+                                    {mod.button_name || mod.filename}
                                 </button>
                             ))
                     )}
@@ -2487,10 +2512,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     <div className="card-body">
                         {hasActiveCall && renderActiveCallHeader(activeCalls[0])}
                         {!hasActiveCall && postActive && renderPostCallHeader()}
-                        {tuskMode && !hasActiveCall && !postActive && renderGroupPhones()}
+                        {tuskMode && !hasActiveCall && !postActive && !isChating && renderGroupPhones()}
 
                         <div>
-                            {!(tuskMode && !call) && !hasActiveCall && !postActive && (
+                            {!(tuskMode && !call ) && !hasActiveCall && !postActive && (
                                 renderSelectedCallHeader()
                             )}
 
@@ -2841,6 +2866,24 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                     </div>
                                 </div>
                             )}
+                            {(shouldShowMeta || tuskMode) && (
+                                <div
+                                    className="form-group"
+                                    style={
+                                        compact
+                                            ? { flex: '1 1 100%', minWidth: 0 }
+                                            : {}
+                                    }
+                                >
+                                    <textarea
+                                        className="form-control"
+                                        placeholder="Введите комментарий"
+                                        value={comment}
+                                        onChange={e => setComment(e.target.value)}
+                                        style={compact ? { width: '100%' } : {}}
+                                    />
+                                </div>
+                            )}
                             {shouldShowMeta && fullWidthCard ? (
                                 <div
                                     style={{
@@ -2924,24 +2967,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                     )}
                                 </>
                             )}
-                            {(shouldShowMeta || tuskMode) && (
-                                <div
-                                    className="form-group"
-                                    style={
-                                        compact
-                                            ? { flex: '1 1 100%', minWidth: 0 }
-                                            : {}
-                                    }
-                                >
-                                    <textarea
-                                        className="form-control"
-                                        placeholder="Введите комментарий"
-                                        value={comment}
-                                        onChange={e => setComment(e.target.value)}
-                                        style={compact ? { width: '100%' } : {}}
-                                    />
-                                </div>
-                            )}
+
                             {renderModules()}
                         </div>
 
@@ -2966,7 +2992,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                     </button>
                                 </div>
                             )}
-                            {(tuskMode && openedPhones && !hasActiveCall) && (
+                            {(tuskMode && openedPhones && !hasActiveCall && !isClient) && (
                                 <button
                                     className="btn btn-outline-success"
                                     onClick={handleSetTusk}
@@ -2976,7 +3002,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 </button>
                             )}
                         </div>
-                        {(tuskMode) &&
+                        {(tuskMode && !isChating) &&
                             <div className="d-flex justify-end mb-3">
                                 <label style={{ cursor: 'pointer', fontWeight: 500, display: "flex", gap: 8, marginTop: 8}}>
                                     <input
@@ -2989,7 +3015,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                         На всю ширину
                                     </div>
                                 </label>
-                            </div>}
+                            </div>
+                        }
                     </div>
                 </div>
             </div>

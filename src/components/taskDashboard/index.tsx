@@ -3,8 +3,9 @@ import Select, { SingleValue } from 'react-select';
 import SearchableSelect from '../callControlPanel/components/select/index';
 import styles from "./components/checkbox.module.css"
 import { makeSelectFullProjectPool } from "../../redux/operatorSlice";
-import { useSelector } from "react-redux";
+import {useDispatch, useSelector} from "react-redux";
 import GroupActionModal from "./components/index";
+import { useItsmNavigation } from "../../utils/useItsmNavigation";
 
 import Swal from "sweetalert2";
 import {socket} from "../../socket";
@@ -105,6 +106,8 @@ const PresetSelectorTable: React.FC<Props> = ({
         sipLogin   = '',
         worker     = '',
     } = store.getState().credentials;
+    const dispatch = useDispatch();
+    const { goToItsm, openItsmNewTab } = useItsmNavigation();
 
     const [presets, setPresets] = useState<OptionType[]>([]);
     const [selectedActionOption, setSelectedActionOption] = useState<ActionOption | null>(null);
@@ -1162,6 +1165,12 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                     >
                                                         Открыть
                                                     </button>
+                                                    <button
+                                                        className="btn btn-outline-primary"
+                                                        onClick={() => goToItsm("0198cc9a-951d-7190-968b-2e5e1ae6a143", { worker: sipLogin, role: "operator", name: worker })}
+                                                    >
+                                                        ITSM (здесь)
+                                                    </button>
 
                                                     {actionOptions.map(opt => {
                                                         if (opt.action?.action_type === "assign") {
@@ -1178,6 +1187,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                             >
                                                                 {opt.label}
                                                             </button>
+
                                                         );
                                                     })}
                                                 </div>

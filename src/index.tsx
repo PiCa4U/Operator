@@ -26,14 +26,14 @@ const {
 } = container.dataset as Partial<Record<string, string>>;
 
 // Значения по умолчанию, если data-атрибутов нет
-// const sipLogin = rawSipLogin || '1000';
-// const fsServer = rawFsServer || 'wwstest.glagol.ai';
-// const worker   = rawWorker   || '4.fs@akc24.ru';
+const sipLogin = rawSipLogin || '1000';
+const fsServer = rawFsServer || 'wwstest.glagol.ai';
+const worker   = rawWorker   || '4.fs@akc24.ru';
 
 // // Значения по умолчанию, если data-атрибутов нет
-const sipLogin = rawSipLogin || '';
-const fsServer = rawFsServer || 'wwstest.glagol.ai';
-const worker   = rawWorker   || '';
+// const sipLogin = rawSipLogin || '';
+// const fsServer = rawFsServer || 'wwstest.glagol.ai';
+// const worker   = rawWorker   || '';
 
 
 // Настройка базового URL для axios

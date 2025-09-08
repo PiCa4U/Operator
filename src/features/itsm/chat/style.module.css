@@ -329,3 +329,58 @@
     color: inherit;
     opacity: .8;
 }
+
+.nav-pills .nav-link.active[data-has-unread="1"]::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: #dc3545; /* bootstrap danger */
+    display: inline-block;
+    margin-left: .375rem;
+}
+
+/* ItsmGuidScreen.module.css */
+.chatTabs { display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:0; list-style:none; }
+.chatTabsItem { margin:0; padding:0; }
+
+.chatTabsBtn{
+    --bg:#fff; --fg:#0f172a; --bd:#e2e8f0;
+    --bg-active:linear-gradient(0deg,#22c55e 0%,#16a34a 100%);
+    --fg-active:#fff; --shadow:0 1px 2px rgba(15,23,42,.06), 0 6px 16px rgba(15,23,42,.06);
+    display:inline-flex; align-items:center; gap:8px; max-width:480px;
+    border:1px solid var(--bd); background:var(--bg); color:var(--fg);
+    border-radius:12px; padding:8px 10px; line-height:1.2; box-shadow:var(--shadow);
+    transition:transform .06s ease, box-shadow .15s ease, background .2s ease, color .2s ease, border-color .2s ease;
+}
+.chatTabsBtn:hover{ transform:translateY(-1px); box-shadow:0 2px 8px rgba(15,23,42,.12); border-color:#cbd5e1; }
+.isActive{ background:var(--bg-active); color:var(--fg-active); border-color:transparent; box-shadow:0 2px 14px rgba(22,163,74,.35); }
+.hasUnread:not(.isActive){ border-color:#fecaca; }
+
+.chatTabsLabel{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chatTabsBadge{
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:18px; height:18px; padding:0 4px; border-radius:10px; font-weight:700; font-size:11px; line-height:1;
+    background:#ef4444; color:#fff; box-shadow:0 1px 0 rgba(0,0,0,.1);
+}
+.isActive.hasUnread::after{
+    content:""; width:8px; height:8px; margin-left:6px; border-radius:999px; background:#fff; box-shadow:0 0 0 3px rgba(239,68,68,.95);
+}
+
+/* контейнер чата имеет свой фон и слой */
+.chatShell{
+    background:#fff;
+    position: relative; /* создаём новый stacking context */
+    z-index: 1;
+}
+
+/* строка ввода всегда непрозрачная и выше соседей */
+.inputRow{
+    display:flex;
+    gap:8px;
+    align-items:flex-end;
+    background:#fff;         /* <-- ключевое */
+    position: relative;
+    z-index: 2;              /* поверх всего, что случайно «просвечивает» ниже */
+    border-top:1px solid #dee2e6;
+}

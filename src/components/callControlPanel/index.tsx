@@ -448,7 +448,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             const projects = Array.from(new Set(openedPhones.map(p => p.project)));
             console.log("AGNAINDANSDN", projects);
 
-            if (isClient) {
+            if (isClient && projects.length) {
                 // клиент → тянем данные через API
                 const qs = new URLSearchParams();
                 qs.set("glagol_parent", "fs.at.akc24.ru"); // можно заменить на динамический
@@ -462,7 +462,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     .catch(err => {
                         console.error("Ошибка project_fields (client):", err);
                     });
-            } else {
+            } else if (projects.length) {
                 // оператор → по сокету
                 socket.emit("get_project_fields", {
                     projects: projects,
@@ -837,7 +837,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         socket.on('get_modules', handleModules);
 
-        if (tuskMode) {
+        if (tuskMode && selectedProjects.length) {
             socket.emit('get_modules', {
                 worker,
                 // sip_login: sipLogin,
@@ -858,7 +858,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
 
         return () => {
-            socket.off('get_modules', handleModules);
+            socket.off('get_modules', handleModules );
             // setModules([]);
         };
 

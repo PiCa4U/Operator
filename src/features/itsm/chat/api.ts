@@ -26,11 +26,11 @@ function normalizeUploadResponse(raw: any): UploadItem[] {
     if (Array.isArray(raw) && raw.every(x => typeof x === "string")) {
         return (raw as string[]).map(name => ({ status: "ok", filename: name }));
     }
-    // обёртка с полем storage / data
+    // обёртки
     if (Array.isArray(raw?.storage)) return normalizeUploadResponse(raw.storage);
-    if (Array.isArray(raw?.data)) return normalizeUploadResponse(raw.data);
+    if (Array.isArray(raw?.data))    return normalizeUploadResponse(raw.data);
     // одиночная строка
-    if (typeof raw === "string") return [{ status: "ok", filename: raw }];
+    if (typeof raw === "string")     return [{ status: "ok", filename: raw }];
     return [];
 }
 

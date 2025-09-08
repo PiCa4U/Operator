@@ -12,6 +12,49 @@ import {SignalsToaster} from "../../features/signals/SignalsToaster";
 import {NotificationsPanel} from "../../features/signals/NotificationsPanel";
 import {SignalsBell} from "../../features/signals/SignalsBell";
 
+// === helpers ===
+function getByPath(obj: any, path: string) {
+    if (!obj || !path) return undefined;
+    return path.split(".").reduce((acc, key) => (acc != null ? acc[key] : undefined), obj);
+}
+
+function normalizeToArray(val: any): any[] {
+    if (val == null) return [];
+    if (Array.isArray(val)) return val.filter(v => v != null && v !== "");
+    // поддержка строк со списком через запятую
+    if (typeof val === "string") {
+        const trimmed = val.trim();
+        if (!trimmed) return [];
+        if (trimmed.includes(",")) {
+            return trimmed.split(",").map(s => s.trim()).filter(Boolean);
+        }
+        return [trimmed];
+    }
+    // числа, булевы и т.п.
+    return [val];
+}
+
+function buildGroupByFilter(
+    groupBy: unknown,
+    contact: Record<string, any>
+): Record<string, ["IN", any[]]> {
+    // groupBy может быть массивом или строкой "a,b,c"
+    const fields: string[] = Array.isArray(groupBy)
+        ? groupBy
+        : typeof groupBy === "string"
+            ? groupBy.split(",").map(s => s.trim()).filter(Boolean)
+            : [];
+
+    const filter: Record<string, ["IN", any[]]> = {};
+    for (const field of fields) {
+        const raw = field.includes(".") ? getByPath(contact, field) : contact?.[field];
+        const arr = normalizeToArray(raw);
+        if (arr.length) {
+            filter[field] = ["IN", arr];
+        }
+    }
+    return filter;
+}
 // types.ts
 export interface Project {
     active: boolean;
@@ -76,8 +119,10 @@ interface HeaderPanelProps {
     groupProjects: string[]
     setManagerPanel: (managerPanel: boolean) => void
     managerPanel: boolean,
-    setPhoneID: (number: number) => void
-    phoneID: number | null
+    // setPhoneID: (number: number) => void
+    // phoneID: number | null
+    outActivePhoneData?: any
+    setOutActivePhoneData?: (outActivePhoneData: any) => void
 }
 
 
@@ -112,8 +157,10 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      groupProjects,
                                                      setManagerPanel,
                                                      managerPanel,
-                                                     setPhoneID,
-                                                     phoneID,
+                                                     // setPhoneID,
+                                                     // phoneID,
+                                                     outActivePhoneData,
+                                                     setOutActivePhoneData
                                                  }) => {
     const {
         sipLogin   = '',
@@ -382,6 +429,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 // out_extension: out_extension,
                 special_key: specialKey
             })
+
             socket.emit('get_phone_line', {
                 // fs_server: fsServer,
                 // room_id: roomId,
@@ -411,6 +459,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         return groups;
     }
 
+// === эффект ===
     useEffect(() => {
         if (!outActiveProjectName) return;
 
@@ -425,7 +474,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                         role,
                     });
                     const data: Preset[] = response.data;
-
                     myPresets = data.map(p => ({ value: p.id, label: p.preset_name, preset: p }));
                     setPresets(myPresets);
                 }
@@ -433,43 +481,50 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 const matchedPreset = myPresets.find(p =>
                     p.preset.projects.includes(outActiveProjectName)
                 );
+
                 if (!matchedPreset) {
                     console.log('Нет пресета под проект:', outActiveProjectName);
-                    socket.emit("get_project_fields",{
+                    socket.emit("get_project_fields", {
                         projects: [outActiveProjectName],
                         session_key: sessionKey,
                         worker
-                    })
+                    });
                     return;
                 } else {
                     console.log("matchedPreset:", matchedPreset);
                     setSelectedPreset(matchedPreset);
                 }
 
+                // 🔽 строим filter_by из group_by + проект
+                const groupFilter = buildGroupByFilter(matchedPreset.preset.group_by, outActivePhoneData || {});
+                const filter_by: Record<string, any> = {
+                    project: ['IN', matchedPreset.preset.projects],
+                    ...groupFilter,
+                };
+
+
                 const response = await axios.post<any>('/api/v1/get_grouped_phones', {
                     glagol_parent: projectPool[0].scheme || '',
                     group_by: matchedPreset.preset.group_by,
-                    filter_by: { project: ['IN', matchedPreset.preset.projects] },
+                    filter_by,
                     group_table: matchedPreset.preset.group_table,
                     role,
                 });
+
                 const projectIdData = response.data;
                 console.log("projectIdData:", projectIdData);
 
-                // ✅ Используем рекурсивный обход для сбора всех массивов телефонов
+                // ✅ Рекурсивный обход для сборки групп (как у тебя было)
                 const allGroups = extractPhoneGroups(projectIdData);
                 console.log("allGroups:", allGroups);
 
-                // ✅ Все телефоны одним списком
                 const flatPhones = allGroups.flat();
                 console.log('OUTflatPhones:', flatPhones);
 
-                const phoneNumber = outActivePhone;
-                if (!phoneID) return;
+                if (!outActivePhoneData.id) return;
 
-                // ✅ Фильтруем группы, где хотя бы один телефон совпадает
                 const matchedGroups = allGroups.filter(group =>
-                    group.some(item => item.id === phoneID)
+                    group.some(item => item.id === outActivePhoneData.id)
                 );
                 console.log("matchedGroups:", matchedGroups);
 
@@ -480,7 +535,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                         new Set(matchedGroups.flat().map(item => item.id))
                     );
                     console.log("OUTmatchedGroup:", matchedGroupIDs);
-                    const openedPhones = matchedGroups.flat()
+
+                    const openedPhones = matchedGroups.flat();
                     console.log("OUTopenedPhones:", openedPhones);
 
                     const groupIDs = allGroups.map(group => group.map(item => item.id));
@@ -489,29 +545,30 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     setPhonesData(flatPhones);
                     setOpenedGroup(matchedGroupIDs);
                     setOpenedPhones(openedPhones);
-
                 } else {
                     console.log("Номер не найден → tuskMode OFF");
                     setShowTasksDashboard(false);
                 }
-
             } catch (err) {
                 console.error('Ошибка при проверке пресетов:', err);
             }
         };
 
         fetchPresetsAndCheckPhone();
-    }, [outActiveProjectName, outActivePhone, phoneID]);
+
+    }, [outActiveProjectName, outActivePhone, outActivePhoneData]);
 
     useEffect(() => {
         const handleGetPhoneToCall = (msg: any) => {
-            console.log("msg:", msg);
+            console.log("msghandleGetPhoneToCall:", msg);
             if (!msg.length) return;
             const phoneID = msg[0].id
             const phone = msg[0].phone;
             const project_name = msg[0].project;
-
-            setPhoneID(phoneID)
+            if (setOutActivePhoneData) {
+                setOutActivePhoneData(msg[0])
+            }
+            // setPhoneID(phoneID)
             setSpecialKey(msg[0].special_key);
             setOutActivePhone(phone);
             setOutActiveProjectName(project_name);
@@ -530,9 +587,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 console.log("check_express response:", response);
                 if (response.express) return
 
-                const startType = projectPool.find(p => p.project_name === project_name)?.start_type || "";
-                console.log("startType:", startType);
-
+                const startType = projectPool.find(p => p.project_name === project_name)?.start_type || "auto";
                 setOutPreparation(true);
 
                 if (startType === 'manual') {

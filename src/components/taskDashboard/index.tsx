@@ -16,6 +16,8 @@ import DatePicker from "react-datepicker";
 import { format } from 'date-fns';
 import {AssignComp} from "./components/assign";
 
+import { chatApi } from "../../features/itsm/chat/api";
+
 // --- Типы данных ---
 interface ColumnCell {
     name: string;
@@ -419,8 +421,9 @@ const PresetSelectorTable: React.FC<Props> = ({
             const flat = Object.entries(projectIdData).flatMap(([project_name, list]) =>
                 list.map(item => ({ id: item.id, project_name }))
             );
+
             setFlatPhones(flatPhones)
-            console.log("flatPhones: ", flatPhones)
+            console.log("projectIdData: ", projectIdData)
 
             setIdProjectMap(flat);
 
@@ -809,6 +812,110 @@ const PresetSelectorTable: React.FC<Props> = ({
         await fetchStatuses();
     };
 
+// кто мы
+    const hasSipLogin = !!sipLogin?.trim();
+    const loginForUnread = hasSipLogin ? sipLogin : "client";
+
+// кэш счётчиков по guid
+    const [guidCounts, setGuidCounts] = useState<Record<string, { unread: number; total: number }>>({});
+
+// достать guid из элемента phonesData (учёт разных полей)
+    function getGuidFromPhone(p: any): string | null {
+        return (
+            (p?.contact_info?.guid && String(p.contact_info.guid)) ||
+            (p?.guid && String(p.guid)) ||
+            (p?.b_uuid && String(p.b_uuid)) ||
+            (p?.uuid && String(p.uuid)) ||
+            null
+        );
+    }
+
+// все guid для данной строки
+    function getGuidsForRow(row: ApiRow): string[] {
+        const ids = row.id_list || [];
+        const guids = new Set<string>();
+        ids.forEach((id) => {
+            const item = (phonesData || []).find((x: any) => x.id === id);
+            const g = item ? getGuidFromPhone(item) : null;
+            if (g) guids.add(String(g));
+        });
+        return Array.from(guids);
+    }
+
+// распарсить ответ /count -> unread/total
+    function extractCounts(resp: any, hasSip: boolean, login: string) {
+        // unread
+        let unread = 0;
+        if (hasSip) {
+            // только мои непрочитанные:
+            unread = Number(resp?.unwatched?.[login] ?? 0);
+
+            // ❗️если нужно прибавлять "responsible" — раскомментируй:
+            // unread += Number(resp?.unwatched?.responsible ?? 0);
+        } else {
+            const clientTop = Number(resp?.client ?? 0);
+            const clientInUnwatched = Number(resp?.unwatched?.client ?? 0);
+            unread = clientTop || clientInUnwatched || 0;
+        }
+
+        // total — читаем реальное поле total_messages
+        const total =
+            Number(
+                resp?.total_messages ??   // <-- главное поле с твоего бэка
+                resp?.total ??
+                resp?.all ??
+                resp?.messages ??
+                resp?.all_messages ??
+                resp?.count
+            ) || 0;
+
+        return { unread, total };
+    }
+
+// подгрузка счётчиков для одного guid (если ещё не в кэше)
+    async function fetchCountsForGuid(guid: string) {
+        if (!guid) return;
+        if (guidCounts[guid]?.total !== undefined) return; // уже есть
+
+        try {
+            const params = hasSipLogin ? { logins: loginForUnread } : undefined;
+            const { data } = await chatApi.get(`/api/v1/chat/${encodeURIComponent(guid)}/count`, { params });
+            const { unread, total } = extractCounts(data, hasSipLogin, loginForUnread);
+            setGuidCounts((prev) => ({ ...prev, [guid]: { unread, total } }));
+        } catch {
+            setGuidCounts((prev) => ({ ...prev, [guid]: { unread: 0, total: 0 } }));
+        }
+    }
+
+// агрегировать по строке (сумма по всем guid строки)
+    function getRowMsgInfo(row: ApiRow) {
+        const guids = getGuidsForRow(row);
+        let sumUnread = 0;
+        let sumTotal = 0;
+        guids.forEach((g) => {
+            const c = guidCounts[g];
+            if (c) {
+                sumUnread += c.unread || 0;
+                sumTotal += c.total || 0;
+            }
+        });
+        return { guids, sumUnread, sumTotal };
+    }
+
+    useEffect(() => {
+        // соберём все guid на текущей странице
+        const pageGuids = new Set<string>();
+        paginatedRows.forEach((row) => {
+            getGuidsForRow(row).forEach((g) => pageGuids.add(g));
+        });
+
+        // дотянуть недостающие
+        pageGuids.forEach((g) => {
+            if (!guidCounts[g]) {
+                void fetchCountsForGuid(g);
+            }
+        });
+    }, [paginatedRows, phonesData, hasSipLogin, loginForUnread]); // deps ОК
 
     useEffect(() => {
         if (!Object.keys(expressConfig).length) return;
@@ -1107,6 +1214,8 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                 )}
                                             </th>
                                         ))}
+                                    <th className="border p-2" title="Непрочитанные / Всего">Сообщения</th>
+
                                     <th className="border p-2">Действия</th>
                                 </tr>
                                 </thead>
@@ -1155,6 +1264,34 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                         </td>
                                                     );
                                                 })}
+                                            <td className="border p-2 align-top">
+                                                {(() => {
+                                                    const guids = getGuidsForRow(row);                 // твоя утилита из прошлых вставок
+                                                    const firstGuid = guids[0];
+
+                                                    const { sumUnread, sumTotal } = getRowMsgInfo(row); // твоя утилита из прошлых вставок
+                                                    const showDash = !firstGuid && sumUnread === 0 && sumTotal === 0;
+                                                    if (showDash) return <span className="text-muted">—</span>;
+
+                                                    const c = firstGuid ? (guidCounts[firstGuid] || { unread: 0, total: 0 }) : { unread: 0, total: 0 };
+
+                                                    return (
+                                                        <div className={styles.msgsCell}>
+
+                                                            <div
+                                                                className={styles.msgsCount}
+                                                                title={`Непрочитанные: ${sumUnread} / Всего:  ${sumTotal}`}
+                                                                aria-label={`Непрочитанные ${sumUnread} из ${sumTotal}`}
+                                                            >
+                                                                <span className={styles.numUnread}>{sumUnread}</span>
+                                                                <span className={styles.sep}>/</span>
+                                                                <span className={styles.numTotal}>{sumTotal}</span>
+                                                            </div>
+
+                                                        </div>
+                                                    );
+                                                })()}
+                                            </td>
 
                                             {/* Колонка с кнопками действий */}
                                             <td className="border p-2">
@@ -1165,12 +1302,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                     >
                                                         Открыть
                                                     </button>
-                                                    <button
-                                                        className="btn btn-outline-primary"
-                                                        onClick={() => goToItsm("0198cc9a-951d-7190-968b-2e5e1ae6a143", { worker: sipLogin, role: "operator", name: worker })}
-                                                    >
-                                                        ITSM (здесь)
-                                                    </button>
+
 
                                                     {actionOptions.map(opt => {
                                                         if (opt.action?.action_type === "assign") {

@@ -315,7 +315,7 @@ export default function LocalChat({
 
     return (
         <div
-            className={`border rounded-3 ${collapsed ? "h-12 overflow-hidden" : "min-h-80 d-flex flex-column"}`}
+            className={`${styles.chatShell} border rounded-3 ${collapsed ? "h-12 overflow-hidden" : "min-h-80 d-flex flex-column"}`}
             style={collapsed ? undefined : { height }}
         >
             <div className="p-2 border-bottom d-flex justify-content-between align-items-center">

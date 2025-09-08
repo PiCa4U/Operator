@@ -34,3 +34,25 @@
     border-width: 0 2px 2px 0;
     transform: rotate(45deg);
 }
+
+
+/* Ячейка сообщений: горизонтальное выравнивание */
+.msgsCell{
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    white-space: nowrap;
+}
+
+/* 0 / 121 — аккуратные моноширинные цифры */
+.msgsCount{
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    font-variant-numeric: tabular-nums;
+    color: #334155; /* slate-700 */
+}
+.numUnread{ font-weight: 700; }
+.numTotal{ opacity: .85; }
+.sep{ opacity: .45; }
+

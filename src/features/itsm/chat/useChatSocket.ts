@@ -27,15 +27,13 @@ function toIso(s: string): string {
 
 /** коллбэки событий */
 type Handlers = {
-    onIncoming?: (msg: UiMessage) => void; // прилетело сообщение от другого участника
+    onIncoming?: (msg: UiMessage) => void;                         // прилетело сообщение от другого участника
     onAck?: (ack: { tempId: string; message_id: number }) => void; // ACK на наш send
-    onRead?: (message_id: number) => void; // кто-то прочитал message_id
+    onRead?: (ids: number[]) => void;                              // кто-то прочитал пачку сообщений
     onUploaded?: (p: { tempId: string; filenames: string[] }) => void; // имена после upload
 };
 
-export function useChatSocket(
-    opts: { guid: string; login: string | null } & Handlers
-) {
+export function useChatSocket(opts: { guid: string; login: string | null } & Handlers) {
     const { guid, login, onIncoming, onAck, onRead, onUploaded } = opts;
 
     const sockRef = useRef<ReturnType<typeof createChatSocket> | null>(null);
@@ -45,7 +43,7 @@ export function useChatSocket(
     // очередь tempId для сопоставления с ack (message:sent)
     const pendingQueue = useRef<string[]>([]);
 
-    // ⬇️ держим актуальные обработчики в ref, чтобы эффект создания сокета не зависел от их идентичности
+    // актуальные обработчики — в ref
     const handlersRef = useRef<Handlers>({});
     useEffect(() => {
         handlersRef.current = { onIncoming, onAck, onRead, onUploaded };
@@ -55,7 +53,7 @@ export function useChatSocket(
     useEffect(() => {
         if (!guid) return;
 
-        const s = createChatSocket(); // внутри можешь иметь autoConnect:false
+        const s = createChatSocket(); // autoConnect:false допустим
         sockRef.current = s;
 
         const doLogin = () => s.emit("login", { guid, login });
@@ -74,9 +72,10 @@ export function useChatSocket(
             handlersRef.current.onAck?.({ tempId: tempId ?? "", message_id: payload.message_id });
         });
 
-        // входящее сообщение
+        // входящее сообщение — ТОЛЬКО прокидываем наверх
+        // (НИЧЕГО не эмитим здесь, автопрочтение делает родитель)
         s.on("message", (p: {
-            login: string;            // "client" | glagol_service
+            login: string;            // "client" | glagol_service | sipLogin
             message_id: number;
             message: string;
             storage: string[] | null;
@@ -90,7 +89,7 @@ export function useChatSocket(
 
             const created_at = p.created_dt ? toIso(p.created_dt) : new Date().toISOString();
 
-            const ui = {
+            const ui: UiMessage = {
                 id: String(p.message_id),
                 text: p.message ?? "",
                 created_at,
@@ -98,22 +97,18 @@ export function useChatSocket(
                 authorName: p.login,
                 authorRole: role,
                 attachments,
-                isRead: true,
-            } as UiMessage;
+                isRead: false, // решать будет верхний слой
+            };
 
             handlersRef.current.onIncoming?.(ui);
-
-            // помечаем как прочитанное сразу для входящих по сокету
-            s.emit("message:read", { message_id: p.message_id });
-            handlersRef.current.onRead?.(p.message_id);
         });
 
-        // сервер сообщает, что кто-то прочитал message_id
-        s.on("message:read", (p: { message_id: number }) => {
-            handlersRef.current.onRead?.(p.message_id);
+        // сервер сообщает, что кто-то прочитал сообщения пачкой
+        s.on("message:read", (p: { ids: number[] }) => {
+            const ids = Array.isArray(p?.ids) ? p.ids : [];
+            if (ids.length) handlersRef.current.onRead?.(ids);
         });
 
-        // если createChatSocket создаёт с autoConnect:false — подключаем вручную
         if ((s as any).connected === false && typeof s.connect === "function") {
             s.connect();
         }
@@ -124,11 +119,9 @@ export function useChatSocket(
             sockRef.current = null;
             setConnected(false);
         };
-    }, [guid, login]); // <-- никаких handler deps тут больше нет
+    }, [guid, login]);
 
-    /** Отправка сообщения: message (обязателен) и storage (имена файлов, опционально).
-     *  tempId — локальный id для маппинга ACK.
-     */
+    /** Отправка сообщения + (опционально) загрузка файлов */
     async function send(tempId: string, text: string, files: File[] = []) {
         try {
             let storageNames: string[] = [];
@@ -136,8 +129,7 @@ export function useChatSocket(
             if (files.length) {
                 const items: UploadItem[] = await uploadAndAttach(guid, files);
                 storageNames = items.map((i) => i.filename);
-
-                // наверх финальные имена (для апдейта optimistic вложений)
+                // сообщаем наверх финальные имена (для апдейта optimistic вложений)
                 handlersRef.current.onUploaded?.({ tempId, filenames: storageNames });
             }
 
@@ -153,19 +145,16 @@ export function useChatSocket(
         }
     }
 
-    /** отметить одно сообщение прочитанным */
+    /** отметить одну штуку прочитанной (оставил на всякий случай) */
     function markRead(message_id: number) {
-        const s = sockRef.current;
-        if (!s) return;
-        s.emit("message:read", { message_id });
+        sockRef.current?.emit("message:read", { ids: [message_id] });
     }
 
-    /** отметить пачку прочитанными (с маленькой паузой между emit) */
-    async function markManyRead(ids: number[], delayMs = 10) {
-        for (const id of ids) {
-            markRead(id);
-            if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
-        }
+    /** отметить пачку прочитанными — одним эмитом */
+    function markManyRead(ids: number[]) {
+        const distinct = Array.from(new Set(ids.filter((n) => Number.isFinite(n))));
+        if (!distinct.length) return;
+        sockRef.current?.emit("message:read", { ids: distinct });
     }
 
     return { connected, error, send, markRead, markManyRead };

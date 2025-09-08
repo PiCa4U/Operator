@@ -17,7 +17,65 @@ import Swal from "sweetalert2";
 import { useSip } from '../../context/SipContext';
 import NotificationPopup from '../notifications';
 import {SessionState} from "sip.js";
+import {chatApi, fetchChatHistory, RawChatMessage} from "../../features/itsm/chat/api";
+import LocalChat, {Role, UiMessage} from "../../features/itsm/chat/LocalChat";
+import {formatOperator, useOperatorsDirectory} from "../../features/signals/useOperatorsDirectory";
+import {useChatCollapsed} from "../../features/itsm/useChatCollapsed";
+import {useChatSocket} from "../../features/itsm/chat/useChatSocket";
+import {ContactFilesPanel} from "../../features/itsm/chat/FieldsPanel";
+import styles from "../../features/itsm/chat/style.module.css";
 
+function toIsoFromServer(dt: string): string {
+    const [d, t = "00:00:00"] = dt.trim().split(" ");
+    const [y, m, day] = d.split("-").map(Number);
+    const [hh, mm, ss] = t.split(":").map(Number);
+    return new Date(Date.UTC(y, (m || 1) - 1, day || 1, hh || 0, mm || 0, ss || 0)).toISOString();
+}
+
+function mapRow(r: RawChatMessage): UiMessage {
+    const isClient = r.sender === "client";
+    const role: Role = isClient ? "client" : "operator";
+    const attachments = Array.isArray(r.storage)
+        ? r.storage.map((name, i) => ({ id: `${r.id}:${i}`, name }))
+        : [];
+    return {
+        id: String(r.id),
+        text: r.text ?? "",
+        created_at: toIsoFromServer(r.created_dt),
+        authorLogin: isClient ? null : r.sender,
+        authorName: r.sender,
+        authorRole: role,
+        attachments,
+        status: "sent",
+        isRead: false,
+    };
+}
+
+function sortMessages(a: UiMessage, b: UiMessage) {
+    const ta = Date.parse(a.created_at);
+    const tb = Date.parse(b.created_at);
+    if (ta !== tb) return ta - tb;
+    const na = Number.isFinite(+a.id) ? +a.id : Number.MAX_SAFE_INTEGER;
+    const nb = Number.isFinite(+b.id) ? +b.id : Number.MAX_SAFE_INTEGER;
+    if (na !== nb) return na - nb;
+    const ka = (a.tempId ?? a.id) || "";
+    const kb = (b.tempId ?? b.id) || "";
+    return ka.localeCompare(kb);
+}
+function dedupeByKey(list: UiMessage[]) {
+    const seen = new Set<string>();
+    const out: UiMessage[] = [];
+    for (const m of list) {
+        const key = m.id;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(m);
+    }
+    return out;
+}
+
+type ReadStatus = { watched: string[]; responsible_watch: boolean };
+type ReadMap = Record<string, ReadStatus>;
 
 export interface ModuleData {
     button_name: string | null;
@@ -32,6 +90,43 @@ export interface ModuleData {
 export interface MonoProjectsModuleData {
     [projectName: string]: ModuleData[];
 }
+
+function getByPath(obj: any, path: string) {
+    if (!obj || !path) return undefined;
+    return path.split(".").reduce((acc, key) => (acc != null ? acc[key] : undefined), obj);
+}
+
+function normalizeToArray(val: any): any[] {
+    if (val == null) return [];
+    if (Array.isArray(val)) return val.filter(v => v != null && v !== "");
+    if (typeof val === "string") {
+        const t = val.trim();
+        if (!t) return [];
+        if (t.includes(",")) return t.split(",").map(s => s.trim()).filter(Boolean);
+        return [t];
+    }
+    return [val];
+}
+
+function buildGroupByFilter(
+    groupBy: unknown,
+    contact: Record<string, any>
+): Record<string, ["IN", any[]]> {
+    const fields: string[] = Array.isArray(groupBy)
+        ? groupBy
+        : typeof groupBy === "string"
+            ? groupBy.split(",").map(s => s.trim()).filter(Boolean)
+            : [];
+
+    const filter: Record<string, ["IN", any[]]> = {};
+    for (const field of fields) {
+        const raw = field.includes(".") ? getByPath(contact, field) : contact?.[field];
+        const arr = normalizeToArray(raw);
+        if (arr.length) filter[field] = ["IN", arr];
+    }
+    return filter;
+}
+
 const MainApp: React.FC = () => {
     const [selectedCall, setSelectedCall] = useState<CallData | null>(null);
     const [showScriptPanel, setShowScriptPanel] = useState<boolean>(false);
@@ -42,6 +137,7 @@ const MainApp: React.FC = () => {
     const [currentPage, setCurrentPage] = useState(1);
     const [outboundCall, setOutboundCall] = useState<boolean>(false)
     const [outActivePhone, setOutActivePhone] = useState<string | null>(null);
+    const [outActivePhoneData, setOutActivePhoneData] = useState<any>(null)
     const [outActiveProjectName, setOutActiveProjectName] = useState('');
     const [assignedKey, setAssignedKey] = useState('');
     const [isLoading,    setIsLoading]    = useState(false);
@@ -70,6 +166,11 @@ const MainApp: React.FC = () => {
     const [phonesData, setPhonesData] = useState<any[]>([])
     const [openedPhones, setOpenedPhones] = useState<any[]>([])
     const [GroupIDs, setGroupIDs] = useState<any[]>([])
+    const {
+        sipLogin   = '',
+        worker     = '',
+    } = store.getState().credentials;
+    const { data: operatorDict = {} } = useOperatorsDirectory();
 
     const [managerPanel, setManagerPanel] = useState<boolean>(false)
 
@@ -85,6 +186,70 @@ const MainApp: React.FC = () => {
             localStorage.setItem('selectedStatus', "");
         }
     }, [selectedStatus]);
+
+
+    const [activeGuid, setActiveGuid] = useState<string>("");
+    const openedGuids = useMemo(() => {
+        return openedPhones.filter(open => Boolean(open.guid));
+    }, [openedPhones]);
+    useEffect(() => console.log("openedGuids: ", openedGuids), [openedGuids])
+    const firstGuid = useMemo(() => {
+        return openedGuids.length > 0 ? openedGuids[0].guid : null;
+    }, [openedGuids]);
+
+    const [history, setHistory] = useState<UiMessage[]>([]);
+    const [chatError, setChatError] = useState<string | null>(null);
+    const [live, setLive] = useState<UiMessage[]>([]);
+    const [optimistic, setOptimistic] = useState<UiMessage[]>([]);
+    const [unreadByGuid, setUnreadByGuid] = useState<Record<string, number>>({});
+    const [serverFilesByGuid, setServerFilesByGuid] = useState<Record<string, string[]>>({});
+    const [projectsDict, setProjectsDict] = useState<Record<string, string>>({});
+    const [readMap, setReadMap] = useState<ReadMap>({});
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [data, setData] = useState<any[]>([]);
+    const sentReadRef = useRef<Set<number>>(new Set());   // уже отправляли в эту сессию
+    const queueRef = useRef<Set<number>>(new Set());      // очередь на отправку
+    const timerRef = useRef<number | null>(null);
+
+    const messages = useMemo(() => {
+        const merged = [...history, ...live, ...optimistic];
+        return dedupeByKey(merged).sort(sortMessages);
+    }, [history, live, optimistic]);
+
+    const viewer = useMemo(() => {
+        const role: Role = sipLogin ? "operator" : "client";
+        const name = sipLogin ? sipLogin : "Клиент";
+        const login = sipLogin ? sipLogin : null;
+        return { role, name, login, worker: worker || null };
+    }, [sipLogin, worker]);
+
+    const collapsed = useChatCollapsed(firstGuid);
+
+    useEffect(() => {
+        let alive = true;
+
+        axios
+            .get("/api/v1/projects", { params: { glagol_parent: "fs.at.akc24.ru" } })
+            .then(({ data }) => {
+                if (!alive) return;
+                const arr = Array.isArray(data?.projects) ? data.projects : [];
+                const dict: Record<string, string> = {};
+                for (const p of arr) {
+                    const key = String(p?.project_name || "").trim();
+                    if (!key) continue;
+                    const val = String(p?.glagol_name || p?.project_name || key);
+                    dict[key] = val;
+                }
+                setProjectsDict(dict);
+            })
+            .catch((e) => {
+                console.warn("Не удалось загрузить список проектов", e);
+                setProjectsDict({});
+            });
+
+        return () => { alive = false; };
+    }, []);
 
     const [prefix, setPrefix] = useState<string>('')
     const [get_callcenter, setGet_callcenter] = useState<boolean>(false)
@@ -109,7 +274,293 @@ const MainApp: React.FC = () => {
     const { monitorUsers } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
+    function labelForGuid(g: string): string {
+        const rows = (openedPhones ?? []).filter((it: any) => {
+            const v = it?.guid || it?.contact_info?.guid || it?.b_uuid || it?.uuid;
+            return String(v) === g;
+        });
 
+        if (!rows.length) return `GUID ${g.slice(0, 8)}…`;
+
+        const first = rows[0];
+        const phone = first?.phone || first?.contact_info?.phone || first?.msisdn || first?.phone_number;
+        const name  = first?.name  || first?.contact_info?.name;
+        const projRaw = first?.project || first?.contact_info?.project;
+        const projNice = projectsDict[projRaw] || projRaw; // <- подмена
+
+        if (name && phone && projNice) return `${name} · ${phone} · ${projNice}`;
+        if (name && phone)             return `${name} · ${phone}`;
+        if (phone && projNice)         return `${phone} · ${projNice}`;
+        if (name)                      return `${name}`;
+        if (phone)                     return `${phone}`;
+        if (projNice)                  return `${projNice}`;
+        return `GUID ${g.slice(0, 8)}…`;
+    }
+
+    useEffect(() => {
+        if (!activeGuid) return;
+        let alive = true;
+        setChatError(null);
+        (async () => {
+            try {
+                const rows = await fetchChatHistory(activeGuid);
+                if (!alive) return;
+                setHistory(rows.map(mapRow));
+                setLive([]);
+                setOptimistic([]);
+            } catch {
+                if (!alive) return;
+                setChatError("Не удалось загрузить историю чата");
+                setHistory([]); setLive([]); setOptimistic([]);
+            }
+        })();
+        return () => { alive = false; };
+    }, [activeGuid]);
+
+
+    useEffect(() => {
+        if (!openedGuids.length) return
+        let alive = true;
+        setLoading(true); setError(null);
+        chatApi.get(`/api/v1/contacts/${openedGuids[0].guid}`)
+            .then(({ data }) => {
+                if (!alive) return;
+                const contacts = Array.isArray(data?.data) ? data.data : [];
+                setData(contacts);
+            })
+            .catch(() => {
+                if (!alive) return;
+                setError("Не удалось загрузить данные по GUID");
+                setData([]);
+            })
+            .finally(() => alive && setLoading(false));
+        return () => { alive = false; };
+    }, [openedGuids]);
+
+    function extractUnreadCount(resp: any, hasSipLogin: boolean, login: string): number {
+        if (!resp || typeof resp !== "object") return 0;
+
+        // оператор
+        if (hasSipLogin) {
+            const mine = Number(resp?.unwatched?.[login] ?? 0);
+            const responsible = Number(resp?.unwatched?.responsible ?? 0);
+            // если «ответственный» должен тоже видеть эти непрочитанные — раскоммень ниже:
+            // return mine + responsible;
+            return mine;
+        }
+
+        // клиент
+        const clientTop = Number(resp?.client ?? 0);
+        const clientInUnwatched = Number(resp?.unwatched?.client ?? 0);
+        return clientTop || clientInUnwatched || 0;
+    }
+
+    async function fetchUnreadForGuid(g: string, hasSipLogin: boolean, login: string) {
+        try {
+            const params = hasSipLogin ? { logins: login } : undefined; // лучше массивом
+            const { data } = await chatApi.get(`/api/v1/chat/${encodeURIComponent(g)}/count`, { params });
+            return extractUnreadCount(data, hasSipLogin, login);
+        } catch {
+            return 0;
+        }
+    }
+
+    async function refreshUnreadCounts(guids: string[], hasSipLogin: boolean, login: string) {
+        if (!guids.length) return;
+        const entries = await Promise.all(
+            guids.map(async g => [g, await fetchUnreadForGuid(g, hasSipLogin, login)] as const)
+        );
+        setUnreadByGuid(prev => {
+            const next = { ...prev };
+            for (const [g, n] of entries) next[g] = n;
+            return next;
+        });
+    }
+    const markReadMany = (arr: UiMessage[], ids: number[]) => {
+        const setIds = new Set(ids.map(String));
+        return arr.map(m => (setIds.has(m.id) ? { ...m, isRead: true } : m));
+    };
+    function extractFilesFromContacts(arr: any[]): string[] {
+        const all: string[] = [];
+        for (const c of arr ?? []) {
+            const storage = Array.isArray(c?.storage)
+                ? c.storage.map((it: any) => (typeof it === "string" ? it : (it?.name ?? it?.filename ?? "")))
+                : [];
+            for (const s of storage) if (s) all.push(s);
+        }
+        return Array.from(new Set(all));
+    }
+
+    async function refreshContactFiles(g: string) {
+        if (!g) return;
+        try {
+            const { data: resp } = await chatApi.get(`/api/v1/contacts/${encodeURIComponent(g)}`);
+            const contacts = Array.isArray(resp?.data) ? resp.data : [];
+            const files = extractFilesFromContacts(contacts);
+            setServerFilesByGuid(prev => ({ ...prev, [g]: files }));
+        } catch (e) {
+            console.warn("refreshContactFiles failed", e);
+        }
+    }
+
+    const { connected, error: socketErr, send, markManyRead } = useChatSocket({
+        guid: activeGuid,
+        login: sipLogin,
+
+        onIncoming: (msg: UiMessage) => {
+            setLive((prev: UiMessage[]) => [...prev, msg]);
+            if (activeGuid) void refreshUnreadCounts([activeGuid], true, sipLogin);
+        },
+
+        onAck: ({ tempId, message_id }) => {
+            setOptimistic((prev: UiMessage[]) =>
+                prev.map(m => (m.tempId === tempId ? { ...m, id: String(message_id), status: "sent" } : m))
+            );
+        },
+
+        // входящие статусы прочтения — только отмечаем локально, БЕЗ дополнительных эмитов
+        onRead: (ids: number[]) => {
+            if (!ids?.length) return;
+            setHistory(prev => markReadMany(prev, ids));
+            setLive(prev => markReadMany(prev, ids));
+            setOptimistic(prev => markReadMany(prev, ids));
+            if (activeGuid) void refreshUnreadCounts([activeGuid], true, sipLogin);
+        },
+
+        onUploaded: ({ tempId, filenames }) => {
+            setOptimistic(prev =>
+                prev.map(m => {
+                    if (m.tempId !== tempId) return m;
+                    const nextAtts = filenames.map((name, i) => ({
+                        id: `${m.id}:${i}`,
+                        name,
+                        url: m.attachments?.[i]?.url,
+                    }));
+                    return { ...m, attachments: nextAtts };
+                })
+            );
+            if (activeGuid) void refreshContactFiles(activeGuid);
+        }
+    });
+
+    useEffect(() => {
+        if (!connected || !messages.length) return;
+
+        const isIncomingForMe = (m: UiMessage) => {
+            if (sipLogin) return (m.authorLogin ?? null) !== sipLogin; // я оператор
+            return m.authorRole !== "client";                                 // я клиент
+        };
+
+        const idsToMark: number[] = [];
+        for (const m of messages) {
+            const numId = Number(m.id);
+            if (!Number.isFinite(numId)) continue;          // пропускаем временные id
+            if (!isIncomingForMe(m)) continue;              // исходящие мне не нужны
+            if (m.isRead) continue;                         // уже отмечены локально
+            if (sentReadRef.current.has(numId)) continue;   // уже слали ранее
+            idsToMark.push(numId);
+        }
+        if (!idsToMark.length) return;
+
+        // локально сразу отметим
+        setHistory(prev => markReadMany(prev, idsToMark));
+        setLive(prev => markReadMany(prev, idsToMark));
+        setOptimistic(prev => markReadMany(prev, idsToMark));
+
+        // отправим батчем (с дебаунсом)
+        enqueueReads(idsToMark);
+    }, [connected, messages, sipLogin]); // ВАЖНО: без readMap в зависимостях
+
+    const flushReads = () => {
+        if (queueRef.current.size === 0) return;
+        const ids = Array.from(queueRef.current);
+        queueRef.current.clear();
+        markManyRead(ids);
+        ids.forEach(id => sentReadRef.current.add(id));
+    };
+
+    const enqueueReads = (ids: number[]) => {
+        ids.forEach(id => {
+            if (!sentReadRef.current.has(id)) queueRef.current.add(id);
+        });
+        if (timerRef.current) return; // уже ждём
+        timerRef.current = window.setTimeout(() => {
+            timerRef.current = null;
+            flushReads();
+        }, 200);
+    };
+
+    // список GUID для табов (включая текущий из URL)
+    const guidsFromOpened = useMemo(() => {
+        if (openedGuids.length === 0) return
+        const arr = Array.from(new Set(
+            (openedPhones ?? [])
+                .map((it: any) => it?.guid || it?.contact_info?.guid || it?.b_uuid || it?.uuid)
+                .filter(Boolean)
+                .map(String)
+        ));
+        if (openedGuids[0].guid && !arr.includes(openedGuids[0].guid)) arr.unshift(openedGuids[0].guid);
+        return arr;
+    }, [openedGuids]);
+
+    useEffect(() => {
+        if (activeGuid) void refreshContactFiles(activeGuid);
+    }, [activeGuid]);
+    async function handleSend(text: string, files: File[] = []) {
+        if (!activeGuid) return;
+        const trimmed = text.trim();
+        if (!trimmed) return;
+
+        const tempId = crypto.randomUUID();
+        const atts = files.map((f, i) => ({ id: `${tempId}:${i}`, name: f.name, file: f } as any));
+
+        const msg: UiMessage = {
+            id: tempId,
+            tempId,
+            text: trimmed,
+            created_at: new Date().toISOString(),
+            authorLogin: sipLogin || null,
+            authorName:  sipLogin || "Клиент",
+            authorRole:  sipLogin ? "operator" : "client",
+            attachments: atts,
+            status: "pending",
+            isRead: false,
+        };
+
+        setOptimistic(prev => [...prev, msg]);
+
+        try {
+            await send(tempId, trimmed, files);
+        } catch (e: any) {
+            console.error(e);
+        }
+    }
+
+    useEffect(() => {
+        const ids = messages.map(m => Number(m.id)).filter(n => Number.isFinite(n)) as number[];
+        if (!ids.length) { setReadMap({}); return; }
+
+        let cancelled = false;
+        const t = setTimeout(async () => {
+            try {
+                const query = ids.map(id => `ids=${encodeURIComponent(id)}`).join("&");
+                const { data } = await chatApi.get(`/api/v1/chat/messages/status?${query}`);
+                if (cancelled) return;
+
+                const map: ReadMap = {};
+                Object.entries<any>(data || {}).forEach(([k, v]) => {
+                    if (k === "status") return;
+                    if (v && typeof v === "object") map[k] = v as ReadStatus;
+                });
+                setReadMap(map);
+            } catch (e) {
+                setReadMap({});
+                console.warn("read-status fetch failed", e);
+            }
+        }, 200);
+
+        return () => { clearTimeout(t); cancelled = true; };
+    }, [messages, activeGuid]);
 
     useEffect(() => {
         setSelectedStatus(null)
@@ -202,10 +653,6 @@ const MainApp: React.FC = () => {
         }
     },[openedPhones.length, selectedCall])
 
-    const {
-        sipLogin   = '',
-        worker     = '',
-    } = store.getState().credentials;
 
     const role =
         // "manager"
@@ -392,23 +839,19 @@ const MainApp: React.FC = () => {
                     openedGroup.includes(phone.id)
                 );
                 setOpenedPhones(matched);
+
+                // 🔎 ищем первый контакт с guid
+                const contactWithGuid = matched.find(p => Boolean(p.guid));
+                if (contactWithGuid) {
+                    setActiveGuid(contactWithGuid.guid);
+                } else {
+                    setActiveGuid("");
+                }
             } else {
-                setOpenedPhones([]); // Если группу очистили вручную
+                setOpenedPhones([]);
+                setActiveGuid("");
             }
         }
-
-        // 🚀 Работает только если именно outbound режим и есть outboundID
-        // if (showTasksDashboard && outboundCall && outboundID && GroupIDs.length > 0 && phonesData.length > 0) {
-        //     const matchedGroup = GroupIDs.find(group => group.includes(outboundID));
-        //     if (matchedGroup) {
-        //         const matched = phonesData.filter(phone =>
-        //             matchedGroup.includes(phone.id)
-        //         );
-        //         setOpenedPhones(matched);
-        //     } else {
-        //         setOpenedPhones([]);
-        //     }
-        // }
 
         // В остальных случаях — НЕ ТРОГАТЬ
     }, [openedGroup, phonesData, outboundID, GroupIDs, outboundCall, showTasksDashboard]);
@@ -632,68 +1075,86 @@ const MainApp: React.FC = () => {
     useEffect(() => {
         if (!selectedCall) return;
 
-        const projNames = Object.keys(selectedCall?.projects)
-        const projNamesSaved = projNames[0] === "outbound" && projNames.length === 1 ? [selectedCall.variable_last_arg] : projNames
-        console.log("projNames: ", projNames)
+        const projNames = Object.keys(selectedCall?.projects || {});
+        const projNamesSaved =
+            projNames[0] === "outbound" && projNames.length === 1
+                ? [selectedCall.variable_last_arg]
+                : projNames;
+
         if (projNames.length < 2 && projNames[0] !== "outbound") return;
 
         const fetchPresetsAndCheckPhone = async () => {
             try {
+                let myPresetsLocal = presets;
 
-                let myPresets = presets;
                 if (presets.length === 0) {
-                    const response = await axios.post<Preset[]>('/api/v1/get_preset_list', {
-                        glagol_parent: 'fs.at.glagol.ai',
+                    const resp = await axios.post<Preset[]>("/api/v1/get_preset_list", {
+                        glagol_parent: "fs.at.glagol.ai",
                         worker,
                         projects: projectPoolForCall,
                         role,
                     });
-
-                    // Данные уже в response.data
-                    const data: Preset[] = response.data;
-
-                    const myPresets = data.map(p => ({
-                        value: p.id,
-                        label: p.preset_name,
-                        preset: p,
-                    }));
-                    setPresets(myPresets);
+                    const data: Preset[] = resp.data;
+                    myPresetsLocal = data.map(p => ({ value: p.id, label: p.preset_name, preset: p }));
+                    setPresets(myPresetsLocal);
                 }
 
-                const matchedPreset = myPresets.find(p =>
+                const matchedPreset = myPresetsLocal.find(p =>
                     p.preset.projects.includes(projNamesSaved[0])
                 );
                 if (!matchedPreset) {
-                    console.log('Нет пресета под проект:', projNamesSaved[0]);
+                    console.log("Нет пресета под проект:", projNamesSaved[0]);
                     return;
                 } else {
                     console.log("matchedPreset:", matchedPreset);
                     setSelectedPreset(matchedPreset);
                 }
 
-                const response2 = await axios.post<any>('/api/v1/get_grouped_phones', {
-                    glagol_parent: projectPool[0].scheme || '',
+                // 🔎 Пытаемся найти «контакт-источник» для group_by:
+                // 1) currentPhoneData (если есть у тебя такой объект с полной строкой phones)
+                // 2) пробуем найти по phoneID в phonesData (если есть)
+                // 3) fallback — собираем минимум из selectedCall
+                const currentPhoneData =
+                    // @ts-ignore — если у тебя уже есть такой стейт/проп, подставь реальный
+                    (typeof getCurrentPhoneData === "function" ? getCurrentPhoneData(phoneID) : undefined) ||
+                    // @ts-ignore — если хранишь массив phonesData
+                    (Array.isArray(phonesData) ? phonesData.find((p: any) => p?.id === phoneID) : undefined) ||
+                    // минимальный объект из selectedCall (добавь сюда нужные alias-поля под свои group_by)
+                    {
+                        phone: selectedCall?.b_line_num,
+                        b_line_num: selectedCall?.b_line_num,
+                        a_line_num: selectedCall?.a_line_num,
+                        project: projNamesSaved?.[0],
+                    };
+
+                // 🧩 Строим расширенный filter_by из group_by + проект
+                const groupFilter = buildGroupByFilter(matchedPreset.preset.group_by, currentPhoneData || {});
+                const filter_by: Record<string, any> = {
+                    project: ["IN", matchedPreset.preset.projects],
+                    ...groupFilter,
+                };
+
+                console.log("get_grouped_phones.filter_by →", filter_by);
+
+                const response2 = await axios.post<any>("/api/v1/get_grouped_phones", {
+                    glagol_parent: projectPool[0].scheme || "",
                     group_by: matchedPreset.preset.group_by,
-                    filter_by: { project: ['IN', matchedPreset.preset.projects] },
+                    filter_by,
                     group_table: matchedPreset.preset.group_table,
                     role,
                 });
-                console.log("FUCKED")
+
                 const projectIdData = response2.data;
                 console.log("OUT1121projectIdData:", projectIdData);
 
-                // ✅ Используем рекурсивный обход для сбора всех массивов телефонов
                 const allGroups = extractPhoneGroups(projectIdData);
                 console.log("OUT1121allGroups:", allGroups);
 
-                // ✅ Все телефоны одним списком
                 const flatPhones = allGroups.flat();
-                console.log('OUT1121flatPhones:', flatPhones);
+                console.log("OUT1121flatPhones:", flatPhones);
 
-                const phoneNumber = selectedCall.b_line_num;
                 if (!phoneID) return;
 
-                // ✅ Фильтруем группы, где хотя бы один телефон совпадает
                 const matchedGroups = allGroups.filter(group =>
                     group.some(item => item.id === phoneID)
                 );
@@ -706,7 +1167,8 @@ const MainApp: React.FC = () => {
                         new Set(matchedGroups.flat().map(item => item.id))
                     );
                     console.log("OUTmatchedGroup:", matchedGroupIDs);
-                    const openedPhones = matchedGroups.flat()
+
+                    const openedPhones = matchedGroups.flat();
                     console.log("OUTopenedPhones:", openedPhones);
 
                     const groupIDs = allGroups.map(group => group.map(item => item.id));
@@ -716,20 +1178,18 @@ const MainApp: React.FC = () => {
                     setOpenedGroup(matchedGroupIDs);
                     setOpenedPhones(openedPhones);
 
-                    momoProjectRepo.current=true
-
+                    momoProjectRepo.current = true;
                 } else {
                     console.log("Номер не найден → tuskMode OFF");
                     setShowTasksDashboard(false);
                 }
-
             } catch (err) {
-                console.error('Ошибка при проверке пресетов:', err);
+                console.error("Ошибка при проверке пресетов:", err);
             }
         };
 
         fetchPresetsAndCheckPhone();
-    }, [selectedCall, phoneID, selectedPreset, presets, projectPool, worker, projectPoolForCall]);
+    }, [selectedCall, phoneID, presets, projectPool, worker, projectPoolForCall, role]);
 
     useEffect(() => {
         const handleFsStatus = (msg: any) => {
@@ -766,6 +1226,7 @@ const MainApp: React.FC = () => {
         dispatch(setRoomId(roomId));
     }, [dispatch, roomId]);
 
+    useEffect(() => console.log("outActivePhone: ",outActivePhone),[outActivePhone])
     useEffect(() => {
         if (!(activeCalls[0] && Object.keys(activeCalls[0]).length > 0)) return
         const first = activeCalls[0]
@@ -872,8 +1333,10 @@ const MainApp: React.FC = () => {
                 groupProjects={groupProjects}
                 setManagerPanel={setManagerPanel}
                 managerPanel={managerPanel}
-                setPhoneID={setPhoneID}
-                phoneID={phoneID}
+                // setPhoneID={setPhoneID}
+                // phoneID={phoneID}
+                outActivePhoneData={outActivePhoneData}
+                setOutActivePhoneData={setOutActivePhoneData}
             />
 
             {managerPanel ? (
@@ -911,11 +1374,68 @@ const MainApp: React.FC = () => {
                                 gap: 16,
                             }}
                         >
-                            {/* ScriptPanel */}
+                            {openedPhones.length > 0 && activeGuid &&
                             <div
                                 style={{
                                     order: fullWidthCard ? 2 : 1,
-                                    flex: fullWidthCard ? '0 0 100%' : '0 0 48%',
+                                    flex: '0 0 48%',
+                                    marginLeft: 25
+                                }}
+                            >
+                                {guidsFromOpened && guidsFromOpened.length > 0 && (
+                                    <div className="pb-2">
+                                        <ul className={styles.chatTabs}>
+                                            {guidsFromOpened.map(g => {
+                                                const unread = unreadByGuid[g] ?? 0;
+                                                const isActive = activeGuid === g;
+
+                                                return (
+                                                    <li key={g} className={styles.chatTabsItem}>
+                                                        <button
+                                                            type="button"
+                                                            className={`${styles.chatTabsBtn} ${isActive ? styles.isActive : ""} ${unread ? styles.hasUnread : ""}`}
+                                                            onClick={() => setActiveGuid(g)}
+                                                            title={labelForGuid(g)}
+                                                            aria-label={`${labelForGuid(g)}${unread ? `, непрочитанных: ${unread}` : ""}`}
+                                                        >
+                                                            <span className={styles.chatTabsLabel}>{labelForGuid(g)}</span>
+                                                            {unread > 0 && <span className={styles.chatTabsBadge}>{unread}</span>}
+                                                        </button>
+                                                    </li>
+                                                );
+                                            })}
+                                        </ul>
+                                    </div>
+                                )}
+                                <ContactFilesPanel
+                                    contacts={openedPhones}
+                                    serverFilesByGuid={serverFilesByGuid}
+                                />
+
+                                <LocalChat
+                                    guid={activeGuid}
+                                    selfLogin={viewer.login}
+                                    selfName={viewer.name}
+                                    selfRole={viewer.role}
+                                    collapsed={collapsed.value}
+                                    onToggle={collapsed.toggle}
+                                    messages={messages}
+                                    height={collapsed.value ? "52px" : "clamp(420px, 65vh, 820px)"}
+                                    onSend={handleSend}
+                                    operatorDict={operatorDict}
+                                    formatOperatorFn={formatOperator}
+                                    title={`Чат · ${activeGuid ?? ""}`}
+                                    subtitle={labelForGuid(activeGuid)}
+                                    readMap={readMap}
+                                />
+
+                            </div>
+                            }
+                            {/* ScriptPanel */}
+                            <div
+                                style={{
+                                    order: openedPhones.length > 0 && activeGuid ? fullWidthCard ? 2 : 3 : fullWidthCard ? 2 : 1,
+                                    flex: openedPhones.length > 0 && activeGuid ? fullWidthCard ? '0 0 48%': '0 0 98%' : fullWidthCard ? '0 0 100%' : '0 0 48%' ,
                                 }}
                             >
                                 {!postActive && !activeCall && openedPhones.length > 0 && (
@@ -959,7 +1479,7 @@ const MainApp: React.FC = () => {
                             <div
                                 style={{
                                     order: fullWidthCard ? 1 : 2,
-                                    flex: fullWidthCard ? '0 0 100%' : '0 0 50%',
+                                    flex: fullWidthCard ? '0 0 100%' : '0 0 48%',
                                 }}
                             >
                                 {(openedPhones.length > 0 || activeCall || postActive) && (

@@ -1,8 +1,9 @@
-/* ======= файлы контактов по storage (жёсткая привязка к GUID контакта) + удаление ======= */
+// src/features/itsm/chat/FieldsPanel.tsx
+/* ======= общий список файлов по GUID’ам контактов (сворачиваемый список) ======= */
 
 import Swal from "sweetalert2";
-import {chatApi} from "./api";
-import {useEffect, useState} from "react";
+import { chatApi } from "./api";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const DOWNLOAD_HOST_CC = "https://my.glagol.ai";
 const SOCKET_HOST_CC = "wwstest.glagol.ai/chat";
@@ -16,14 +17,14 @@ function buildContactDownloadUrl(hostOnly: string, guid: string, filename: strin
 
 function fileEmojiByExt(name: string) {
     const ext = (name.split(".").pop() || "").toLowerCase();
-    if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext)) return "🖼️";
+    if (["png","jpg","jpeg","gif","webp","bmp","svg"].includes(ext)) return "🖼️";
     if (["pdf"].includes(ext)) return "📄";
-    if (["doc", "docx", "odt", "rtf"].includes(ext)) return "📝";
-    if (["xls", "xlsx", "ods", "csv"].includes(ext)) return "📊";
-    if (["ppt", "pptx", "odp"].includes(ext)) return "📈";
-    if (["zip", "rar", "7z", "gz", "tar"].includes(ext)) return "🗜️";
-    if (["mp3", "wav", "ogg", "m4a"].includes(ext)) return "🎵";
-    if (["mp4", "mov", "avi", "mkv", "webm"].includes(ext)) return "🎞️";
+    if (["doc","docx","odt","rtf"].includes(ext)) return "📝";
+    if (["xls","xlsx","ods","csv"].includes(ext)) return "📊";
+    if (["ppt","pptx","odp"].includes(ext)) return "📈";
+    if (["zip","rar","7z","gz","tar"].includes(ext)) return "🗜️";
+    if (["mp3","wav","ogg","m4a"].includes(ext)) return "🎵";
+    if (["mp4","mov","avi","mkv","webm"].includes(ext)) return "🎞️";
     return "📎";
 }
 
@@ -46,21 +47,74 @@ function normalizeStorage(storage: any): string[] {
         .filter((s: string) => !!s);
 }
 
-type PanelItem = { c: any; guid: string; files: string[] };
+type FlatFile = { guid: string; fname: string };
 
-export function ContactFilesPanel({ contacts }: { contacts: any[] }) {
-    // локальное состояние — чтобы мы могли оптимистично убирать файлы
-    const [rows, setRows] = useState<PanelItem[]>([]);
+export function ContactFilesPanel({
+                                      contacts,
+                                      serverFilesByGuid,
+                                  }: {
+    contacts: any[];
+    /** опциональный override: актуальные файлы по GUID из бэка, не трогает openedPhones */
+    serverFilesByGuid?: Record<string, string[]>;
+}) {
+    // плоский список всех файлов
+    const [filesFlat, setFilesFlat] = useState<FlatFile[]>([]);
     // ключи “guid::filename”, по которым крутится спиннер удаления
     const [busy, setBusy] = useState<Set<string>>(new Set());
 
-    // синхронизация при изменении входных contacts
+    // 🔽 состояние аккордеона (по умолчанию свернуто)
+    const [isOpen, setIsOpen] = useState(false);
+    const contentRef = useRef<HTMLDivElement | null>(null);
+
+    // пересобираем плоский список при изменениях
     useEffect(() => {
-        const items = contacts
-            .map((c) => ({ c, guid: getContactGuid(c), files: normalizeStorage(c?.storage) }))
-            .filter((x) => !!x.guid && x.files.length > 0) as PanelItem[];
-        setRows(items);
-    }, [contacts]);
+        const out: FlatFile[] = [];
+        const seen = new Set<string>();
+
+        for (const c of contacts ?? []) {
+            const guid = getContactGuid(c);
+            if (!guid) continue;
+
+            const override = serverFilesByGuid?.[guid];
+            const files = (override && override.length) ? override : normalizeStorage(c?.storage);
+            if (!files?.length) continue;
+
+            for (const fname of files) {
+                const key = `${guid}::${fname}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                out.push({ guid: String(guid), fname: String(fname) });
+            }
+        }
+
+        // можно отсортировать по имени (по желанию)
+        // out.sort((a, b) => a.fname.localeCompare(b.fname, undefined, { sensitivity: "base" }));
+
+        setFilesFlat(out);
+    }, [contacts, serverFilesByGuid]);
+
+    // плавная анимация высоты
+    useEffect(() => {
+        const el = contentRef.current;
+        if (!el) return;
+        if (isOpen) {
+            // сначала ставим реальную высоту, затем после перехода сбрасываем на 'auto'
+            el.style.maxHeight = el.scrollHeight + "px";
+            const onEnd = () => {
+                el.style.maxHeight = "9999px"; // фактически как auto, чтобы не «обрезать» при динамике
+                el.removeEventListener("transitionend", onEnd);
+            };
+            el.addEventListener("transitionend", onEnd);
+        } else {
+            // для сворачивания: выставляем текущую высоту, а в следующем тике — 0
+            const h = el.scrollHeight;
+            el.style.maxHeight = h + "px";
+            // следующий кадр
+            requestAnimationFrame(() => {
+                el.style.maxHeight = "0px";
+            });
+        }
+    }, [isOpen, filesFlat.length]);
 
     async function handleDelete(guid: string, fname: string) {
         const key = `${guid}::${fname}`;
@@ -82,15 +136,7 @@ export function ContactFilesPanel({ contacts }: { contacts: any[] }) {
         setBusy((prev) => new Set(prev).add(key));
 
         // оптимистично убираем из UI сразу
-        setRows((prev) =>
-            prev
-                .map((row) =>
-                    row.guid === guid
-                        ? { ...row, files: row.files.filter((f) => f !== fname) }
-                        : row
-                )
-                .filter((row) => row.files.length > 0)
-        );
+        setFilesFlat((prev) => prev.filter((f) => !(f.guid === guid && f.fname === fname)));
 
         try {
             // 1) удалить из storage задач (таблица)
@@ -103,7 +149,6 @@ export function ContactFilesPanel({ contacts }: { contacts: any[] }) {
                 data: { guid, storage: [fname] },
             });
 
-            // успех
             await Swal.fire({
                 icon: "success",
                 title: "Готово",
@@ -113,13 +158,9 @@ export function ContactFilesPanel({ contacts }: { contacts: any[] }) {
             });
         } catch (e: any) {
             // вернуть файл обратно при ошибке
-            setRows((prev) => {
-                const copy = [...prev];
-                const idx = copy.findIndex((r) => r.guid === guid);
-                if (idx >= 0 && !copy[idx].files.includes(fname)) {
-                    copy[idx] = { ...copy[idx], files: [...copy[idx].files, fname] };
-                }
-                return copy;
+            setFilesFlat((prev) => {
+                const exists = prev.some((f) => f.guid === guid && f.fname === fname);
+                return exists ? prev : [...prev, { guid, fname }];
             });
 
             console.error("delete file failed", e);
@@ -140,117 +181,146 @@ export function ContactFilesPanel({ contacts }: { contacts: any[] }) {
         }
     }
 
-    if (!rows.length) return null;
+    if (!filesFlat.length) {
+        // показываем только заголовок с нулём и выключенной стрелкой
+        return (
+            <div>
+                <div className="d-flex align-items-center gap-2 mb-3">
+                    <h5 className="mb-0">Файлы</h5>
+                    <span>({filesFlat.length})</span>
+                    <button
+                        type="button"
+                        className="btn btn-link btn-sm p-0 ms-1"
+                        style={{ opacity: 0.4, cursor: "not-allowed" }}
+                        aria-disabled
+                        aria-label="Нет файлов"
+                    >
+                        {/* стрелка вниз (неактивная) */}
+                        <svg width="18" height="18" viewBox="0 0 20 20" style={{ transform: "rotate(0deg)" }}>
+                            <path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="2" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     return (
-        <div className="p-3">
-            <h5 className="mb-3">Файлы, прикреплённые к контактам</h5>
+        <div>
+            {/* Заголовок и переключатель */}
+            <div className="d-flex align-items-center gap-2 mb-2">
+                <h5 className="mb-0">Файлы</h5>
+                <span>({filesFlat.length})</span>
 
-            {rows.map(({ c, guid, files }, i) => {
-                const titleParts = [
-                    c?.name || c?.contact_info?.name,
-                    c?.phone || c?.contact_info?.phone || c?.msisdn || c?.phone_number,
-                    c?.project || c?.contact_info?.project,
-                ].filter(Boolean);
-                const contactTitle = titleParts.join(" · ") || `Контакт #${c?.id ?? i + 1}`;
+                <button
+                    type="button"
+                    onClick={() => setIsOpen((v) => !v)}
+                    className="btn btn-link btn-sm p-0 ms-1"
+                    aria-expanded={isOpen}
+                    aria-controls="files-collapse"
+                    title={isOpen ? "Свернуть" : "Развернуть"}
+                    style={{ display: "inline-flex", alignItems: "center" }}
+                >
+                    {/* стрелка; при открытии поворачиваем на 180° */}
+                    <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 20 20"
+                        style={{
+                            transition: "transform 180ms ease",
+                            transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
+                        }}
+                    >
+                        <path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="2" />
+                    </svg>
+                </button>
+            </div>
 
-                return (
-                    <div key={`${guid}-${i}`} className="mb-3 border rounded">
-                        <div className="px-3 py-2 border-bottom bg-light">
-                            <b className="me-2">{contactTitle}</b>
-                            <span className="text-muted small">GUID: {String(guid).slice(0, 8)}…</span>
-                        </div>
+            {/* Контент с плавной анимацией высоты */}
+            <div
+                id="files-collapse"
+                ref={contentRef}
+                style={{
+                    overflow: "hidden",
+                    maxHeight: isOpen ? "9999px" : "0px", // будет сразу скорректирован эффектом
+                    transition: "max-height 220ms ease",
+                }}
+            >
+                <div
+                    style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+                        gap: 12,
+                        paddingTop: 6,
+                    }}
+                >
+                    {filesFlat.map(({ guid, fname }) => {
+                        const href = buildContactDownloadUrl(SOCKET_HOST_CC, String(guid), fname);
+                        const emoji = fileEmojiByExt(fname);
+                        const key = `${guid}::${fname}`;
+                        const isBusy = busy.has(key);
 
-                        <div className="p-2">
-                            <div className="d-flex flex-wrap gap-2">
-                                {files.map((fname) => {
-                                    const href = buildContactDownloadUrl(SOCKET_HOST_CC, String(guid), fname);
-                                    const emoji = fileEmojiByExt(fname);
-                                    const key = `${guid}::${fname}`;
-                                    const isBusy = busy.has(key);
+                        return (
+                            <div
+                                key={key}
+                                className="border rounded-3 bg-white"
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 10,
+                                    padding: "10px 12px",
+                                    boxShadow: "0 1px 2px rgba(15,23,42,.06)",
+                                }}
+                            >
+                                <div style={{ fontSize: 22, lineHeight: 1 }}>{emoji}</div>
 
-                                    return (
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                    <a
+                                        href={href}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        download={fname}
+                                        className="stretched-link text-decoration-none"
+                                        style={{ color: "inherit" }}
+                                        title={fname}
+                                    >
                                         <div
-                                            key={key}
-                                            className="text-decoration-none"
-                                            title={fname}
                                             style={{
-                                                display: "inline-flex",
-                                                alignItems: "center",
-                                                gap: 8,
-                                                padding: "8px 10px",
-                                                border: "1px solid var(--bs-border-color, #dee2e6)",
-                                                borderRadius: 10,
-                                                maxWidth: 420,
-                                                whiteSpace: "nowrap",
                                                 overflow: "hidden",
                                                 textOverflow: "ellipsis",
-                                                background: "white",
+                                                whiteSpace: "nowrap",
+                                                fontWeight: 600,
                                             }}
                                         >
-                                            <a
-                                                href={href}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                download={fname}
-                                                style={{
-                                                    display: "inline-flex",
-                                                    alignItems: "center",
-                                                    gap: 8,
-                                                    textDecoration: "none",
-                                                    color: "inherit",
-                                                    overflow: "hidden",
-                                                }}
-                                            >
-                                                <span style={{ fontSize: 18, lineHeight: 1 }}>{emoji}</span>
-                                                <span
-                                                    style={{
-                                                        overflow: "hidden",
-                                                        textOverflow: "ellipsis",
-                                                        maxWidth: 300,
-                                                    }}
-                                                >
-                                                  {fname}
-                                                </span>
-                                            </a>
-
-                                            <button
-                                                type="button"
-                                                className="btn btn-sm btn-outline-danger"
-                                                aria-label="Удалить файл"
-                                                title="Удалить файл"
-                                                onClick={(e) => {
-                                                    e.preventDefault();
-                                                    e.stopPropagation();
-                                                    if (!isBusy) void handleDelete(String(guid), fname);
-                                                }}
-                                                disabled={isBusy}
-                                                style={{ padding: "2px 6px" }}
-                                            >
-                                                {isBusy ? (
-                                                    // мини-спиннер
-                                                    <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
-                                                ) : (
-                                                    <span
-                                                        style={{
-                                                            fontWeight: 700,
-                                                            fontSize: 16,
-                                                            lineHeight: 1,
-                                                            display: "inline-block",
-                                                        }}
-                                                    >
-                                                        ×
-                                                    </span>
-                                                )}
-                                            </button>
+                                            {fname}
                                         </div>
-                                    );
-                                })}
+                                    </a>
+                                    <div className="text-muted" style={{ fontSize: 12 }}>Скачать</div>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    className="btn btn-sm btn-outline-danger"
+                                    aria-label="Удалить файл"
+                                    title="Удалить файл"
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        if (!isBusy) void handleDelete(String(guid), fname);
+                                    }}
+                                    disabled={isBusy}
+                                >
+                                    {isBusy ? (
+                                        <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
+                                    ) : (
+                                        "Удалить"
+                                    )}
+                                </button>
                             </div>
-                        </div>
-                    </div>
-                );
-            })}
+                        );
+                    })}
+                </div>
+            </div>
         </div>
     );
 }

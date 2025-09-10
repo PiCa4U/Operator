@@ -13,6 +13,8 @@ import GroupActionModal from "../taskDashboard/components";
 import {OptionType, Preset} from "../taskDashboard";
 import stylesButton from './index.module.css';
 import axios from "axios";
+import { ContactFilesPanel } from '../../features/itsm/chat/FieldsPanel';
+import { chatApi } from '../../features/itsm/chat/api';
 
 
 // Типы (упрощённые — оставьте свои)
@@ -71,6 +73,7 @@ export interface FieldDefinition {
     editable: boolean;
     must_have: boolean;
     project_name: string;
+    tab?: string | number; // TABS: вкладка
     [key: string]: any;
 }
 
@@ -164,27 +167,21 @@ export interface ActiveCall {
 }
 
 interface MergedField {
-    /** внутренний ключ = name|type|opts|group */
     id: string;
-
     editable: boolean;
-    /** то, что покажем в заголовке поля */
     label: string;
-    /** select | regular | multiselect и т.п. */
     type: string;
-    /** исходные опции для select’а, если есть */
     values: string | null;
-    /** в каких проектах это поле встречается */
     projects: string[];
-    /** для каждого проекта — его родной field_id */
     fieldIds: Record<string, string>;
-    /** (опционально) spatial-group, если она есть у FieldDefinition */
     spatialGroup?: string;
-    /** (опционально) позиция в сетке, если нужно */
     position?: number;
-    group_id?: number | null ;
+    group_id?: number | null;
     group_position?: number | null;
     width: number | null;
+
+    // TABS: на какой вкладке находится это поле в каждом проекте
+    tabsByProject: Record<string, string | null>;
 }
 
 type GroupFieldValues = Record<
@@ -241,6 +238,7 @@ interface CallControlPanelProps {
     setSelectedCall: (call: CallData | null) => void
     isChating?: boolean
     isClient?: boolean
+    checkBox?: string | null
 }
 
 type PhoneGroup = {
@@ -255,6 +253,53 @@ const container = document.getElementById('root');
 if (!container) throw new Error('Root container not found');
 const rawFsServer = (container.dataset as any).fsServer;
 const fsServer = rawFsServer || 'wwstest.glagol.ai';
+
+const TAB_ALL = '__all__';
+const TAB_ALL_LABEL = 'Главная';
+
+const TAB_FILES = '__files__';
+const TAB_FILES_LABEL = 'Файлы';
+
+function getContactGuid(c: any): string | null {
+    return (
+        (c?.guid && String(c.guid)) ||
+        (c?.contact_info?.guid && String(c.contact_info.guid)) ||
+        (c?.b_uuid && String(c.b_uuid)) ||
+        (c?.uuid && String(c.uuid)) ||
+        null
+    );
+}
+function normalizeStorage(storage: any): string[] {
+    if (!Array.isArray(storage)) return [];
+    return storage
+        .map((it) => (typeof it === "string" ? it : it?.name ?? it?.filename ?? ""))
+        .filter((s: string) => !!s);
+}
+function extractFilesFromContacts(arr: any[]): string[] {
+    const all: string[] = [];
+    for (const c of arr ?? []) {
+        const storage = normalizeStorage(c?.storage);
+        for (const s of storage) if (s) all.push(s);
+    }
+    return Array.from(new Set(all));
+}
+
+const toTabKey = (v: any): string | null => {
+    if (v === undefined || v === null) return null;
+    const s = String(v).trim();
+    return s === '' ? null : s;
+};
+
+const sortTabKeys = (a: string, b: string) => {
+    const an = Number(a);
+    const bn = Number(b);
+    const aIsNum = !Number.isNaN(an);
+    const bIsNum = !Number.isNaN(bn);
+    if (aIsNum && bIsNum) return an - bn;
+    if (aIsNum) return -1;
+    if (bIsNum) return 1;
+    return a.localeCompare(b, 'ru');
+};
 
 const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                specialKey,
@@ -296,7 +341,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                setPhoneID,
                                                                setSelectedCall,
                                                                isChating,
-                                                               isClient
+                                                               isClient,
+                                                               checkBox= null
                                                            }) => {
     // Из cookies
     const { sessionKey } = store.getState().operator
@@ -330,6 +376,61 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [isParams, setIsParams] = useState<boolean>(true)
     const [groupSelectedIds, setGroupSelectedIds] = useState<number[]>([]);
     const swalRef = useRef<any>(null);
+    const [activeTab, setActiveTab] = useState<string>(TAB_ALL);
+    const [serverFilesByGuid, setServerFilesByGuid] = useState<Record<string, string[]>>({});
+
+    const guidsFromOpened = useMemo(
+        () =>
+            Array.from(
+                new Set(
+                    (openedPhones ?? [])
+                        .map((c: any) => getContactGuid(c))
+                        .filter(Boolean)
+                        .map(String)
+                )
+            ),
+        [openedPhones]
+    );
+    async function refreshContactFilesByGuid(g: string) {
+        if (!g) return;
+        try {
+            const { data: resp } = await chatApi.get(`/api/v1/contacts/${encodeURIComponent(g)}`);
+            const contacts = Array.isArray(resp?.data) ? resp.data : [];
+            const files = extractFilesFromContacts(contacts);
+            setServerFilesByGuid(prev => ({ ...prev, [g]: files }));
+        } catch (e) {
+            console.warn("refreshContactFilesByGuid failed", e);
+        }
+    }
+    async function refreshAllOpenedFiles() {
+        if (!guidsFromOpened.length) return;
+        const promises = guidsFromOpened.map(g => refreshContactFilesByGuid(g));
+        await Promise.allSettled(promises);
+    }
+    useEffect(() => {
+        if (activeTab === TAB_FILES) {
+            void refreshAllOpenedFiles();
+        }
+    }, [activeTab, guidsFromOpened]);
+
+// 2) Лёгкий поллинг, пока открыта вкладка "Файлы" (например, раз в 60с)
+    useEffect(() => {
+        if (activeTab !== TAB_FILES) return;
+        const id = window.setInterval(() => void refreshAllOpenedFiles(), 60000);
+        return () => window.clearInterval(id);
+    }, [activeTab, guidsFromOpened]);
+
+// 3) Глобальное событие — чтобы чат (или любой другой компонент) мог пингануть обновление
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const ce = e as CustomEvent<{ guid?: string }>;
+            const g = ce?.detail?.guid;
+            if (g) void refreshContactFilesByGuid(g);
+            else void refreshAllOpenedFiles();
+        };
+        window.addEventListener('contact-files:refresh', handler as EventListener);
+        return () => window.removeEventListener('contact-files:refresh', handler as EventListener);
+    }, [guidsFromOpened]);
 
     // const [selectedPhoneByField, setSelectedPhoneByField] = useState<
     //     Record<string, { phone: string; project: string }>
@@ -550,13 +651,16 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             Object.entries(data.as_is_dict).forEach(([projName, fields]) => {
                 if ((selectedProjects.length && !selectedProjects.includes(projName)) || !selectedProjects.length) return;
                 fields.forEach(f => {
-
                     const key = [
                         f.field_name,
                         f.field_type,
                         f.field_vals || "",
                         (f as any).spatial_group || "",
                     ].join("|");
+
+                    // TABS:
+                    const tabKey = toTabKey((f as any).tab);
+
                     if (!map.has(key)) {
                         map.set(key, {
                             id: key,
@@ -569,7 +673,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             spatialGroup: (f as any).spatial_group,
                             group_position: f.group_position || null,
                             group_id: f.group_id || null,
-                            width: f.width
+                            width: f.width ?? 12,
+                            // TABS:
+                            tabsByProject: { [projName]: tabKey },
                         });
                     } else {
                         const e = map.get(key)!;
@@ -577,6 +683,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             e.projects.push(projName);
                             e.fieldIds[projName] = f.field_id;
                         }
+                        // TABS: обновляем вкладку для этого проекта
+                        e.tabsByProject[projName] = tabKey;
                     }
                 });
             });
@@ -1153,8 +1261,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             );
         }
     }, [monoModules, modules]);
+    const hasFiles = useMemo(() => {
+        const contactsHas = Array.isArray(openedPhones) && openedPhones.some(c => Array.isArray(c?.storage) && c.storage.length > 0);
+        return contactsHas;
+    }, [ openedPhones]);
 
-    useEffect(() => console.log("startModules: ", startModules),[startModules])
 // ручные модули — всё, что не стартовое
     const manualModules = useMemo<ModuleData[]>(() => {
         if (monoModules && Object.keys(monoModules).length) {
@@ -2428,11 +2539,67 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         setValues(nextValues);
     }, [openedPhones, contactInfoOptions, selectedProjects]);
 
-    const commonFields = mergedFields.filter(f => f.projects.length > 1);
+    // const commonFields = mergedFields.filter(f => f.projects.length > 1);
+    // const uniqueFieldsByProject: Record<string, MergedField[]> = {};
+    // selectedProjects.forEach(proj => {
+    //     uniqueFieldsByProject[proj] =
+    //         mergedFields.filter(f => f.projects.length === 1 && f.projects[0] === proj);
+    // });
+// TABS: какие вкладки есть для выбранных проектов
+    const availableTabs = useMemo(() => {
+        const set = new Set<string>();
+        for (const f of mergedFields) {
+            for (const proj of f.projects) {
+                if (!selectedProjects.includes(proj)) continue;
+                const tk = f.tabsByProject?.[proj];
+                if (tk != null && String(tk).trim() !== '') set.add(String(tk));
+            }
+        }
+        const arr = Array.from(set).sort(sortTabKeys);
+        if (hasFiles) arr.push(TAB_FILES);
+        return arr;
+    }, [mergedFields, selectedProjects, hasFiles]);
+
+// TABS: если текущая вкладка пропала, возвращаемся на Главную
+    useEffect(() => {
+        if (activeTab !== TAB_ALL && !availableTabs.includes(activeTab)) {
+            setActiveTab(TAB_ALL);
+        }
+    }, [availableTabs, activeTab]);
+    const tabsToRender = useMemo(() => {
+        // «Главная» показывается только если есть хотя бы одна другая вкладка
+        return availableTabs.length ? [TAB_ALL, ...availableTabs] : [];
+    }, [availableTabs]);
+    const tabLabel = (key: string) => key === TAB_ALL ? TAB_ALL_LABEL : key === TAB_FILES ? TAB_FILES_LABEL : key;
+
+// TABS: проверка, входит ли поле в активную вкладку (учитывая проект)
+    const fieldInActiveTab = (f: MergedField, proj?: string) => {
+        if (activeTab === TAB_FILES) return false;
+        if (activeTab === TAB_ALL) return true;
+        if (proj) {
+            const tk = f.tabsByProject?.[proj] ?? null;
+            return tk != null && String(tk) === activeTab;
+        }
+        return f.projects.some(p =>
+            selectedProjects.includes(p) &&
+            f.tabsByProject?.[p] != null &&
+            String(f.tabsByProject[p]!) === activeTab
+        );
+    };
+
+// TABS: отфильтрованный список полей
+    const filteredMergedFields = useMemo(() => {
+        if (activeTab === TAB_ALL) return mergedFields;
+        return mergedFields.filter(f => fieldInActiveTab(f));
+    }, [mergedFields, activeTab]);
+
+// ⬇️ И САМЫЕ ВАЖНЫЕ заменители старых вычислений:
+    const commonFields = filteredMergedFields.filter(f => f.projects.length > 1);
+
     const uniqueFieldsByProject: Record<string, MergedField[]> = {};
     selectedProjects.forEach(proj => {
-        uniqueFieldsByProject[proj] =
-            mergedFields.filter(f => f.projects.length === 1 && f.projects[0] === proj);
+        uniqueFieldsByProject[proj] = filteredMergedFields
+            .filter(f => f.projects.length === 1 && f.projects[0] === proj && fieldInActiveTab(f, proj));
     });
 
     const shouldShowMeta = tuskMode
@@ -2547,6 +2714,39 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                             );
                                         })}
                                 </div>
+                                    {/* TABS: панель вкладок */}
+                                    {tabsToRender.length > 0 && (
+                                        <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                                            {tabsToRender.map(tabKey => {
+                                                const selected = activeTab === tabKey;
+                                                return (
+                                                    <button
+                                                        key={tabKey}
+                                                        onClick={() => setActiveTab(tabKey)}
+                                                        className={`${stylesButton.projectButton} ${selected ? stylesButton.active : ''}`}
+                                                        style={{
+                                                            color: selected ? '#fff' : '#4b5563',
+                                                            background: selected ? '#4b5563' : 'transparent',
+                                                            borderColor: '#4b5563',
+                                                            borderRadius: '0.75rem',
+                                                        }}
+                                                        title={tabKey === TAB_ALL ? 'Показать все поля' : `Показать поля вкладки ${tabLabel(tabKey)}`}
+                                                    >
+                                                        {tabLabel(tabKey)}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                    {activeTab === TAB_FILES && (
+                                        <div style={{ marginTop: 8, marginBottom: 12 }}>
+                                            <ContactFilesPanel
+                                                contacts={(openedPhones || [])}
+                                                serverFilesByGuid={serverFilesByGuid}
+                                                alwaysOpen
+                                            />
+                                        </div>
+                                    )}
                                     {commonFields.length > 0 && (
                                         <div style={{ marginTop: 8, marginBottom: 8 }}>
                                             <div style={{ border: `2px solid black`, borderRadius: 4, padding: 8 }}>
@@ -2657,13 +2857,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                 .map((group: any) => ({
                                                     group,
                                                     fields: fields
-                                                        .filter(f => f.group_id === group.id)
+                                                        .filter(f => f.group_id === group.id && fieldInActiveTab(f, proj))
                                                         .sort((a, b) => (a.group_position ?? 0) - (b.group_position ?? 0)),
                                                 }))
                                                 .filter((gf: any) => gf.fields.length > 0);
 
                                             const orphanFields = fields.filter(
-                                                f => f.group_id == null || !validGroupIds.has(f.group_id)
+                                                f => (f.group_id == null || !validGroupIds.has(f.group_id)) && fieldInActiveTab(f, proj)
                                             );
 
                                             return (
@@ -3002,7 +3202,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 </button>
                             )}
                         </div>
-                        {(tuskMode && !isChating) &&
+                        {(tuskMode && !isChating && !checkBox) &&
                             <div className="d-flex justify-end mb-3">
                                 <label style={{ cursor: 'pointer', fontWeight: 500, display: "flex", gap: 8, marginTop: 8}}>
                                     <input

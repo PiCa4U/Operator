@@ -1,5 +1,3 @@
-// src/api/integrations.ts
-
 import axios from "axios";
 
 export type LogFilters = {
@@ -23,35 +21,30 @@ export type LogItem = {
     integration_return?: Record<string, any>;
 };
 
-export type LogsResponse =
-    | { items: LogItem[]; total?: number }
-    | string;
+export type LogsResponse = { items: LogItem[]; total?: number } | string;
 
-// --- helper: "YYYY-MM-DD HH:mm:ss" (UTC) -> ISO с Z
+// --- helpers from DOM data-attrs
 function getDataAttr(name: string): string | undefined {
     const root = document.getElementById("root");
     if (!root) return undefined;
     return (root as HTMLElement).dataset[name] ?? undefined;
 }
 
-/** ✅ Добавит https:// если забыли */
+/** Добавит https:// если забыли */
 function normalizeBase(u?: string): string | undefined {
     if (!u) return undefined;
     return /^https?:\/\//i.test(u) ? u : `https://${u}`;
 }
 
-/** ✅ Склеивает с учётом подпути (/code) */
+/** Склеивает с учётом подпути (/code) */
 function buildUrl(base: string, path: string): string {
     const b = base.endsWith("/") ? base : base + "/";
     const p = path.replace(/^\//, "");
     return new URL(p, b).toString();
 }
 
-// пример
-const chatServer = getDataAttr("chatServer");   // из data-chat-server
-const codeBase =
-    normalizeBase(getDataAttr("codeServer")) || "https://wwstest.glagol.ai/code";
-
+const chatServer = getDataAttr("chatServer");
+const codeBase = normalizeBase(getDataAttr("codeServer")) || "https://wwstest.glagol.ai/code";
 
 function buildOperatorList(values?: string[]) {
     if (!values || values.length === 0) return undefined;
@@ -75,6 +68,14 @@ export async function getIntegrationLogByKey(key: string): Promise<string> {
 }
 
 export async function getIntegrationLogs(filters: LogFilters): Promise<LogsResponse> {
+    // добавляем .py к имени модуля для бэка
+    const withPy = (name?: string) => {
+        if (!name) return undefined;
+        const v = name.trim();
+        if (!v) return undefined;
+        return /\.py$/i.test(v) ? v : `${v}.py`;
+    };
+
     // собираем kwargs
     const kwargs: Record<string, any> = {};
     if (filters.kwargs) {
@@ -95,19 +96,17 @@ export async function getIntegrationLogs(filters: LogFilters): Promise<LogsRespo
     const payload: Record<string, any> = {
         login: "fs.at.akc24.ru",
         directory: "main",
-        // error: true,
-        // return_errors: true,
     };
 
     if (filters.project)  payload.project  = filters.project;
-    if (filters.filename) payload.filename = filters.filename;
-    // if (filters.limit != null)  payload.logs_number = filters.limit;
+    // ВАЖНО: уходим на бэк строго с .py
+    if (filters.filename) payload.filename = withPy(filters.filename);
     if (filters.offset != null) payload.offset      = filters.offset;
     if (filters.dateFrom) payload.logs_timestamp_from = filters.dateFrom;
     if (filters.dateTo)   payload.logs_timestamp_to   = filters.dateTo;
-    if (Object.keys(kwargs).length)             payload.kwargs              = kwargs;
-    if (Object.keys(integration_return).length) payload.integration_return  = integration_return;
-    // integration_log не кладём вовсе, раз он пустой
+    if (Object.keys(kwargs).length)             payload.kwargs             = kwargs;
+    if (Object.keys(integration_return).length) payload.integration_return = integration_return;
+
     const url = buildUrl(codeBase!, "integrations/file/logs");
 
     const resp = await fetch(url, {
@@ -127,7 +126,7 @@ export async function getIntegrationLogs(filters: LogFilters): Promise<LogsRespo
         return text;
     }
 
-    // ожидаемый массив { datetime, integration_key }
+    // ожидаемый массив { datetime, integration_key } или { items: [...] }
     const json = await resp.json();
 
     if (json && typeof json === "object" && Array.isArray(json.items)) {
@@ -162,16 +161,28 @@ export async function getIntegrationLogs(filters: LogFilters): Promise<LogsRespo
     return JSON.stringify(json);
 }
 
-// как было:
 export function trySplitPlainTextIntoItems(raw: string): LogItem[] {
-    const chunks = raw.split(/\n{2,}|^-{3,}\n/m).map(s => s.trim()).filter(Boolean);
+    const chunks = raw.split(/\n{2,}|^-{3,}\n/m).map((s) => s.trim()).filter(Boolean);
     return chunks.map((t, i) => ({ id: String(i + 1), text: t }));
 }
 
+/**
+ * Возвращает массив подробных модулей:
+ * [{ filename: "complete", button_name: "Синхронизировать", kwargs: {...}, return_structure: {...} }, ...]
+ */
 export async function fetchProjectModules(params: {
     glagol_parent: string;
     project_name: string;
-}): Promise<string[]> {
+}): Promise<
+    {
+        id: number;
+        filename: string;
+        python_version?: string;
+        kwargs?: Record<string, any>;
+        return_structure?: Record<string, any>;
+        button_name?: string | null;
+    }[]
+> {
     const { glagol_parent, project_name } = params;
 
     const { data } = await axios.get("/api/v1/modules", {
@@ -179,8 +190,37 @@ export async function fetchProjectModules(params: {
     });
 
     // ожидаемый формат:
-    // { status: "success", modules: ["send_message", ...] }
-    const list = Array.isArray(data?.modules) ? data.modules : [];
-    // на всякий — уберём .py, если вдруг придёт
-    return list.map((m: string) => String(m).replace(/\.py$/i, ""));
+    // { status: "success", modules: { <moduleName>: { button_name?: string, kwargs: {...}, return_structure: {...} }, ... } }
+    const mods = data?.modules && typeof data.modules === "object" ? data.modules : {};
+    const list: {
+        id: number;
+        filename: string;
+        python_version?: string;
+        kwargs?: Record<string, any>;
+        return_structure?: Record<string, any>;
+        button_name?: string | null;
+    }[] = [];
+
+    let i = 1;
+    for (const [name, def] of Object.entries(mods)) {
+        if (!def || typeof def !== "object") continue;
+        const block = def as any;
+
+        const btn =
+            typeof block.button_name === "string" && block.button_name.trim()
+                ? block.button_name.trim()
+                : null;
+
+        list.push({
+            id: i++,
+            filename: String(name), // ЛОГИЧЕСКОЕ ИМЯ МОДУЛЯ
+            python_version: block.python_version,
+            kwargs: block.kwargs || undefined,
+            return_structure: block.return_structure || undefined,
+            button_name: btn,
+        });
+    }
+
+    list.sort((a, b) => (a.button_name || a.filename).localeCompare(b.button_name || b.filename));
+    return list;
 }

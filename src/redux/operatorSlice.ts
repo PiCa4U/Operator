@@ -25,6 +25,7 @@ export interface FieldDefinition {
     editable: boolean;
     must_have: boolean;
     project_name: string;
+    tab?: string | number; // TABS: вкладка
     [key: string]: any;
 }
 

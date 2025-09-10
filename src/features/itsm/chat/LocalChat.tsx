@@ -151,7 +151,7 @@ export default function LocalChat({
                                       operatorDict,
                                       formatOperatorFn,
                                       title,
-                                      subtitle,
+                                      // subtitle,
                                       readMap,
                                   }: {
     guid: string;
@@ -167,7 +167,7 @@ export default function LocalChat({
     operatorDict?: Record<string, string>;
     formatOperatorFn?: (login: string, dict?: Record<string, string>) => string;
     title?: string;
-    subtitle?: string;
+    // subtitle?: string;
     readMap?: ReadMap;
 }) {
     const isControlled = Array.isArray(messages);
@@ -347,7 +347,6 @@ export default function LocalChat({
                                 <ConversationHeader>
                                     <ConversationHeader.Content
                                         userName={title ?? "Чат"}
-                                        info={subtitle ?? `${list.length} сообщений`}
                                     />
                                 </ConversationHeader>
 

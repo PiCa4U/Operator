@@ -253,7 +253,7 @@ const MainApp: React.FC = () => {
 
     const [prefix, setPrefix] = useState<string>('')
     const [get_callcenter, setGet_callcenter] = useState<boolean>(false)
-    const [scriptDir, setScriptDir] = useState<"inbound" | "outbound" >("inbound")
+    const [scriptDir, setScriptDir] = useState<"inbound" | "outbound" >("outbound")
     // const [currentPresetPage, setCurrentPresetPage]         = useState(1);
     const [presets, setPresets] = useState<OptionType[]>([]);
     const [showTasksDashboard, setShowTasksDashboard] = useState<boolean>(() => {
@@ -274,28 +274,28 @@ const MainApp: React.FC = () => {
     const { monitorUsers } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
-    function labelForGuid(g: string): string {
-        const rows = (openedPhones ?? []).filter((it: any) => {
-            const v = it?.guid || it?.contact_info?.guid || it?.b_uuid || it?.uuid;
-            return String(v) === g;
-        });
-
-        if (!rows.length) return `GUID ${g.slice(0, 8)}…`;
-
-        const first = rows[0];
-        const phone = first?.phone || first?.contact_info?.phone || first?.msisdn || first?.phone_number;
-        const name  = first?.name  || first?.contact_info?.name;
-        const projRaw = first?.project || first?.contact_info?.project;
-        const projNice = projectsDict[projRaw] || projRaw; // <- подмена
-
-        if (name && phone && projNice) return `${name} · ${phone} · ${projNice}`;
-        if (name && phone)             return `${name} · ${phone}`;
-        if (phone && projNice)         return `${phone} · ${projNice}`;
-        if (name)                      return `${name}`;
-        if (phone)                     return `${phone}`;
-        if (projNice)                  return `${projNice}`;
-        return `GUID ${g.slice(0, 8)}…`;
-    }
+    // function labelForGuid(g: string): string {
+    //     const rows = (openedPhones ?? []).filter((it: any) => {
+    //         const v = it?.guid || it?.contact_info?.guid || it?.b_uuid || it?.uuid;
+    //         return String(v) === g;
+    //     });
+    //
+    //     if (!rows.length) return `GUID ${g.slice(0, 8)}…`;
+    //
+    //     const first = rows[0];
+    //     const phone = first?.phone || first?.contact_info?.phone || first?.msisdn || first?.phone_number;
+    //     const name  = first?.name  || first?.contact_info?.name;
+    //     const projRaw = first?.project || first?.contact_info?.project;
+    //     const projNice = projectsDict[projRaw] || projRaw; // <- подмена
+    //
+    //     if (name && phone && projNice) return `${name} · ${phone} · ${projNice}`;
+    //     if (name && phone)             return `${name} · ${phone}`;
+    //     if (phone && projNice)         return `${phone} · ${projNice}`;
+    //     if (name)                      return `${name}`;
+    //     if (phone)                     return `${phone}`;
+    //     if (projNice)                  return `${projNice}`;
+    //     return `GUID ${g.slice(0, 8)}…`;
+    // }
 
     useEffect(() => {
         if (!activeGuid) return;
@@ -440,6 +440,7 @@ const MainApp: React.FC = () => {
                 })
             );
             if (activeGuid) void refreshContactFiles(activeGuid);
+
         }
     });
 
@@ -844,6 +845,7 @@ const MainApp: React.FC = () => {
                 const contactWithGuid = matched.find(p => Boolean(p.guid));
                 if (contactWithGuid) {
                     setActiveGuid(contactWithGuid.guid);
+                    setFullWidthCard(false)
                 } else {
                     setActiveGuid("");
                 }
@@ -1270,6 +1272,14 @@ const MainApp: React.FC = () => {
         clearIncoming();
     };
 
+    function shortGuid(g: string, len = 8) {
+        return g.length > len ? `...${g.slice(-len)}` : g;
+    }
+
+    function labelForGuid(g: string) {
+        return shortGuid(g);
+
+    }
 
     return (
         <div className="container-fluid">
@@ -1377,12 +1387,13 @@ const MainApp: React.FC = () => {
                             {openedPhones.length > 0 && activeGuid &&
                             <div
                                 style={{
-                                    order: fullWidthCard ? 2 : 1,
-                                    flex: '0 0 48%',
-                                    marginLeft: 25
+                                    order: 1,
+                                    flex: '0 0 calc(50% - 8px)',
+                                    marginTop: 20,
+                                    minWidth: 0,
                                 }}
                             >
-                                {guidsFromOpened && guidsFromOpened.length > 0 && (
+                                {guidsFromOpened && guidsFromOpened.length > 1 && (
                                     <div className="pb-2">
                                         <ul className={styles.chatTabs}>
                                             {guidsFromOpened.map(g => {
@@ -1407,10 +1418,10 @@ const MainApp: React.FC = () => {
                                         </ul>
                                     </div>
                                 )}
-                                <ContactFilesPanel
-                                    contacts={openedPhones}
-                                    serverFilesByGuid={serverFilesByGuid}
-                                />
+                                {/*<ContactFilesPanel*/}
+                                {/*    contacts={openedPhones}*/}
+                                {/*    serverFilesByGuid={serverFilesByGuid}*/}
+                                {/*/>*/}
 
                                 <LocalChat
                                     guid={activeGuid}
@@ -1425,7 +1436,7 @@ const MainApp: React.FC = () => {
                                     operatorDict={operatorDict}
                                     formatOperatorFn={formatOperator}
                                     title={`Чат · ${activeGuid ?? ""}`}
-                                    subtitle={labelForGuid(activeGuid)}
+                                    // subtitle={labelForGuid(activeGuid)}
                                     readMap={readMap}
                                 />
 
@@ -1434,8 +1445,9 @@ const MainApp: React.FC = () => {
                             {/* ScriptPanel */}
                             <div
                                 style={{
-                                    order: openedPhones.length > 0 && activeGuid ? fullWidthCard ? 2 : 3 : fullWidthCard ? 2 : 1,
-                                    flex: openedPhones.length > 0 && activeGuid ? fullWidthCard ? '0 0 48%': '0 0 98%' : fullWidthCard ? '0 0 100%' : '0 0 48%' ,
+                                    order: openedPhones.length > 0 && activeGuid ? 3 : fullWidthCard ? 2 : 1,
+                                    flex: openedPhones.length > 0 && activeGuid ? '0 0 98%' : fullWidthCard ? '0 0 100%' : '0 0 48%' ,
+                                    minWidth: 0,
                                 }}
                             >
                                 {!postActive && !activeCall && openedPhones.length > 0 && (
@@ -1478,8 +1490,9 @@ const MainApp: React.FC = () => {
 
                             <div
                                 style={{
-                                    order: fullWidthCard ? 1 : 2,
-                                    flex: fullWidthCard ? '0 0 100%' : '0 0 48%',
+                                    order: openedPhones.length > 0 && activeGuid ? 2 : fullWidthCard ? 2 : 1,
+                                    flex: openedPhones.length > 0 && activeGuid ? '0 0 48%' : fullWidthCard ? '0 0 100%' : '0 0 48%' ,
+                                    minWidth: 0,
                                 }}
                             >
                                 {(openedPhones.length > 0 || activeCall || postActive) && (
@@ -1522,13 +1535,14 @@ const MainApp: React.FC = () => {
                                         expressCall={expressCall}
                                         phoneID={phoneID}
                                         setPhoneID={setPhoneID}
+                                        checkBox={activeGuid}
                                     />
                                 )}
                             </div>
                         </div>
                     </>
                 ) : <div className="row my-3">
-                    {/* Левая колонка: Дашборд звонков или панель скриптов */}
+
                     <div className="col-12 col-md-6">
                         {(selectedCall && scriptDir && scriptProject && !postActive && !activeCalls.length) ?
                             <ScriptPanel

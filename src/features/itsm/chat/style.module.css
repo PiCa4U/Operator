@@ -1,43 +1,40 @@
-/*!* ===== панель ввода (оставляем как у тебя) ===== *!*/
-/*.inputRow { display:flex; gap:8px; align-items:flex-end; }*/
-/*.inputGrow { flex:1 1 auto; min-width:0; }*/
-/*.autoTextarea{*/
-/*    width:100%; line-height:1.5; resize:none; overflow:hidden;*/
-/*    max-height:40vh; box-sizing:border-box;*/
-/*    overflow-wrap:anywhere; word-break:break-word;*/
-/*}*/
-
 /* ===== оформление чата ===== */
 .chat :global(.cs-conversation-header){
-    position:sticky; top:0; z-index:5;
-    border-bottom:1px solid #e2e8f0;
+    position: sticky; top: 0; z-index: 5;
+    border-bottom: 1px solid #e2e8f0;
 }
 .chat :global(.cs-message-list){ background:#f8fafc; }
 
-/* --- пузырёк сообщения --- */
-/* ширина по контенту, но не больше 72% контейнера (и не меньше 260px на широких экранах) */
-.chat :global(.cs-message__content){
-    /* только «безопасные» кастомы */
-    max-width:clamp(260px, 72%, 720px);
-    padding:10px 12px;
-    border-radius:16px;
-    line-height:1.4;
-    box-shadow:0 1px 2px rgba(15,23,42,.06), 0 8px 24px rgba(15,23,42,.06);
-
-    /* нормальные переносы и защита от очень длинных слов */
-    word-break:normal;
-    overflow-wrap:anywhere;
+/* ===== ФИКСИРОВАННАЯ ШИРИНА ПУЗЫРЕЙ =====
+   Хочешь 70%? Замени 80% на 70% в двух местах ниже. */
+.chat :global(.cs-message__content-wrapper),
+.chat :global(.cs-message__custom-content){
+    width: min(80%, 820px) !important;     /* фикс ширина */
+    flex: 0 0 min(80%, 820px) !important;  /* фикс flex-basis */
+    max-width: none !important;
+    min-width: 0;
 }
-/* на всякий случай — внутри пузырька тоже */
+
+/* сам пузырёк занимает wrapper полностью */
+.chat :global(.cs-message__content){
+    width: 100% !important;
+    max-width: none !important;
+    padding: 10px 12px;
+    border-radius: 16px;
+    line-height: 1.4;
+    box-shadow: 0 1px 2px rgba(15,23,42,.06), 0 8px 24px rgba(15,23,42,.06);
+    word-break: normal;
+    overflow-wrap: anywhere;
+}
 .chat :global(.cs-message__content *) { overflow-wrap:anywhere; }
 
 /* входящие/исходящие цвета */
 .chat :global(.cs-message--incoming .cs-message__content){
-    background:linear-gradient(0deg,#eaf3ff 0%,#f3f8ff 100%);
+    background: linear-gradient(0deg,#eaf3ff 0%,#f3f8ff 100%);
     color:#0f172a;
 }
 .chat :global(.cs-message--outgoing .cs-message__content){
-    background:linear-gradient(0deg,#6aa9ff 0%,#5a9bff 100%);
+    background: linear-gradient(0deg,#6aa9ff 0%,#5a9bff 100%);
     color:#fff;
 }
 
@@ -53,297 +50,97 @@
 /* разделители дат — тонкие линии и спокойный цвет */
 .chat :global(.cs-message-separator){
     color:#64748b; font-weight:600; text-transform:lowercase;
+    background: transparent;
+}
+.chat :global(.cs-message-separator__text){
+    background: transparent !important; box-shadow: none;
 }
 .chat :global(.cs-message-separator:before),
 .chat :global(.cs-message-separator:after){
     background:#e2e8f0; height:1px;
 }
 
-/* чуть больше воздуха между группами одного автора */
+/* воздух между группами одного автора */
 .chat :global(.cs-message.cs-message--first){ margin-top:10px; }
 .chat :global(.cs-message.cs-message--last){  margin-bottom:10px; }
 
+/* принудительное выравнивание строк сообщений */
+.chat :global(.cs-message){ display:flex; }
+.chat :global(.cs-message--incoming){ justify-content:flex-start; }
+.chat :global(.cs-message--outgoing){ justify-content:flex-end; }
 
-/* ===== твоя панель ввода ===== */
-.inputRow {
-    display: flex;
-    gap: 8px;
-    align-items: flex-end;
+/* выравниваем wrapper по сторонам */
+.chat :global(.cs-message--incoming .cs-message__content-wrapper),
+.chat :global(.cs-message--incoming .cs-message__custom-content){
+    margin-left: 0; margin-right: auto;
 }
-.inputGrow {
-    flex: 1 1 auto;
-    min-width: 0;         /* важно, чтобы не выпихивало кнопку */
+.chat :global(.cs-message--outgoing .cs-message__content-wrapper),
+.chat :global(.cs-message--outgoing .cs-message__custom-content){
+    margin-right: 0; margin-left: auto;
 }
-.autoTextarea {
-    width: 100%;
-    line-height: 1.5;
-    resize: none;         /* управляем высотой сами */
-    overflow: hidden;     /* включим auto выше лимита из JS */
-    max-height: 40vh;     /* мягкий лимит роста (меняем при необходимости) */
-    box-sizing: border-box;
 
-    /* на случай очень длинных «слов» */
-    overflow-wrap: anywhere;
-    word-break: break-word;
+/* ===== панель ввода ===== */
+.inputRow{
+    display:flex; gap:8px; align-items:flex-end;
+    background:#fff; position:relative; z-index:2;
+    border-top:1px solid #dee2e6;
+}
+.inputGrow{ flex:1 1 auto; min-width:0; }
+.autoTextarea{
+    width:100%; line-height:1.5; resize:none; overflow:hidden;
+    max-height:40vh; box-sizing:border-box;
+    overflow-wrap:anywhere; word-break:break-word;
 }
 
 /* текст и файлы внутри сообщения */
-.msgText      { margin-bottom: 8px; }
-.filesBlock   { }
-.filesTitle   { font-size: 12px; color: #64748b; margin-bottom: 4px; }
-.filesChips   { display:flex; flex-wrap:wrap; gap:6px; }
-
-/* принудительно задаём выравнивание строк сообщений */
-.chat :global(.cs-message)               { display: flex; }
-.chat :global(.cs-message--incoming)     { justify-content: flex-start; }
-.chat :global(.cs-message--outgoing)     { justify-content: flex-end; }
-
-/* выравниваем сам пузырёк и «кастомный» контент */
-.chat :global(.cs-message--incoming .cs-message__content),
-.chat :global(.cs-message--incoming .cs-message__custom-content),
-.chat :global(.cs-message--incoming .cs-message__content-wrapper) {
-    margin-left: 0;
-    margin-right: auto;
-}
-.chat :global(.cs-message--outgoing .cs-message__content),
-.chat :global(.cs-message--outgoing .cs-message__custom-content),
-.chat :global(.cs-message--outgoing .cs-message__content-wrapper) {
-    margin-right: 0;
-    margin-left: auto;
-}
-
-/* убрать белую плашку у даты в разделителе */
-.chat :global(.cs-message-separator__text) {
-    background: transparent !important; /* или #f8fafc, чтобы слиться с фоном списка */
-    box-shadow: none;
-}
-/* на всякий случай — сам контейнер разделителя тоже без фона */
-.chat :global(.cs-message-separator) {
-    background: transparent;
-}
-/* линии оставляем тонкими, как были */
-.chat :global(.cs-message-separator:before),
-.chat :global(.cs-message-separator:after) {
-    background: #e2e8f0;
-    height: 1px;
-}
+.msgText{ margin-bottom:8px; }
+.filesBlock{}
+.filesTitle{ font-size:12px; color:#64748b; margin-bottom:4px; display:flex; gap:6px; align-items:center; }
+.filesChips{ display:flex; flex-wrap:wrap; gap:6px; }
 
 /* кнопка-иконка слева от textarea */
-.iconBtn{
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    width:36px; height:36px;
-    padding:0;
-}
-/* размеры иконки */
-.icon   { width:18px; height:18px; }
-.iconXs { width:14px; height:14px; margin-right:6px; vertical-align:-2px; }
+.iconBtn{ display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding:0; }
+.icon{ width:18px; height:18px; }
+.iconXs{ width:14px; height:14px; margin-right:6px; vertical-align:-2px; }
 
-/* уже есть, но на всякий случай: иконка наследует цвет */
-.filesTitle{
-    display:flex; align-items:center; gap:6px;
-    font-size:12px; color:#64748b;  /* спокойный серый */
-    margin-bottom:4px;
-}
+/* ошибки */
+.errLine{ color:#dc3545; font-size:12px; margin-top:4px; padding:0 8px; }
+.rowRight{ display:flex; justify-content:flex-end; }
+.rowLeft{ display:flex; justify-content:flex-start; }
 
-.errLine {
-    color: #dc3545;
-    font-size: 12px;
-    margin-top: 4px;
-    padding: 0 8px;
+/* drag&drop overlay */
+.dropZone{ position:relative; height:100%; }
+.dropZoneActive{ outline:2px dashed rgba(90,155,255,.55); outline-offset:-6px; border-radius:12px; }
+.dragOverlay{
+    position:absolute; inset:0; background:rgba(0,0,0,0.18);
+    display:flex; align-items:center; justify-content:center; z-index:30; pointer-events:none;
 }
+.dropHere{
+    pointer-events:none; color:#fff; background:rgba(0,0,0,0.55);
+    border:2px dashed rgba(255,255,255,0.85); padding:14px 20px; border-radius:12px; font-weight:600;
+}
+.inputRowDragging{ outline:2px dashed rgba(90,155,255,.6); outline-offset:-6px; background:rgba(90,155,255,.06); }
 
-/* выравнивание строки ошибки по стороне сообщения */
-.rowRight { display: flex; justify-content: flex-end; }
-.rowLeft  { display: flex; justify-content: flex-start; }
+/* превью выбранных файлов */
+.pendingWrap{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
+.pendingChip{
+    display:inline-flex; align-items:center; gap:6px; max-width:100%;
+    background:#6c757d; color:#fff; border-radius:999px; padding:4px 8px; line-height:1;
+}
+.sizeMuted{ color:#fff; font-size:12px; }
+.removeBtn{
+    appearance:none; border:none; background:transparent; color:#fff;
+    font-weight:700; font-size:16px; padding:0 2px 2px; line-height:1; cursor:pointer;
+}
+.removeBtn:hover{ color:#dc3545; }
+.ellipsis{ max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-/* ======== ДОПОЛНЕНО: drag&drop overlay и состояние d&d на инпуте ======== */
-.dragOverlay {
-    position: absolute;
-    inset: 0;
-    background: rgba(0,0,0,0.35);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 30;
-    pointer-events: none;
-}
-.dropHere {
-    pointer-events: none;
-    color: #fff;
-    background: rgba(0,0,0,0.55);
-    border: 2px dashed rgba(255,255,255,0.8);
-    padding: 16px 24px;
-    border-radius: 12px;
-    font-weight: 600;
-}
-.inputRowDragging {
-    outline: 2px dashed rgba(0,0,0,0.25);
-    outline-offset: -6px;
-    background: rgba(0,0,0,0.02);
-}
+/* контейнер чата */
+.chatShell{ background:#fff; position:relative; z-index:1; }
 
-/* ======== ДОПОЛНЕНО: превью выбранных файлов (чипсы над textarea) ======== */
-.pendingWrap {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 6px;
-}
-.pendingChip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    max-width: 100%;
-    background: #6c757d;
-    color: #fff;
-    border-radius: 999px;
-    padding: 4px 8px;
-    line-height: 1;
-}
-.sizeMuted {
-    color: #fff;
-    font-size: 12px;
-}
-.removeBtn {
-    appearance: none;
-    border: none;
-    background: transparent;
-    color: #fff;
-    font-weight: 700;
-    font-size: 16px;
-    padding: 0 2px 2px 2px;
-    line-height: 1;
-    cursor: pointer;
-}
-.removeBtn:hover { color: #dc3545; }
-.ellipsis {
-    max-width: 240px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* локальная зона d&d — именно контейнер чата */
-.dropZone {
-    position: relative;       /* важно: чтобы overlay ограничился этой областью */
-    height: 100%;
-}
-
-/* тонкая активная рамка по краям drop-зоны */
-.dropZoneActive {
-    outline: 2px dashed rgba(90,155,255,.55);
-    outline-offset: -6px;
-    border-radius: 12px;
-}
-
-/* уже есть у тебя, но на всякий случай: overlay занимает ТОЛЬКО dropZone */
-.dragOverlay {
-    position: absolute;
-    inset: 0;
-    background: rgba(0,0,0,0.18);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 30;
-    pointer-events: none;
-}
-.dropHere {
-    pointer-events: none;
-    color: #fff;
-    background: rgba(0,0,0,0.55);
-    border: 2px dashed rgba(255,255,255,0.85);
-    padding: 14px 20px;
-    border-radius: 12px;
-    font-weight: 600;
-}
-
-/* мягкая подсветка только строки ввода, если нужно */
-.inputRowDragging {
-    outline: 2px dashed rgba(90,155,255,.6);
-    outline-offset: -6px;
-    background: rgba(90,155,255,.06);
-}
-
-/* контейнер с вложениями */
-.attWrap {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-/* чип вложения */
-.attChip {
-    --bg: #f1f5f9;
-    --fg: #0f172a;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    max-width: 100%;
-    border-radius: 12px;
-    text-decoration: none;
-    background: var(--bg);
-    color: var(--fg);
-    padding: 6px 8px;
-    line-height: 1.2;
-    box-shadow: 0 1px 2px rgba(15,23,42,.06);
-    transition: transform .05s ease, box-shadow .15s ease, background .15s ease;
-}
-.attChip:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 18px rgba(15,23,42,.08);
-    background: #e9eef6;
-}
-.attChipIncoming { --bg:#eef5ff; --fg:#0f172a; }
-.attChipOutgoing { --bg:#4c8efc; --fg:#fff; }
-.attChipOutgoing:hover { background:#3e84fc; }
-
-.attLeft { flex: 0 0 auto; display:inline-flex; align-items:center; justify-content:center; }
-.attBody { min-width: 0; display:flex; flex-direction:column; gap:2px; }
-.attRight { flex: 0 0 auto; opacity:.7; }
-
-.attIcon { width: 28px; height: 28px; }
-.attDlIcon { width: 16px; height: 16px; }
-
-.attThumb {
-    width: 36px;
-    height: 28px;
-    object-fit: cover;
-    border-radius: 6px;
-    border: 1px solid rgba(0,0,0,.08);
-    background: #fff;
-}
-
-.attName {
-    max-width: 240px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: inherit;
-    font-weight: 600;
-    font-size: 13px;
-}
-.attMeta {
-    font-size: 12px;
-    color: inherit;
-    opacity: .8;
-}
-
-.nav-pills .nav-link.active[data-has-unread="1"]::after {
-    content: "";
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    background: #dc3545; /* bootstrap danger */
-    display: inline-block;
-    margin-left: .375rem;
-}
-
-/* ItsmGuidScreen.module.css */
-.chatTabs { display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:0; list-style:none; }
-.chatTabsItem { margin:0; padding:0; }
-
+/* вкладки (как было) */
+.chatTabs{ display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:0; list-style:none; }
+.chatTabsItem{ margin:0; padding:0; }
 .chatTabsBtn{
     --bg:#fff; --fg:#0f172a; --bd:#e2e8f0;
     --bg-active:linear-gradient(0deg,#22c55e 0%,#16a34a 100%);
@@ -351,12 +148,11 @@
     display:inline-flex; align-items:center; gap:8px; max-width:480px;
     border:1px solid var(--bd); background:var(--bg); color:var(--fg);
     border-radius:12px; padding:8px 10px; line-height:1.2; box-shadow:var(--shadow);
-    transition:transform .06s ease, box-shadow .15s ease, background .2s ease, color .2s ease, border-color .2s ease;
+    transition:transform .06s, box-shadow .15s, background .2s, color .2s, border-color .2s;
 }
 .chatTabsBtn:hover{ transform:translateY(-1px); box-shadow:0 2px 8px rgba(15,23,42,.12); border-color:#cbd5e1; }
 .isActive{ background:var(--bg-active); color:var(--fg-active); border-color:transparent; box-shadow:0 2px 14px rgba(22,163,74,.35); }
 .hasUnread:not(.isActive){ border-color:#fecaca; }
-
 .chatTabsLabel{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .chatTabsBadge{
     display:inline-flex; align-items:center; justify-content:center;
@@ -367,20 +163,11 @@
     content:""; width:8px; height:8px; margin-left:6px; border-radius:999px; background:#fff; box-shadow:0 0 0 3px rgba(239,68,68,.95);
 }
 
-/* контейнер чата имеет свой фон и слой */
-.chatShell{
-    background:#fff;
-    position: relative; /* создаём новый stacking context */
-    z-index: 1;
-}
-
-/* строка ввода всегда непрозрачная и выше соседей */
-.inputRow{
-    display:flex;
-    gap:8px;
-    align-items:flex-end;
-    background:#fff;         /* <-- ключевое */
-    position: relative;
-    z-index: 2;              /* поверх всего, что случайно «просвечивает» ниже */
-    border-top:1px solid #dee2e6;
+/* мобильный режим — пузырь шире */
+@media (max-width: 640px){
+    .chat :global(.cs-message__content-wrapper),
+    .chat :global(.cs-message__custom-content){
+        width: 95% !important;
+        flex-basis: 95% !important;
+    }
 }

@@ -154,8 +154,9 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
                 sip_login: sipLogin,
                 session_key: sessionKey,
                 direction,
-                uuid: currentUuid || " ",
-                b_uuid: currentBUuid || " ",
+                // init_mode: "regular",
+                uuid: currentUuid || "",
+                b_uuid: currentBUuid || "",
                 project_name: projectName
             });
         }

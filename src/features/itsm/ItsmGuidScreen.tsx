@@ -714,7 +714,7 @@ export default function ItsmGuidScreen() {
                             operatorDict={operatorDict}
                             formatOperatorFn={formatOperator}
                             title={`Чат · ${activeGuid ?? ""}`}
-                            subtitle={labelForGuid(activeGuid)}
+                            // subtitle={labelForGuid(activeGuid)}
                             readMap={readMap}
                         />
                     </div>

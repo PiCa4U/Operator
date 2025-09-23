@@ -6,6 +6,7 @@ import Swal from "sweetalert2";
 import {ReportList} from "./components/reportList";
 import {ComponentForReportTables, dataOptions, modifyOptions} from "./components/componentForReportTables";
 import {ReportCard} from "./components/reportCard";
+import {store} from "../../../../redux/store";
 
 const parseFilterJsonToItems = (filterJson: any): FilterItem[] => {
     const items: FilterItem[] = [];
@@ -132,6 +133,11 @@ export const Filters = () => {
     const [chartConfigs, setChartConfigs] = useState<ChartConfig[]>([]);
 
     useEffect(() => console.log("chartConfigs: ", chartConfigs),[chartConfigs])
+    const {
+        sipLogin   = '',
+        worker     = '',
+        glagolParent      = ''
+    } = store.getState().credentials;
 
     const rebuildCharts = async () => {
         const filter_dict = buildFilterJson(activeFilters);
@@ -172,7 +178,7 @@ export const Filters = () => {
         const fetchData = async () => {
             if (!selectedReport) return;
 
-            const glagol_parent = "fs.at.akc24.ru";
+            const glagol_parent = glagolParent;
 
             const projects = selectedReport.project_names.map((projname: any) => (
                 projectPool.find(proj => proj.glagol_name === projname).project_name
@@ -325,7 +331,7 @@ export const Filters = () => {
             try {
                 const response = await axios.post("/api/v1/communications/filters/create", {
                     name,
-                    glagol_parent: "fs.at.akc24.ru",
+                    glagol_parent: glagolParent,
                     filter_json,
                 });
                 console.log("Создан новый фильтр", response.data);
@@ -337,7 +343,7 @@ export const Filters = () => {
                 const response = await axios.put("/api/v1/communications/filters/update", {
                     id: selectedFilterId,
                     name: filters.find(f => f.id === selectedFilterId)?.name || "Без имени",
-                    glagol_parent: "fs.at.akc24.ru",
+                    glagol_parent: glagolParent,
                     filter_json,
                 });
                 console.log("Фильтр обновлён", response.data);
@@ -367,7 +373,7 @@ export const Filters = () => {
                 await axios.delete("/api/v1/communications/filters/delete", {
                     data: {
                         filter_id: selectedFilterId,
-                        glagol_parent: "fs.at.akc24.ru",
+                        glagol_parent: glagolParent,
                     },
                 });
 
@@ -390,7 +396,7 @@ export const Filters = () => {
 
         try {
             const response = await axios.post("/api/v1/communications/report", {
-                glagol_parent: "fs.at.akc24.ru",
+                glagol_parent: glagolParent,
                 filter_dict,
                 limit,
                 offset,
@@ -420,7 +426,7 @@ export const Filters = () => {
             const response = await axios.post(
                 "/api/v1/communications/report",
                 {
-                    glagol_parent: "fs.at.akc24.ru",
+                    glagol_parent: glagolParent,
                     filter_dict,
                     get_excel: true,
                     limit: totalCount,
@@ -451,7 +457,7 @@ export const Filters = () => {
             const response = await axios.post(
                 "/api/v1/communications/report/audio",
                 {
-                    glagol_parent: "fs.at.akc24.ru",
+                    glagol_parent: glagolParent,
                     filter_dict,
                     limit: totalCount,
                     // offset: (page - 1) * limit,

@@ -408,11 +408,18 @@ export default function LocalChat({
                                                                             const href = isPendingLocal
                                                                                 ? a.url!
                                                                                 : buildDownloadUrl(SOCKET_HOST, guid, a.name);
+
                                                                             return (
-                                                                                <a key={a.id} href={href} target="_blank" rel="noreferrer"
-                                                                                   className="badge bg-secondary text-decoration-none"
-                                                                                   title={a.name} {...(!isPendingLocal ? { download: a.name } : {})}>
-                                                                                    {a.name}
+                                                                                <a
+                                                                                    key={a.id}
+                                                                                    href={href}
+                                                                                    target="_blank"
+                                                                                    rel="noreferrer"
+                                                                                    className={`${styles.fileChip} badge bg-secondary`}
+                                                                                    title={a.name}
+                                                                                    {...(!isPendingLocal ? { download: a.name } : {})}
+                                                                                >
+                                                                                    <span className={styles.fileChipText}>{a.name}</span>
                                                                                 </a>
                                                                             );
                                                                         })}

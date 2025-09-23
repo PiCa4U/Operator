@@ -21,7 +21,11 @@ interface ReasonOrResult {
 }
 
 export const ProjectField: React.FC<Props> = ({ value, onChange }) => {
-    const { sipLogin = '' } = store.getState().credentials;
+    const {
+        sipLogin   = '',
+        worker     = '',
+        glagolParent      = ''
+    } = store.getState().credentials;
 
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
@@ -43,7 +47,7 @@ export const ProjectField: React.FC<Props> = ({ value, onChange }) => {
             try {
                 const res = await axios.get("/api/v1/project_settings", {
                     params: {
-                        glagol_parent: "fs.at.akc24.ru",
+                        glagol_parent: glagolParent,
                         project_name: selectedProjectId,
                         settings_types: ["call_reasons", "call_results"]
                     }

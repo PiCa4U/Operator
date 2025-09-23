@@ -169,6 +169,7 @@ const MainApp: React.FC = () => {
     const {
         sipLogin   = '',
         worker     = '',
+        glagolParent = ''
     } = store.getState().credentials;
     const { data: operatorDict = {} } = useOperatorsDirectory();
 
@@ -230,7 +231,7 @@ const MainApp: React.FC = () => {
         let alive = true;
 
         axios
-            .get("/api/v1/projects", { params: { glagol_parent: "fs.at.akc24.ru" } })
+            .get("/api/v1/projects", { params: { glagol_parent: glagolParent } })
             .then(({ data }) => {
                 if (!alive) return;
                 const arr = Array.isArray(data?.projects) ? data.projects : [];
@@ -905,10 +906,10 @@ const MainApp: React.FC = () => {
             setOutActiveProjectName('');
             setPhoneID(null)
             setAssignedKey('');
-            setOpenedGroup([])
-            setPhonesData([])
-            setOpenedPhones([])
-            setGroupIDs([])
+            // setOpenedGroup([])
+            // setPhonesData([])
+            // setOpenedPhones([])
+            // setGroupIDs([])
             setExpressCall(false)
         }
     }, [activeCall, postActive]);

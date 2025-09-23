@@ -1,4 +1,3 @@
-// index.tsx
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
@@ -16,65 +15,62 @@ import "@chatscope/chat-ui-kit-styles/dist/default/styles.min.css";
 const container = document.getElementById('root');
 if (!container) throw new Error('Root container not found');
 
+// читаем ВСЕ нужные data-*
+// webrtc — это URL сокета, кладём как строку
 const {
     sessionKey: rawSessionKey,
     sipLogin: rawSipLogin,
     fsServer: rawFsServer,
     worker: rawWorker,
-    chatServer: rawChatServer, // <= NEW
-    codeServer: rawCodeServer, // <= NEW
+    chatServer: rawChatServer,
+    codeServer: rawCodeServer,
+    webrtc: rawWebrtcUrl,
+    glagolParent: rawGlagolParent,
 } = container.dataset as Partial<Record<string, string>>;
 
-// Значения по умолчанию, если data-атрибутов нет
-const sipLogin = rawSipLogin || '1000';
-const fsServer = rawFsServer || 'wwstest.glagol.ai';
-const worker   = rawWorker   || '4.fs@akc24.ru';
+// дефолты (если не передали атрибуты)
+const sipLogin     = rawSipLogin     || '1000';
+const fsServer     = rawFsServer     || 'wwstest.glagol.ai';
+const worker       = rawWorker       || '4.fs@akc24.ru';
+const chatServer   = rawChatServer   || 'wwstest.glagol.ai/chat';
+const codeServer   = rawCodeServer   || 'wwstest.glagol.ai/code';
+const glagolParent = rawGlagolParent || 'fs.at.akc24.ru';
+const webrtcUrl    = rawWebrtcUrl    || 'wss://24webrtc.ru/ws';
 
-// // Значения по умолчанию, если data-атрибутов нет
-// const sipLogin = rawSipLogin || '';
-// const fsServer = rawFsServer || 'wwstest.glagol.ai';
-// const worker   = rawWorker   || '';
-
-
-// Настройка базового URL для axios
+// axios: базовый URL по fsServer
 axios.defaults.baseURL = `https://${fsServer}`;
 
-// Сохранить креды в Redux
+// Сохраняем ВСЕ в Redux одним экшеном
 store.dispatch(setCredentials({
     sessionKey: rawSessionKey || '',
     sipLogin,
     fsServer,
     worker,
+    chatServer,
+    codeServer,
+    glagolParent,
+    webrtcUrl,
 }));
 
-// --- SSE: подписка единожды при старте приложения ---
+// --- SSE (как у тебя; оставлено закомментированным) ---
 const sseUrl = `https://${fsServer}/api/v1/fs_data?sip_login=${encodeURIComponent(sipLogin)}`;
 // const evtSource = new EventSource(sseUrl);
-
-// При каждом новом сообщении парсим и диспатчим в стор
 // evtSource.onmessage = (e) => {
-//     try {
-//         const { fs_calls, fs_status, other_users } = JSON.parse(e.data);
-//         console.log("e.data: ", e.data)
-//         store.dispatch(setFsStatus(fs_status));
-//         store.dispatch(setActiveCalls(fs_calls));
-//         store.dispatch(setUserStatuses(other_users));
-//         // При shutdown корректно закрываем стрим
-//         if (fs_status?.status === 'shutdown') {
-//             evtSource.close();
-//         }
-//     } catch (err) {
-//         console.error('Failed to parse SSE data:', err);
+//   try {
+//     const { fs_calls, fs_status, other_users } = JSON.parse(e.data);
+//     store.dispatch(setFsStatus(fs_status));
+//     store.dispatch(setActiveCalls(fs_calls));
+//     store.dispatch(setUserStatuses(other_users));
+//     if (fs_status?.status === 'shutdown') {
+//       evtSource.close();
 //     }
+//   } catch (err) {
+//     console.error('Failed to parse SSE data:', err);
+//   }
 // };
-
-// Логируем ошибки (EventSource по дефолту переподключится)
 // evtSource.onerror = (err) => {
-//     console.error('SSE connection error:', err);
+//   console.error('SSE connection error:', err);
 // };
-const { ha1, turnCreds } = store.getState().operator;
-console.log("555ha1: ",ha1)
-console.log("555turnCreds: ",turnCreds)
 
 // --- Рендер React-приложения ---
 const root = ReactDOM.createRoot(container);
@@ -84,5 +80,4 @@ root.render(
     </Provider>
 );
 
-// Замер производительности
 reportWebVitals();

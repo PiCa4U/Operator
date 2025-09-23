@@ -58,6 +58,20 @@ const filterG711: SessionDescriptionHandlerModifier = desc => {
     return Promise.resolve(desc);
 };
 
+// Нормализуем ws-URL и достаём хост (c портом, если он есть)
+function extractSipHost(wsServer: string): string {
+    try {
+        const url = new URL(wsServer.startsWith('ws://') || wsServer.startsWith('wss://')
+            ? wsServer
+            : `wss://${wsServer}`);
+        // Если нужен порт в SIP-URI, вернём host (hostname:port), иначе можешь вернуть только hostname
+        return url.port ? `${url.hostname}:${url.port}` : url.hostname;
+    } catch {
+        // запасной вариант, если URL кривой
+        return '24webrtc.ru';
+    }
+}
+
 // --- Проверка: есть ли SDP
 const responseHasSDP = (res: any) => {
     const body = res?.message?.body ?? res?.body;
@@ -271,7 +285,8 @@ export function useSipUA(config: {
             localStreamRef.current = localStream;
             safeSetSrcObject(localAudioRef, localStream);
 
-            const uri = UserAgent.makeURI(`sip:${userId}@24webrtc.ru`) as URI;
+            const sipHost = extractSipHost(wsServer);
+            const uri = UserAgent.makeURI(`sip:${userId}@${sipHost}`) as URI;
             const uaOptions: UserAgentOptions = {
                 uri,
                 authorizationUsername: userId,
@@ -392,7 +407,8 @@ export function useSipUA(config: {
 
     const makeCall = async (target: string) => {
         const ua = uaRef.current; if (!ua || !enabled) return;
-        const uri = UserAgent.makeURI(`sip:${target}@24webrtc.ru`) as URI;
+        const sipHost = extractSipHost(wsServer);
+        const uri = UserAgent.makeURI(`sip:${userId}@${sipHost}`) as URI;
         const inviter = new Inviter(ua, uri);
 
         bind(inviter);

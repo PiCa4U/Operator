@@ -20,6 +20,7 @@ export const OperatorsTab: React.FC = () => {
     const {
         sipLogin   = '',
         worker     = '',
+        glagolParent      = ''
     } = store.getState().credentials;
 
     const [selected, setSelected] = useState<Record<Agent["login"], boolean>>({});
@@ -50,7 +51,7 @@ export const OperatorsTab: React.FC = () => {
     const [modalMode, setModalMode] = useState<"create"|"edit">("create");
     const [editing, setEditing] = useState<Agent | null>(null);
 
-    const glagol_parent = "fs.at.akc24.ru";
+    const glagol_parent = glagolParent;
     const [projMap, setProjMap] = useState<Record<string, string>>({});
 
     useEffect(() => {
@@ -309,7 +310,7 @@ export const OperatorsTab: React.FC = () => {
                             />
                         </th>
                         <th>Имя</th>
-                        <th>Логин</th>
+                        <th>Sip Логин</th>
                         <th>Роль</th>
                         <th>Отдел</th>
                         <th>Робот</th>

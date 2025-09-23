@@ -12,7 +12,8 @@ export interface Agent {
     post_obrabotka:boolean
     projects?: string[];        // tiers, может отсутствовать
     status?: AgentPresence;     // если приходит из монитора
-    online?: boolean;           // если бек присылает булевый онлайн
+    online?: boolean;
+    glagol_service: string;// если бек присылает булевый онлайн
 }
 
 export interface CreateAgentPayload {

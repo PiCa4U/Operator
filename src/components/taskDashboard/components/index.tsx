@@ -9,7 +9,42 @@ import stylesModal from "./modal.module.css";
 import {ModuleType} from "../index";
 import axios from "axios";
 
-interface Action { action_name: string; action_type: string; code_filename: string; }
+type Step = { type: string; code_filename?: string };
+
+function extractActionSteps(act?: { [k: string]: any }): Step[] {
+    const steps: Step[] = [];
+    if (!act) return steps;
+
+    if (act.action_type) {
+        steps.push({ type: String(act.action_type), code_filename: act.code_filename });
+    }
+
+    const idxs = Array.from(
+        new Set(
+            Object.keys(act)
+                .map(k => (/_\d+$/.test(k) ? Number(k.split('_').pop()) : null))
+                .filter((n): n is number => n !== null)
+        )
+    ).sort((a, b) => a - b);
+
+    for (const n of idxs) {
+        const t = act[`action_type_${n}`];
+        if (!t) continue;
+        steps.push({
+            type: String(t),
+            code_filename: act[`code_filename_${n}`],
+        });
+    }
+
+    return steps;
+}
+
+interface Action {
+    action_name: string;
+    action_type?: string;
+    code_filename?: string;
+    [key: string]: any;
+}
 interface Preset {
     id: number;
     preset_name: string;
@@ -75,7 +110,7 @@ const GroupActionModal: React.FC<Props> = ({
     const [modulesInFlight, setModulesInFlight] = useState(0);
     const modulesCompletedRef = useRef(0);
     const moduleStartModalRef = useRef(false);
-
+    const afterModulesCallbackRef = useRef<null | (() => void)>(null);
 
     useEffect(() => {
         onSelectionChange?.(Array.from(selectedIds));
@@ -154,11 +189,18 @@ const GroupActionModal: React.FC<Props> = ({
             modulesCompletedRef.current += 1;
             if (modulesCompletedRef.current >= modulesInFlight) {
                 Swal.fire("Готово", "Все модули завершены", "success");
-                onAfterAction?.();
-                moduleStartModalRef.current = false
-                setModulesInFlight(0)
-                modulesCompletedRef.current = 0
-                onClose();
+                moduleStartModalRef.current = false;
+                setModulesInFlight(0);
+                modulesCompletedRef.current = 0;
+
+                const cb = afterModulesCallbackRef.current;
+                afterModulesCallbackRef.current = null;
+                if (cb) {
+                    cb();
+                } else {
+                    onAfterAction?.();
+                    onClose();
+                }
             }
         };
 
@@ -196,112 +238,100 @@ const GroupActionModal: React.FC<Props> = ({
     }
 
     const handleConfirm = () => {
+        if (!action) {
+            handleGroupSave?.();
+            onClose();
+            return;
+        }
+
+        const steps = extractActionSteps(action);
+        if (!steps.length) { onClose(); return; }
+
         const groups = Array.from(selectedIds).reduce<Record<string, number[]>>((acc, id) => {
             const proj = idToProject[id];
             if (!proj) return acc;
-            if (!acc[proj]) acc[proj] = [];
-            acc[proj].push(id);
+            (acc[proj] ||= []).push(id);
             return acc;
         }, {});
-        if (!action) {
-            handleGroupSave?.()
-            return;
-        }
-        // 2) В зависимости от типа действия шлём нужные ивенты
-        if (action?.action_type === 'delete') {
-            Object.entries(groups).forEach(([project_name, ids]) => {
-                socket.emit('delete_phone', {
-                    worker,
-                    session_key: sessionKey,
-                    project_name,
-                    ids,
-                });
-            });
-            if (onAfterAction) {
-                Swal.fire("Готово", "Контакты удалены успешно", "success");
-                onAfterAction()
+
+        const runStep = (i: number) => {
+            if (i >= steps.length) {
+                onAfterAction?.();
+                onClose();
+                return;
             }
-        } else if (action?.action_type === 'code') {
-                const targetName = action.code_filename.replace(/\.py$/, '');
-                const foundModule = modules?.find(m => m.filename.replace(/\.py$/, '') === targetName);
-                if (!foundModule) {
-                    return Swal.fire('Ошибка', `Модуль "${action.code_filename}" не найден.`, 'error');
+            const step = steps[i];
+
+            switch (step.type) {
+                case "delete": {
+                    Object.entries(groups).forEach(([project_name, ids]) => {
+                        socket.emit('delete_phone', { worker, session_key: sessionKey, project_name, ids });
+                    });
+                    runStep(i + 1);
+                    break;
                 }
 
-                type KwargDef = { source: string; default?: string };
-                const argDefs = Object.values(foundModule.kwargs || {}) as KwargDef[];
-                let pendingCount = 0;
+                case "code": {
+                    const target = String(step.code_filename || '').replace(/\.py$/, '');
+                    const found = modules?.find(m => m.filename.replace(/\.py$/, '') === target);
+                    if (!found) {
+                        Swal.fire('Ошибка', `Модуль "${step.code_filename}" не найден.`, 'error');
+                        return;
+                    }
 
-                Object.entries(groups).forEach(([project_name, ids]) => {
-                    const idToContact = ids.map(id => {
-                        const contact = rawRows.find(r => r.id === id);
-                        return {
-                            id,
-                            contactInfo: contact?.contact_info ?? {},
-                            project: contact?.project ?? project_name,
-                        };
-                    });
+                    type KwargDef = { source: string; default?: string };
+                    const argDefs = Object.values(found.kwargs || {}) as KwargDef[];
 
-                    const groupedByContactInfo = new Map<string, { ids: number[]; contactInfo: any; project: string }>();
+                    let pending = 0;
+                    Object.entries(groups).forEach(([project_name, ids]) => {
+                        const byArgs = new Map<string, { ids: number[]; kwargs: Record<string, string> }>();
 
-                    idToContact.forEach(({ id, contactInfo, project }) => {
-                        // 👉 строим подмножество contactInfo только по используемым source
-                        const usedFields = argDefs.reduce<Record<string, string>>((acc, { source, default: def }) => {
-                            if (!source) return acc;
-
-                            const value = contactInfo[source];
-                            acc[source] = (value !== undefined && value !== null && value !== '') ? value : (def ?? '');
-                            return acc;
-                        }, {});
-
-                        const hashKey = JSON.stringify(usedFields);
-
-                        if (!groupedByContactInfo.has(hashKey)) {
-                            groupedByContactInfo.set(hashKey, {
-                                ids: [],
-                                contactInfo: usedFields,
-                                project,
+                        ids.forEach(id => {
+                            const row = rawRows.find(r => r.id === id);
+                            const ci = row?.contact_info ?? {};
+                            const kwargs: Record<string, string> = {};
+                            argDefs.forEach(({ source, default: def }) => {
+                                if (!source) return;
+                                const v = ci[source];
+                                kwargs[source] = (v ?? def ?? '') as string;
                             });
-                        }
-                        groupedByContactInfo.get(hashKey)!.ids.push(id);
-                    });
-
-                    groupedByContactInfo.forEach(({ ids: groupedIds, contactInfo, project }) => {
-                        const kwargs: Record<string, string> = {};
-                        argDefs.forEach(({ source, default: def }) => {
-                            if (!source) return;
-                            kwargs[source] = contactInfo[source] ?? def ?? '';
-                        });
-                        pendingCount += 1;
-
-                        socket.emit('run_module', {
-                            uuid: "",
-                            b_uuid: "",
-                            worker,
-                            session_key: sessionKey,
-                            projects: { [project]: kwargs },
-                            filename: foundModule.filename.replace(/\.py$/, ''),
-                            common_code: foundModule.common_code,
+                            const key = JSON.stringify(kwargs);
+                            if (!byArgs.has(key)) byArgs.set(key, { ids: [], kwargs });
+                            byArgs.get(key)!.ids.push(id);
                         });
 
-                        console.log(`[modal/run_module] project=${project}, ids=[${groupedIds.join(', ')}], kwargs=`, kwargs);
+                        byArgs.forEach(({ kwargs }) => {
+                            pending += 1;
+                            socket.emit('run_module', {
+                                uuid: "", b_uuid: "", worker, session_key: sessionKey,
+                                projects: { [project_name]: kwargs },
+                                filename: target,
+                                common_code: found.common_code,
+                            });
+                        });
                     });
-                });
-            if (pendingCount > 0) {
-                moduleStartModalRef.current = true
-                setModulesInFlight(pendingCount);
-                modulesCompletedRef.current = 0;
+
+                    if (pending > 0) {
+                        moduleStartModalRef.current = true;
+                        setModulesInFlight(pending);
+                        modulesCompletedRef.current = 0;
+                        afterModulesCallbackRef.current = () => runStep(i + 1);
+                    } else {
+                        runStep(i + 1);
+                    }
+                    break;
+                }
+
+                // модалка не выбирает оператора — шаг assign в ней пропускаем
+                case "assign":
+                // иные «служебные» шаги (activate и т.п.) в модалке обычно не нужны — пропускаем
+                case "activate":
+                default:
+                    runStep(i + 1);
             }
+        };
 
-            // if (onAfterAction) {
-            //     onAfterAction()
-            // }
-        } else {
-            Swal.fire('Ошибка', 'Неподдерживаемый тип действия', 'error');
-        }
-        if (action?.action_type !== 'code') {
-            onClose();
-        }
+        runStep(0);
     };
 
 

@@ -1,7 +1,6 @@
 // src/features/signals/api.ts
 import axios from "axios";
-
-const glagol_parent = "fs.at.akc24.ru";
+import { store } from "../../redux/store";
 
 export type SignalType = "info" | "warning" | "error" | "success";
 export type SignalItem = {
@@ -13,7 +12,15 @@ export type SignalItem = {
     department: string | null;
 };
 
+// Всегда берём актуальные значения из стора на момент вызова
+function getCreds() {
+    const { credentials } = store.getState();
+    const { sipLogin = "", worker = "", glagolParent = "" } = credentials || {};
+    return { sipLogin, worker, glagol_parent: glagolParent || "" };
+}
+
 export async function getSignals(managerLogin: string): Promise<SignalItem[]> {
+    const { glagol_parent } = getCreds();
     const { data } = await axios.get("/api/v1/signals/notifications", {
         params: { glagol_parent, login: managerLogin },
     });
@@ -21,6 +28,10 @@ export async function getSignals(managerLogin: string): Promise<SignalItem[]> {
 }
 
 export async function markSignalsRead(payload: { login: string; ids: number[] }) {
+    // если backend тоже ожидает glagol_parent здесь — можно добавить:
+    // const { glagol_parent } = getCreds();
+    // const body = { ...payload, glagol_parent };
+    // const { data } = await axios.post("/api/v1/signals/notifications", body);
     const { data } = await axios.post("/api/v1/signals/notifications", payload);
     return data;
 }

@@ -1,7 +1,8 @@
+// src/features/signals/useOperatorsDirectory.ts (или оставь прежний путь)
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
-
-const glagol_parent = "fs.at.akc24.ru";
+import { useSelector } from "react-redux";
+import type { RootState } from "../../redux/store";
 
 type RawUser = { id?: number; login: string; name?: string; is_deleted?: boolean };
 type UsersObjectResponse = {
@@ -12,8 +13,13 @@ type UsersArrayResponse = { result?: RawUser[]; data?: RawUser[] };
 
 /** map: { [login]: name } */
 export function useOperatorsDirectory() {
+    // берём актуальный glagol_parent из Redux — хук пересчитает запрос при изменении
+    const glagol_parent = useSelector(
+        (s: RootState) => s.credentials.glagolParent || ""
+    );
+
     return useQuery({
-        queryKey: ["operatorsDirectory"],
+        queryKey: ["operatorsDirectory", glagol_parent],
         queryFn: async (): Promise<Record<string, string>> => {
             const { data } = await axios.get<UsersObjectResponse & UsersArrayResponse>(
                 "/api/v1/users",
@@ -38,13 +44,16 @@ export function useOperatorsDirectory() {
             }
             return map;
         },
+        // настройки
         staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: false,
         placeholderData: {},
         select: (m) => ({ ...m }),
+        enabled: true, // можно поставить !!glagol_parent, если не хочешь стреляć без параметра
     });
 }
 
+/** "Имя (login) · Отдел: ..." */
 export function formatOperatorLine(
     login: string,
     dict?: Record<string, string>,
@@ -56,6 +65,7 @@ export function formatOperatorLine(
     return department ? `${base} · Отдел: ${department}` : base;
 }
 
+/** "Имя (login)" или просто login */
 export function formatOperator(login: string, dict?: Record<string, string>) {
     if (!login) return "";
     const name = dict?.[login];

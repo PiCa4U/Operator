@@ -82,6 +82,18 @@ const TrashIcon: React.FC<{ size?: number }> = ({ size = 12 }) => (
         <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
     </svg>
 );
+
+export function toGlagolLogin(raw?: string | null): string {
+    if (!raw) return "";
+    const s = String(raw).trim();
+
+    // Если уже в нужном формате — ничего не делаем
+    if (s.includes("@")) return s;
+
+    // Заменяем ровно один раз ".at." на "@"
+    return s.replace(/\.at\./i, "@");
+}
+
 const roleToLabel = (r: Role): string => (r === "manager" ? "Менеджер" : "Оператор");
 const labelToRole = (label: string | null): Role =>
     label === "Менеджер" ? "manager" : "operator";
@@ -107,7 +119,7 @@ export const OperatorModal: React.FC<Props> = ({
     const [localProjects, setLocalProjects] = useState<string[]>([]);
     // выбранная опция в селекте добавления (лейбл!)
     const [projectToAddLabel, setProjectToAddLabel] = useState<string | null>(null);
-
+    console.log("initial: ", initial)
     useEffect(() => {
         if (!open) return;
         if (mode === "edit" && initial) {
@@ -179,6 +191,16 @@ export const OperatorModal: React.FC<Props> = ({
                     </div>
 
                     <div className="modal-body">
+                        <div className="mb-3">
+                            <label className="form-label">Логин</label>
+                            <input
+                                className="form-control"
+                                value={toGlagolLogin(initial?.glagol_service)}
+                                disabled={true}
+                                // onChange={(e) => setName(e.currentTarget.value)}
+                                placeholder="Логин"
+                            />
+                        </div>
                         <div className="mb-3">
                             <label className="form-label">Имя</label>
                             <input

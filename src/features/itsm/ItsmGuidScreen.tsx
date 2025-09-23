@@ -129,7 +129,11 @@ export default function ItsmGuidScreen() {
     const { data: operatorDict = {} } = useOperatorsDirectory(); // карта {login -> name}
 
     // креды — ТОЛЬКО из Redux
-    const { sipLogin = "", worker = "" } = store.getState().credentials || {};
+    const {
+        sipLogin   = '',
+        worker     = '',
+        glagolParent      = ''
+    } = store.getState().credentials;
     const hasSip = !!sipLogin?.trim();
     const isClient = !hasSip;
     // если sip есть — оператор, иначе клиент
@@ -165,13 +169,6 @@ export default function ItsmGuidScreen() {
 
     /* ===== словарь проектов: project_name -> glagol_name ===== */
     const [projectsDict, setProjectsDict] = useState<Record<string, string>>({});
-    const [glagolParent, setGlagolParent] = useState<string>("fs.at.akc24.ru"); // дефолт с твоего скрина
-
-    // берём parent из первого контакта, если есть
-    useEffect(() => {
-        const gp = (data?.[0]?.glagol_parent as string) || "fs.at.akc24.ru";
-        setGlagolParent(gp);
-    }, [data]);
 
     // грузим список проектов и строим словарь
     useEffect(() => {

@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useMemo, useRef} from 'react';
+import React, {useState, useEffect, useMemo, useRef, useCallback} from 'react';
 import Select, { SingleValue } from 'react-select';
 import SearchableSelect from '../callControlPanel/components/select/index';
 import styles from "./components/checkbox.module.css"
@@ -19,6 +19,77 @@ import {AssignComp} from "./components/assign";
 import { chatApi } from "../../features/itsm/chat/api";
 
 // --- Типы данных ---
+
+type Step = { type: string; code_filename?: string };
+
+function extractActionSteps(act?: { [k: string]: any }): Step[] {
+    const steps: Step[] = [];
+    if (!act) return steps;
+
+    if (act.action_type) {
+        steps.push({ type: String(act.action_type), code_filename: act.code_filename });
+    }
+
+    const idxs = Array.from(
+        new Set(
+            Object.keys(act)
+                .map(k => (/_\d+$/.test(k) ? Number(k.split('_').pop()) : null))
+                .filter((n): n is number => n !== null)
+        )
+    ).sort((a, b) => a - b);
+
+    for (const n of idxs) {
+        const t = act[`action_type_${n}`];
+        if (!t) continue;
+        steps.push({
+            type: String(t),
+            code_filename: act[`code_filename_${n}`],
+        });
+    }
+
+    return steps;
+}
+
+type FilterMethod =
+    | '='
+    | '!='
+    | 'LIKE'
+    | 'NOT LIKE'
+    | 'IN'
+    | 'NOT IN'
+    | 'DATES';
+
+type SearchItemCfg = {
+    key: string;              // поле для filter_by на бэке
+    name: string;             // «Статус заказа», «Номер заказа» и т.п.
+    methods: FilterMethod[];  // разрешённые методы
+    options?: string[];       // если есть — показываем список (single/multi)
+};
+
+type ColumnCfgWithSearch = {
+    name: string;
+    default: string;
+    render_template: string;
+    search?: SearchItemCfg[]; // НОВОЕ
+};
+
+// черновики настроек в попапах (локально до «Применить»)
+type ServerDraftItem = {
+    key: string;
+    method: FilterMethod;
+    values: string[]; // для не-IN берём values[0] как одиночное значение
+};
+type ServerDraftByCol = {
+    selectedIdx: number | null;   // какая «радиокнопка» активна (или null)
+    items: ServerDraftItem[];     // по количеству search[] у столбца
+};
+
+type ServerAppliedByCol = {
+    key: string;
+    method: FilterMethod;
+    values: string[];
+} | null; // null = фильтр по условию для столбца не активен
+
 interface ColumnCell {
     name: string;
     value: any[];
@@ -29,9 +100,11 @@ export interface ApiRow {
 }
 interface Action {
     action_name: string;
-    action_type: string;
-    code_filename: string;
+    action_type?: string;
+    code_filename?: string;
+    [key: string]: any;
 }
+
 export interface Preset {
     id: number;
     preset_name: string;
@@ -80,7 +153,21 @@ type Props = {
     selectedStatus: string | null
     setSelectedStatus: (selectedStatus: string | null) => void
 }
-const ROWS_PER_PAGE = 10;
+const ROWS_PER_PAGE_KEY = 'tasksRowsPerPage';
+const DEFAULT_ROWS_PER_PAGE = 10;
+
+function MethodLabel(m: FilterMethod) {
+    switch (m) {
+        case '=': return 'равно';
+        case '!=': return 'не равно';
+        case 'LIKE': return 'содержит';
+        case 'NOT LIKE': return 'не содержит';
+        case 'IN': return 'содержит любое из значений';
+        case 'NOT IN': return 'не содержит ни одного из значений';
+        case 'DATES': return 'диапазон дат';
+        default: return m;
+    }
+}
 
 const PresetSelectorTable: React.FC<Props> = ({
                                                   openedGroup,
@@ -107,6 +194,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     const {
         sipLogin   = '',
         worker     = '',
+        glagolParent      = ''
     } = store.getState().credentials;
     const dispatch = useDispatch();
     const { goToItsm, openItsmNewTab } = useItsmNavigation();
@@ -121,6 +209,16 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
     const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
 
+    const [pageInput, setPageInput] = useState('1');
+
+    const pageBeforeSearchRef = useRef<number | null>(null);
+    const wasSearchingRef = useRef(false);
+    const requestSeqRef = useRef(0);
+    const [rowsPerPage, setRowsPerPage] = useState<number>(() => {
+        const raw = localStorage.getItem(ROWS_PER_PAGE_KEY);
+        const n = Number(raw);
+        return Number.isFinite(n) && n > 0 ? n : DEFAULT_ROWS_PER_PAGE;
+    });
     const [flatPhones, setFlatPhones] = useState<any[]>([])
     const [expressStates, setExpressStates] = useState<Record<string, ExpressState>>({});
     const [expressConfig, setExpressConfig] = useState<Record<string, any>>({});
@@ -151,6 +249,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [modulesInFlight, setModulesInFlight] = useState(0);
     const modulesCompletedRef = useRef(0);
     const moduleStartTableRef = useRef(false)
+    const afterModulesCallbackRef = useRef<null | (() => void)>(null);
 
     const [modalOpen, setModalOpen] = useState(false);
     const [modalIds, setModalIds] = useState<number[]>([]);
@@ -159,6 +258,69 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [statusOptions, setStatusOptions] = useState<string[]>([])
     const [modules, setModules] = useState<ModuleType[]>([]);
 
+    // какой столбец сейчас открыт в попапе
+    const [openFilterCol, setOpenFilterCol] = useState<string | null>(null);
+
+// локальные черновики (в попапах)
+    const [localFilterDraft, setLocalFilterDraft] = useState<Record<string, string>>({});
+    const [serverFilterDraft, setServerFilterDraft] = useState<Record<string, ServerDraftByCol>>({});
+
+// применённые фильтры (живут между открытиями попапов)
+    const [appliedLocalFilters, setAppliedLocalFilters] = useState<Record<string, string>>({});
+    const [appliedServerFilters, setAppliedServerFilters] = useState<Record<string, ServerAppliedByCol>>({});
+    const [filterSide, setFilterSide] = useState<'left' | 'right'>('left');
+
+    const [guidCounts, setGuidCounts] = useState<Record<string, { unread: number; total: number }>>({});
+
+
+    // Показывать только строки, где есть непрочитанные сообщения
+    const [unreadOnly, setUnreadOnly] = useState(false);
+
+// Активен ли фильтр у конкретной колонки (локальный или серверный)
+    const isColumnFiltered = useCallback(
+        (colKey: string) =>
+            Boolean((appliedLocalFilters[colKey] ?? '').trim()) ||
+            Boolean(appliedServerFilters[colKey]),
+        [appliedLocalFilters, appliedServerFilters]
+    );
+
+
+    useEffect(() => {
+        if (!unreadOnly) return;
+        // Соберём все GUID со всех строк текущей выдачи
+        const allGuids = new Set<string>();
+        tableData.forEach(row => {
+            getGuidsForRow(row).forEach(g => g && allGuids.add(g));
+        });
+        // Дотянем, чего нет в кэше
+        const toFetch = Array.from(allGuids).filter(g => !guidCounts[g]);
+        // На всякий — ограничим «залп» (можешь поднять/убрать лимит)
+        toFetch.slice(0, 300).forEach(g => { void fetchCountsForGuid(g); });
+    }, [unreadOnly, tableData, guidCounts]);
+
+    useEffect(() => console.log("filterSide: ", filterSide),[filterSide])
+    useEffect(() => {
+        localStorage.setItem(ROWS_PER_PAGE_KEY, String(rowsPerPage));
+        setCurrentPage(1);
+    }, [rowsPerPage, setCurrentPage]);
+
+    useEffect(() => {
+        setCurrentPage(1);
+        setSelectedRows(new Set());
+    }, [
+        selectedPreset?.preset?.id,
+        selectedStatus,
+        selectedOperator,
+        startDate?.getTime(),
+        endDate?.getTime(),
+        sortConfig?.key,
+        sortConfig?.direction,
+    ]);
+
+    const getSortIcon = useCallback((key: string) => {
+        if (!sortConfig || sortConfig.key !== key) return 'unfold_more'; // нейтральная
+        return sortConfig.direction === 'asc' ? 'north' : 'south';      // ↑ / ↓
+    }, [sortConfig]);
 
     useEffect(() => {
         if (!selectedPreset || !selectedPreset.preset?.id) return;
@@ -183,14 +345,100 @@ const PresetSelectorTable: React.FC<Props> = ({
         }
     }, [selectedPreset, presets]);
 
+    useEffect(() => {
+        // при смене пресета – подготовим черновики по его structure
+        const draftServer: Record<string, ServerDraftByCol> = {};
+        const draftLocal: Record<string, string> = {};
+
+        const structure = (selectedPreset?.preset?.structure ?? {}) as Record<string, ColumnCfgWithSearch>;
+        Object.entries(structure).forEach(([colKey, cfg]) => {
+            if (Array.isArray(cfg.search) && cfg.search.length) {
+                draftLocal[colKey] = ''; // пустая строка для «в найденном»
+                draftServer[colKey] = {
+                    selectedIdx: null,     // по умолчанию ничего не активно
+                    items: cfg.search.map(s => ({
+                        key: s.key,
+                        method: s.methods[0] as FilterMethod, // берём первый разрешённый
+                        values: [],
+                    })),
+                };
+            }
+        });
+
+        setLocalFilterDraft(draftLocal);
+        setServerFilterDraft(draftServer);
+
+        // при смене пресета очищаем применённые
+        setAppliedLocalFilters({});
+        setAppliedServerFilters({});
+        setOpenFilterCol(null);
+    }, [selectedPreset?.preset?.id]);
+
+    useEffect(() => {
+        const isSearching = !!searchTerm?.trim();
+
+        // старт поиска: запомним текущую страницу и уйдём на 1
+        if (isSearching && !wasSearchingRef.current) {
+            pageBeforeSearchRef.current = currentPage;
+            setCurrentPage(1);
+        }
+
+        // поиск очистили: восстановим страницу, если была
+        if (!isSearching && wasSearchingRef.current) {
+            if (pageBeforeSearchRef.current && pageBeforeSearchRef.current > 0) {
+                setCurrentPage(pageBeforeSearchRef.current);
+            }
+            pageBeforeSearchRef.current = null;
+        }
+
+        wasSearchingRef.current = isSearching;
+    }, [searchTerm]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
-    const glagolParent = "fs.at.glagol.ai";
+    const glagolParent2 = "fs.at.glagol.ai";
 
     const defaultStatusToState = useRef<boolean>(false)
 
     const projectPool = useSelector(useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]));
     const projectNames = useMemo(() => projectPool.map(p => p.project_name), [projectPool]);
+
+    const buildExtraFilterByFromMap = (map: Record<string, ServerAppliedByCol>) => {
+        const out: Record<string, any> = {};
+
+        Object.entries(map).forEach(([_, item]) => {
+            if (!item) return;
+            const { key, method, values } = item;
+            if (!key || !method) return;
+
+            if (method === 'DATES') {
+                const [startYmd, endYmd] = [values?.[0] || '', values?.[1] || ''];
+
+                if (isRealTimestampKey(key)) {
+                    const s = (startYmd || endYmd);
+                    const e = (endYmd || startYmd);
+                    if (s) {
+                        const startStr = formatWithTimezone(parseYmd(s), 'start');
+                        const endStr   = formatWithTimezone(parseYmd(e || s), 'end');
+                        out[key] = ['BETWEEN', [startStr, endStr]];
+                    }
+                } else {
+                    const days = expandDateStrings(startYmd, endYmd);
+                    if (days.length) out[key] = ['LIKE IN', days];
+                }
+                return;
+            }
+
+            if (method === 'IN' || method === 'NOT IN') {
+                out[key] = [method, values];
+                return;
+            }
+
+            // прочие бинарные методы (=, !=, LIKE, NOT LIKE)
+            out[key] = [method, values?.[0] ?? ''];
+        });
+
+        return out;
+    };
 
     const { sessionKey } = store.getState().operator
     useEffect(() => {
@@ -245,7 +493,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                         axios
                             .get<any>('/api/v1/express_configs', {
                                 params: {
-                                    glagol_parent: 'fs.at.akc24.ru',
+                                    glagol_parent: glagolParent,
                                     project_name: projectName
                                 },
                                 headers: { Accept: 'application/json' }
@@ -271,13 +519,14 @@ const PresetSelectorTable: React.FC<Props> = ({
         }
     }, [role, selectedPreset]);
 
+
     // 1) загрузка пресетов
     useEffect(() => {
         if (!role || projectNames.length === 0) return;
 
         (async () => {
             const response = await axios.post<Preset[]>('/api/v1/get_preset_list', {
-                glagol_parent: glagolParent,
+                glagol_parent: glagolParent2,
                 worker,
                 projects: projectNames,
                 role
@@ -315,8 +564,12 @@ const PresetSelectorTable: React.FC<Props> = ({
                 }
             }
         })();
-    }, [glagolParent, worker, role, projectNames]);
+    }, [glagolParent2, worker, role, projectNames]);
 
+    const finishChain = () => {
+        Swal.fire("Готово", "Действия выполнены", "success");
+        loadGroupedPhones();
+    };
 
     function formatWithTimezone(date: Date, timePart: 'start' | 'end'): string {
         const offsetMinutes = date.getTimezoneOffset();
@@ -330,6 +583,43 @@ const PresetSelectorTable: React.FC<Props> = ({
         const time = timePart === 'start' ? 'T00:00:00' : 'T23:59:59';
 
         return `${base}${time}${tz}`;
+    }
+
+    // yyyy-MM-dd -> Date (локальная полуночь)
+    function parseYmd(ymd: string): Date {
+        const [y, m, d] = ymd.split('-').map(Number);
+        return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0);
+    }
+
+// инкремент на 1 день
+    function addDays(date: Date, days: number): Date {
+        const dt = new Date(date);
+        dt.setDate(dt.getDate() + days);
+        return dt;
+    }
+
+// сделать массив yyyy-MM-dd для диапазона включительно
+    function expandDateStrings(startYmd: string, endYmd: string): string[] {
+        if (!startYmd && !endYmd) return [];
+        const s = parseYmd(startYmd || endYmd);
+        const e = parseYmd(endYmd || startYmd);
+        const start = s <= e ? s : e;      // если перепутали — поменяем местами
+        const end = s <= e ? e : s;
+
+        const out: string[] = [];
+        for (let dt = start; dt <= end; dt = addDays(dt, 1)) {
+            const yyyy = String(dt.getFullYear());
+            const mm = String(dt.getMonth() + 1).padStart(2, '0');
+            const dd = String(dt.getDate()).padStart(2, '0');
+            out.push(`${yyyy}-${mm}-${dd}`);
+        }
+        return out;
+    }
+
+// ключ считается timestamp-колонкой (created_dt/next_call_dt)?
+    function isRealTimestampKey(key: string): boolean {
+        const k = (key || '').toLowerCase();
+        return /\bcreated_dt\b/.test(k) || /\bnext_call_dt\b/.test(k);
     }
 
     useEffect(() => {
@@ -348,109 +638,111 @@ const PresetSelectorTable: React.FC<Props> = ({
         }
     }, [statusOptions]);
 
-    const loadGroupedPhones = async () => {
+    const loadGroupedPhones = async (extraFilterBy?: Record<string, any>) => {
         if (!selectedPreset) {
             setTableData([]);
             setSelectedActionOption(null);
             return;
         }
 
-        const { preset } = selectedPreset;
-
-        const filterBy: any = {
-            project: ['IN', preset.projects],
-        };
-
-        const filterByForSelect: any = {
-            project: ['IN', preset.projects],
-        };
-
-        if (startDate && endDate) {
-            const from = formatWithTimezone(startDate, 'start');
-            const to = formatWithTimezone(endDate, 'end');
-            filterBy.created_dt = ['BETWEEN', [from, to]];
-            filterByForSelect.created_dt = ['BETWEEN', [from, to]];
-        }
-
-        if (selectedStatus) {
-            filterBy.status = ['IN', [selectedStatus]];
-        }
-        if (selectedOperator) {
-            filterBy.manager = ['IN', [selectedOperator]];
-            filterByForSelect.manager = ['IN', [selectedOperator]];
-        }
-
+        const mySeq = ++requestSeqRef.current; // ← номер этого запроса
         setLoading(true);
+
         try {
-            const response1 = await axios.post<ApiRow[]>('/api/v1/get_grouped_phones', {
-                glagol_parent: glagolParent,
-                group_table: preset.group_table,
-                filter_by: filterBy,
-                preset_id: preset.id,
-                role
-            });
+            const { preset } = selectedPreset;
 
-            const response2 = await axios.post<Record<string, {
-                status: any; id: number
-            }[]>>('/api/v1/get_grouped_phones', {
-                glagol_parent: glagolParent,
-                group_by: ['project'],
-                group_table: preset.group_table,
-                filter_by: filterBy,
-                role
-            });
+            const common: any = { project: ['IN', preset.projects] };
+            const filterBy: any = { ...common };
+            const filterByForSelect: any = { ...common };
 
-            const response3 = await axios.post<Record<string, {
-                status: any; id: number
-            }[]>>('/api/v1/get_grouped_phones', {
-                glagol_parent: glagolParent,
-                group_by: ['project'],
-                group_table: preset.group_table,
-                filter_by: filterByForSelect,
-                role
-            });
+            // даты
+            if (startDate && endDate) {
+                const from = formatWithTimezone(startDate, 'start');
+                const to   = formatWithTimezone(endDate, 'end');
+                filterBy.created_dt = ['BETWEEN', [from, to]];
+                filterByForSelect.created_dt = ['BETWEEN', [from, to]];
+            }
+            if (selectedStatus) filterBy.status = ['IN', [selectedStatus]];
+            if (selectedOperator) {
+                filterBy.manager = ['IN', [selectedOperator]];
+                filterByForSelect.manager = ['IN', [selectedOperator]];
+            }
 
-            const statusOptions = Object.values(response3.data).flat().map(phone => phone.status);
+            // ⚠️ добавляем серверные фильтры по условию, собранные из попапов
+            const extra = extraFilterBy ?? buildExtraFilterByFromMap(appliedServerFilters);
+            Object.assign(filterBy, extra);
+
+            const [response1, response2, response3] = await Promise.all([
+                axios.post<ApiRow[]>('/api/v1/get_grouped_phones', {
+                    glagol_parent: glagolParent2,
+                    group_table: preset.group_table,
+                    filter_by: filterBy,
+                    preset_id: preset.id,
+                    role
+                }),
+                axios.post<Record<string, { status: any; id: number }[]>>('/api/v1/get_grouped_phones', {
+                    glagol_parent: glagolParent2,
+                    group_by: ['project'],
+                    group_table: preset.group_table,
+                    filter_by: filterBy,
+                    role
+                }),
+                axios.post<Record<string, { status: any; id: number }[]>>('/api/v1/get_grouped_phones', {
+                    glagol_parent: glagolParent2,
+                    group_by: ['project'],
+                    group_table: preset.group_table,
+                    filter_by: filterByForSelect,
+                    role
+                }),
+            ]);
+
+            // если за время ожидания стартовал новый запрос — выходим молча
+            if (requestSeqRef.current !== mySeq) return;
+
+            const statusOptions = Object.values(response3.data).flat().map(p => p.status);
             const uniqueStatusOptions = statusOptions.filter((s, i, arr) => arr.indexOf(s) === i);
             setStatusOptions(uniqueStatusOptions);
 
             const projectIdData = response2.data;
             const flatPhones = Object.values(projectIdData).flat();
+            console.log("flatPhones: ", flatPhones)
             setPhonesData(flatPhones);
+            setFlatPhones(flatPhones)
 
             const flat = Object.entries(projectIdData).flatMap(([project_name, list]) =>
                 list.map(item => ({ id: item.id, project_name }))
             );
-
-            setFlatPhones(flatPhones)
-            console.log("projectIdData: ", projectIdData)
-
             setIdProjectMap(flat);
 
             setTableData(response1.data);
             setSelectedActionOption(null);
-            if (response1.data.length < 11) {
-                setCurrentPage(1);
-            }
-            setSearchTerm('');
+
+            if (response1.data.length < 11) setCurrentPage(1);
             setSortConfig(null);
             setSelectedRows(new Set());
-        } catch (error) {
-            console.error("Ошибка загрузки данных:", error);
+
+            // ⚠️ НЕ сбрасывай searchTerm здесь, иначе сломается «память страницы при поиске»
+            // setSearchTerm('');
+        } catch (err) {
+            if (requestSeqRef.current === mySeq) {
+                console.error('Ошибка загрузки данных:', err);
+            }
         } finally {
-            setLoading(false);
+            if (requestSeqRef.current === mySeq) setLoading(false);
         }
     };
 
     useEffect(() => {
+        if (!selectedPreset) return;
+
+        const bothNull = !startDate && !endDate;
+        const bothSet  = !!startDate && !!endDate;
+
+        // игнорируем промежуточку (кликнули только start или только end)
+        if (!(bothNull || bothSet)) return;
+
         loadGroupedPhones();
-    }, [
-        selectedPreset,
-        startDate,
-        endDate,
-        selectedStatus,
-        selectedOperator
-    ]);
+    }, [selectedPreset, startDate, endDate, selectedStatus, selectedOperator]);
 
     // Опции для выпадающего списка действий в шапке
     const actionOptions: ActionOption[] = useMemo(() => {
@@ -480,11 +772,18 @@ const PresetSelectorTable: React.FC<Props> = ({
             modulesCompletedRef.current += 1;
             // console.log("modulesCompletedRef.current: ", modulesCompletedRef.current)
             if (modulesCompletedRef.current >= modulesInFlight) {
-
                 Swal.fire("Готово", "Все модули завершены", "success");
-                moduleStartTableRef.current = false
-                modulesCompletedRef.current = 0
-                loadGroupedPhones();
+                moduleStartTableRef.current = false;
+                modulesCompletedRef.current = 0;
+                setModulesInFlight(0);
+
+                const cb = afterModulesCallbackRef.current;
+                afterModulesCallbackRef.current = null;
+                if (cb) {
+                    cb();                 // продолжаем цепочку (следующий шаг)
+                } else {
+                    finishChain();        // это был последний шаг — обновляем таблицу
+                }
 
             }
         };
@@ -510,125 +809,136 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     useEffect(() => console.log("actionOptions: ", actionOptions),[actionOptions])
     // Внутри PresetSelectorTable:
-    const processRows = (rows: ApiRow[], opt: ActionOption, operator?: string, allCount?: number, count?: number) => {
-        const act = opt.action;
+    const processRows = (rows: ApiRow[], opt: ActionOption, operator?: string) => {
+        if (!opt?.action) return;
 
-        // Собираем все ID и группируем по проектам
+        const steps = extractActionSteps(opt.action);
+        if (!steps.length) return;
+
+        // подготовим группы id по проектам
         const allIds = rows.flatMap(r => r.id_list);
-        const idToProject = idProjectMap.reduce<Record<number,string>>((acc, {id, project_name}) => {
-            acc[id] = project_name;
-            return acc;
+        const idToProject = idProjectMap.reduce<Record<number, string>>((acc, { id, project_name }) => {
+            acc[id] = project_name; return acc;
         }, {});
         const groups = allIds.reduce<Record<string, number[]>>((acc, id) => {
             const proj = idToProject[id] || "unknown";
-            if (!acc[proj]) acc[proj] = [];
-            acc[proj].push(id);
+            (acc[proj] ||= []).push(id);
             return acc;
         }, {});
 
-        if (act.action_type === 'code') {
-            const targetName = act.code_filename.replace(/\.py$/, '');
-            const foundModule = modules.find(m => m.filename.replace(/\.py$/, '') === targetName);
-            if (!foundModule) {
-                return Swal.fire('Ошибка', `Модуль "${act.code_filename}" не найден.`, 'error');
+        const runStep = (i: number) => {
+            if (i >= steps.length) {
+                finishChain();
+                return;
             }
+            const step = steps[i];
 
-            type KwargDef = { source: string; default?: string };
-            const argDefs = Object.values(foundModule.kwargs || {}) as KwargDef[];
-            let pendingCount = 0;
-            // groups: Record<project_name, number[]>
-            Object.entries(groups).forEach(([project_name, ids]) => {
-                const idToContact = ids.map(id => {
-                    const contact = phonesData.find((p: any) => p.id === id);
-                    return { id, contactInfo: contact?.contact_info ?? {} };
-                });
+            switch (step.type) {
+                case "assign": {
+                    const reqs: Promise<any>[] = [];
+                    Object.entries(groups).forEach(([project_name, ids]) => {
+                        if (!selectedPreset?.preset.group_by) return;
 
-                const groupedByContactInfo = new Map<string, { ids: number[]; kwargs: Record<string, string> }>();
+                        const sample = flatPhones.find(p => p.id === ids[0]);
+                        const filter_by: Record<string, string> = {};
+                        selectedPreset.preset.group_by.forEach(k => {
+                            if (sample && k in sample) filter_by[k] = sample[k];
+                        });
 
-                idToContact.forEach(({ id, contactInfo }) => {
-                    // Фильтруем только нужные поля и подставляем default
-                    const kwargs: Record<string, string> = {};
-                    argDefs.forEach(({ source, default: def }) => {
-                        if (!source) return;
-                        const value = contactInfo[source];
-                        kwargs[source] = (value !== undefined && value !== null && value !== '') ? value : (def ?? '');
+                        if (operator) {
+                            reqs.push(
+                                axios.put('/api/v1/phones/update', {
+                                    glagol_parent: glagolParent,
+                                    project_name,
+                                    filter_by,
+                                    update: { manager: operator }
+                                }).catch(() => null)
+                            );
+                        }
                     });
 
-                    const hashKey = JSON.stringify(kwargs);
-                    if (!groupedByContactInfo.has(hashKey)) {
-                        groupedByContactInfo.set(hashKey, { ids: [], kwargs });
-                    }
-                    groupedByContactInfo.get(hashKey)!.ids.push(id);
-                });
-
-
-                groupedByContactInfo.forEach(({ ids: groupedIds, kwargs }) => {
-                    pendingCount += 1;
-                    socket.emit('run_module', {
-                        uuid: "",
-                        b_uuid: "",
-                        worker,
-                        session_key: sessionKey,
-                        projects: { [project_name]: kwargs },
-                        filename: targetName,
-                        common_code: foundModule.common_code,
-                    });
-
-                    console.log(`[run_module] project=${project_name}, ids=[${groupedIds.join(', ')}], kwargs=`, kwargs);
-                });
-
-
-            });
-            // loadGroupedPhones()
-            if (pendingCount > 0) {
-                moduleStartTableRef.current = true
-                setModulesInFlight(pendingCount);
-                modulesCompletedRef.current = 0;
-            }
-
-        } else if (act.action_type === 'assign') {
-        Object.entries(groups).forEach(([project_name, ids]) => {
-            if (!selectedPreset?.preset.group_by) return;
-
-            const filter_by: Record<string, string> = {};
-
-            selectedPreset.preset.group_by.forEach(groupField => {
-                const sample = flatPhones.find(p => p.id === ids[0]);
-                if (sample && groupField in sample) {
-                    filter_by[groupField] = sample[groupField];
+                    Promise.allSettled(reqs).then(() => runStep(i + 1));
+                    break;
                 }
-            });
-            if (operator) {
-                axios.put('/api/v1/phones/update', {
-                    glagol_parent: "fs.at.akc24.ru",
-                    project_name,
-                    filter_by,
-                    update: {
-                        manager: operator
+
+                case "delete": {
+                    Object.entries(groups).forEach(([project_name, ids]) => {
+                        socket.emit("delete_phone", { worker, session_key: sessionKey, project_name, ids });
+                    });
+                    runStep(i + 1);
+                    break;
+                }
+
+                case "code": {
+                    const target = String(step.code_filename || '').replace(/\.py$/, '');
+                    const found = modules.find(m => m.filename.replace(/\.py$/, '') === target);
+                    if (!found) {
+                        Swal.fire('Ошибка', `Модуль "${step.code_filename}" не найден.`, 'error');
+                        return;
                     }
-                }).catch(err => {
-                    console.error('Ошибка обновления контакта', err);
-                });
+
+                    type KwargDef = { source: string; default?: string };
+                    const argDefs = Object.values(found.kwargs || {}) as KwargDef[];
+
+                    let pending = 0;
+                    Object.entries(groups).forEach(([project_name, ids]) => {
+                        const byArgs = new Map<string, { ids: number[]; kwargs: Record<string, string> }>();
+
+                        ids.forEach(id => {
+                            const contact = phonesData.find((p: any) => p.id === id);
+                            const ci = contact?.contact_info ?? {};
+                            const kwargs: Record<string, string> = {};
+                            argDefs.forEach(({ source, default: def }) => {
+                                if (!source) return;
+                                const v = ci[source];
+                                kwargs[source] = (v ?? def ?? '') as string;
+                            });
+
+                            const key = JSON.stringify(kwargs);
+                            if (!byArgs.has(key)) byArgs.set(key, { ids: [], kwargs });
+                            byArgs.get(key)!.ids.push(id);
+                        });
+
+                        byArgs.forEach(({ kwargs }) => {
+                            pending += 1;
+                            socket.emit('run_module', {
+                                uuid: "", b_uuid: "", worker, session_key: sessionKey,
+                                projects: { [project_name]: kwargs },
+                                filename: target,
+                                common_code: found.common_code,
+                            });
+                        });
+                    });
+
+                    if (pending > 0) {
+                        moduleStartTableRef.current = true;
+                        setModulesInFlight(pending);
+                        modulesCompletedRef.current = 0;
+                        afterModulesCallbackRef.current = () => runStep(i + 1);
+                    } else {
+                        runStep(i + 1);
+                    }
+                    break;
+                }
+
+                // case "activate": {
+                //     const reqs = (selectedPreset?.preset.projects || []).map(project =>
+                //         axios.post('/api/v1/start_express', {
+                //             glagol_parent: 'fs.at.akc24.ru',
+                //             project_name: project
+                //         }).catch(() => null)
+                //     );
+                //     Promise.allSettled(reqs).then(() => runStep(i + 1));
+                //     break;
+                // }
+
+                default:
+                    // незнакомый шаг — пропускаем
+                    runStep(i + 1);
             }
+        };
 
-        });
-        if (allCount === count) {
-            Swal.fire("Готово", "Операторы назначены", "success");
-            loadGroupedPhones()
-        }
-    }
-    else if (act.action_type === "delete") {
-            Object.entries(groups).forEach(([project_name, ids]) => {
-                socket.emit("delete_phone", {
-                    worker, session_key: sessionKey, project_name, ids
-                });
-            });
-            loadGroupedPhones()
-            Swal.fire("Готово", "Контакты удалены успешно", "success");
-        }
-
-
-        // loadGroupedPhones()
+        runStep(0);
     };
 
 
@@ -660,9 +970,11 @@ const PresetSelectorTable: React.FC<Props> = ({
         }
 
         // 4) Если одна строка, но несколько ID — открываем модалку
-        if (rows.length === 1 && rows[0].id_list.length > 1 && actionOpt?.action.action_type !== "assign") {
+        const steps = actionOpt ? extractActionSteps(actionOpt.action) : [];
+        const needsModal = steps.some(s => s.type !== 'assign'); // для цепочек с чем-то кроме assign
+        if (rows.length === 1 && rows[0].id_list.length > 1 && needsModal) {
             setModalIds(rows[0].id_list);
-            setModalAction(opt!.action);
+            setModalAction(actionOpt!.action);
             setModalOpen(true);
             return;
         }
@@ -676,23 +988,48 @@ const PresetSelectorTable: React.FC<Props> = ({
     const processedRows = useMemo(() => {
         if (!selectedPreset) return [];
 
-        const term = searchTerm.toLowerCase();
+        let result = tableData;
 
-        let result = tableData.filter(row => {
-            return Object.keys(selectedPreset.preset.structure).some(colKey => {
-                const cell = row[colKey] as ColumnCell | undefined;
-                if (!cell || !cell.value) return false;
-                return cell.value.join(' ').toLowerCase().includes(term);
-            });
-        });
+        // 4.1 Локальные фильтры «в найденном» (по И)
+        const activeLocal = Object.entries(appliedLocalFilters)
+            .map(([colKey, val]) => [colKey, (val ?? '').trim().toLowerCase()] as const)
+            .filter(([, v]) => v.length > 0);
 
+        if (activeLocal.length) {
+            result = result.filter(row =>
+                activeLocal.every(([colKey, needle]) => {
+                    const cell = row[colKey] as ColumnCell | undefined;
+                    if (!cell || !Array.isArray(cell.value)) return false;
+                    const hay = cell.value.join(' ').toLowerCase();
+                    return hay.includes(needle);
+                })
+            );
+        }
+
+        // 4.2 Глобальный поиск по всем колонкам
+        const term = (searchTerm ?? '').toLowerCase().trim();
+        if (term) {
+            result = result.filter(row =>
+                Object.keys(selectedPreset.preset.structure).some(colKey => {
+                    const cell = row[colKey] as ColumnCell | undefined;
+                    if (!cell || !cell.value) return false;
+                    return cell.value.join(' ').toLowerCase().includes(term);
+                })
+            );
+        }
+
+        // 4.2.5 Только строки с непрочитанными
+        if (unreadOnly) {
+            result = result.filter(row => getRowMsgInfo(row).sumUnread > 0);
+        }
+
+        // 4.3 Сортировка
         if (sortConfig) {
             result = [...result].sort((a, b) => {
                 const aCell = a[sortConfig.key] as ColumnCell | undefined;
                 const bCell = b[sortConfig.key] as ColumnCell | undefined;
                 const aStr = aCell?.value?.join(' ') ?? '';
                 const bStr = bCell?.value?.join(' ') ?? '';
-
                 if (aStr < bStr) return sortConfig.direction === 'asc' ? -1 : 1;
                 if (aStr > bStr) return sortConfig.direction === 'asc' ? 1 : -1;
                 return 0;
@@ -700,15 +1037,29 @@ const PresetSelectorTable: React.FC<Props> = ({
         }
 
         return result;
-    }, [tableData, searchTerm, sortConfig, selectedPreset]);
+    }, [
+        tableData,
+        phonesData,
+        searchTerm,
+        sortConfig,
+        selectedPreset,
+        appliedLocalFilters,
+        unreadOnly,
+        guidCounts
+    ]);
 
     useEffect( () => console.log("processedRows: ",processedRows),[processedRows] )
     // 3.3 разбиваем на страницы
-    const totalPages = Math.max(1, Math.ceil(processedRows.length / ROWS_PER_PAGE));
+    const totalPages = Math.max(1, Math.ceil(processedRows.length / rowsPerPage));
     const paginatedRows = processedRows.slice(
-        (currentPage-1)*ROWS_PER_PAGE,
-        currentPage*ROWS_PER_PAGE
+        (currentPage - 1) * rowsPerPage,
+        currentPage * rowsPerPage
     );
+
+    const totalRowsCount = processedRows.length;
+    const showingFrom = totalRowsCount ? (currentPage - 1) * rowsPerPage + 1 : 0;
+    const showingTo   = totalRowsCount ? Math.min(currentPage * rowsPerPage, totalRowsCount) : 0;
+
     useEffect(() => console.log("selected: ", selectedPreset),[selectedPreset])
     // --- обработчики ---
     const toggleSort = (colKey: string) => {
@@ -798,7 +1149,7 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     const handleStartExpress = async (project: string) => {
         await axios.post('/api/v1/start_express', {
-            glagol_parent: 'fs.at.akc24.ru',
+            glagol_parent: glagolParent,
             project_name: project
         });
         await fetchStatuses();
@@ -806,7 +1157,7 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     const handleStopExpress = async (project: string, express_id: number) => {
         await axios.post('/api/v1/stop_express', {
-            glagol_parent: 'fs.at.akc24.ru',
+            glagol_parent: glagolParent,
             project_name: project
         });
         await fetchStatuses();
@@ -817,7 +1168,6 @@ const PresetSelectorTable: React.FC<Props> = ({
     const loginForUnread = hasSipLogin ? sipLogin : "client";
 
 // кэш счётчиков по guid
-    const [guidCounts, setGuidCounts] = useState<Record<string, { unread: number; total: number }>>({});
 
 // достать guid из элемента phonesData (учёт разных полей)
     function getGuidFromPhone(p: any): string | null {
@@ -1008,6 +1358,74 @@ const PresetSelectorTable: React.FC<Props> = ({
         );
     };
 
+    const applyColumnFilters = (colKey: string) => {
+        // локальный фильтр (в найденном)
+        const nextLocal = {
+            ...appliedLocalFilters,
+            [colKey]: (localFilterDraft[colKey] ?? '').trim(),
+        };
+        setAppliedLocalFilters(nextLocal);
+
+        // серверный фильтр по радиокнопке
+        const sd = serverFilterDraft[colKey];
+        let nextServerForCol: ServerAppliedByCol = null;
+        if (sd && sd.selectedIdx !== null) {
+            const item = sd.items[sd.selectedIdx];
+            nextServerForCol = { key: item.key, method: item.method, values: [...item.values] };
+        }
+
+        const nextServer = { ...appliedServerFilters, [colKey]: nextServerForCol };
+        setAppliedServerFilters(nextServer);
+
+        setOpenFilterCol(null);
+
+        // ⚠️ главное: грузим с ТЕМ, что только что применили
+        const extra = buildExtraFilterByFromMap(nextServer);
+        loadGroupedPhones(extra);
+    };
+
+    const resetColumnFilters = (colKey: string) => {
+        // сброс локального
+        const nextLocal = { ...appliedLocalFilters, [colKey]: '' };
+        setAppliedLocalFilters(nextLocal);
+        setLocalFilterDraft(prev => ({ ...prev, [colKey]: '' }));
+
+        // сброс серверного
+        setServerFilterDraft(prev => {
+            const cur = prev[colKey];
+            if (!cur) return prev;
+            return {
+                ...prev,
+                [colKey]: { ...cur, selectedIdx: null, items: cur.items.map(i => ({ ...i, values: [] })) }
+            };
+        });
+        const nextServer = { ...appliedServerFilters, [colKey]: null };
+        setAppliedServerFilters(nextServer);
+
+        setOpenFilterCol(null);
+
+        const extra = buildExtraFilterByFromMap(nextServer);
+        loadGroupedPhones(extra);
+    };
+
+    useEffect(() => {
+        const tp = Math.max(1, Math.ceil(processedRows.length / rowsPerPage));
+        if (currentPage > tp) setCurrentPage(tp);
+    }, [processedRows.length, rowsPerPage, currentPage, setCurrentPage]);
+
+    useEffect(() => {
+        setPageInput(String(currentPage));
+    }, [currentPage]);
+
+    const goToPage = (n: number) => {
+        const page = Math.max(1, Math.min(totalPages, n || 1));
+        setCurrentPage(page);
+    };
+
+    const commitPageInput = () => {
+        const n = parseInt(pageInput, 10);
+        if (Number.isFinite(n)) goToPage(n);
+    };
 
     const  mockDataForStatus = []
     const handleDateChange = (dates: [Date | null, Date | null]) => {
@@ -1106,6 +1524,10 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 selectsRange
                                 placeholderText="Выберите период"
                                 className="form-control"
+                                onChangeRaw={(e) => { e?.preventDefault(); }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Backspace' || e.key === 'Delete') e.preventDefault();
+                                }}
                                 dateFormat="dd.MM.yyyy"
                             />
                         </div>
@@ -1178,6 +1600,23 @@ const PresetSelectorTable: React.FC<Props> = ({
 
                 {selectedPreset && !loading && (
                     <div >
+                        <div
+                            className="d-flex justify-content-between align-items-center mb-2"
+                            aria-live="polite"
+                            style={{ gap: 12 }}
+                        >
+                            <div>
+                                Сформировано строк: <strong>{totalRowsCount}</strong>
+                                {totalRowsCount > 0 && (
+                                    <span className="text-muted" style={{ marginLeft: 8 }}>
+                                        (показано {showingFrom}–{showingTo})
+                                    </span>
+                                )}
+                            </div>
+                            <div className="text-muted">
+                                Выбрано: <strong>{selectedRows.size}</strong>
+                            </div>
+                        </div>
                     <div style={{ height: '70vh', overflowY: 'auto' }}>
                         {/*<div className="overflow-y-auto" style={{height: "60vh"}}>*/}
                             <table className="w-100 table-auto border-collapse">
@@ -1195,26 +1634,373 @@ const PresetSelectorTable: React.FC<Props> = ({
                                             onChange={toggleSelectAll}
                                         />
                                     </th>
-                                    {Object.entries(selectedPreset.preset.structure)
+                                    {Object.entries(selectedPreset.preset.structure as Record<string, ColumnCfgWithSearch>)
                                         .sort(([a], [b]) => Number(a) - Number(b))
-                                        .map(([colKey, cfg]) => (
-                                            <th
-                                                key={colKey}
-                                                className="border p-2 cursor-pointer select-none"
-                                                onClick={() => toggleSort(colKey)}
-                                                style={{ cursor: 'pointer' }}
-                                            >
-                                                {cfg.name}
-                                                {sortConfig?.key === colKey && (
-                                                    <span className="material-icons ml-1" style={{ fontSize: '18px' }}>
-                                                        {sortConfig.direction === 'asc'
-                                                            ? 'keyboard_arrow_up'
-                                                            : 'keyboard_arrow_down'}
+                                        .map(([colKey, cfg]) => {
+                                            const hasSearch = Array.isArray(cfg.search) && cfg.search.length > 0;
+                                            const isOpen = openFilterCol === colKey;
+
+                                            return (
+                                                <th
+                                                    key={colKey}
+                                                    className="border p-2 select-none"
+                                                    style={{ position: 'relative', whiteSpace: 'nowrap' }}
+                                                    aria-sort={
+                                                        sortConfig?.key === colKey
+                                                            ? (sortConfig.direction === 'asc' ? 'ascending' : 'descending')
+                                                            : 'none'
+                                                    }
+                                                >
+                                                    <span
+                                                          onClick={() => toggleSort(colKey)}
+                                                          style={{ cursor: 'pointer', userSelect: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                                                          title={
+                                                              sortConfig?.key === colKey
+                                                                  ? (sortConfig.direction === 'asc' ? 'Сортировка: по возрастанию' : 'Сортировка: по убыванию')
+                                                                  : 'Сортировать'
+                                                          }
+                                                    >
+                                                        {cfg.name}
+
+                                                        {/* Иконка сортировки */}
+                                                          <span
+                                                              className="material-icons"
+                                                              style={{
+                                                                  fontSize: 18,
+                                                                  lineHeight: 1,
+                                                                  opacity: sortConfig?.key === colKey ? 1 : 0.35, // бледная, если не активный столбец
+                                                                  verticalAlign: 'middle'
+                                                              }}
+                                                          >
+                                                          {getSortIcon(colKey)}
+                                                        </span>
+
+                                                          {/* Точка-индикатор активных фильтров по колонке */}
+                                                          {isColumnFiltered(colKey) && (
+                                                              <span
+                                                                  style={{
+                                                                      display: 'inline-block',
+                                                                      width: 6,
+                                                                      height: 6,
+                                                                      borderRadius: 3,
+                                                                      background: '#1976d2',
+                                                                      verticalAlign: 'middle'
+                                                                  }}
+                                                              />
+                                                          )}
                                                     </span>
-                                                )}
-                                            </th>
-                                        ))}
-                                    <th className="border p-2" title="Непрочитанные / Всего">Сообщения</th>
+
+                                                    {hasSearch && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                // твоя логика открытия попапа — оставил как у тебя
+                                                                const isOpen = openFilterCol === colKey;
+                                                                if (isOpen) { setOpenFilterCol(null); return; }
+
+                                                                const th = (e.currentTarget.closest('th') as HTMLElement) || e.currentTarget;
+                                                                const rect = th.getBoundingClientRect();
+                                                                const vw = window.innerWidth;
+
+                                                                const POPUP_W = 360;
+                                                                const GAP = 12;
+
+                                                                let side: 'left' | 'right' = 'left';
+                                                                if (rect.left < POPUP_W + GAP) side = 'right';
+                                                                else if (vw - rect.right < POPUP_W + GAP) side = 'left';
+
+                                                                setFilterSide(side);
+                                                                setOpenFilterCol(colKey);
+                                                            }}
+                                                            className="btn btn-sm btn-link"
+                                                            style={{
+                                                                marginLeft: 6,
+                                                                padding: 0,
+                                                                verticalAlign: 'middle',
+                                                                color: isColumnFiltered(colKey) ? '#1976d2' : undefined,
+                                                            }}
+                                                            title="Фильтр по столбцу"
+                                                        >
+                                                            <span className="material-icons" style={{ fontSize: 18 }}>filter_list</span>
+                                                        </button>
+                                                    )}
+
+                                                    {/* Попап фильтра */}
+                                                    {hasSearch && isOpen && (
+                                                        <div
+                                                            className="card"
+                                                            style={{
+                                                                position: 'absolute',
+                                                                top: 'calc(100% + 6px)',
+                                                                zIndex: 50,
+                                                                width: 360,
+                                                                // на узких экранах не вываливаться за края
+                                                                maxWidth: 'min(360px, calc(100vw - 24px))',
+                                                                padding: 12,
+                                                                boxShadow: '0 10px 24px rgba(0,0,0,0.15)',
+                                                                // куда открываемся: влево (прилипание к правому краю th) или вправо (к левому)
+                                                                ...(filterSide === 'left' ? { right: 0 } : { left: 0 }),
+                                                            }}
+                                                        >
+                                                            {/* Фильтрация в найденном */}
+                                                            <div style={{ marginBottom: 12 }}>
+                                                                <div style={{ fontWeight: 600, marginBottom: 6 }}>Фильтрация в найденном</div>
+                                                                <input
+                                                                    className="form-control"
+                                                                    placeholder="Поиск внутри найденного"
+                                                                    value={localFilterDraft[colKey] ?? ''}
+                                                                    onChange={e => setLocalFilterDraft(prev => ({ ...prev, [colKey]: e.target.value }))}
+                                                                />
+                                                            </div>
+
+                                                            {/* Фильтрация по условию */}
+                                                            <div style={{ borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 10 }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                                                                    <div style={{ fontWeight: 600 }}>Фильтрация по условию</div>
+                                                                    <button
+                                                                        type="button"
+                                                                        className="btn btn-link p-0"
+                                                                        onClick={() => resetColumnFilters(colKey)}
+                                                                    >
+                                                                        Сбросить
+                                                                    </button>
+                                                                </div>
+
+                                                                {/* список вариантов из search[] */}
+                                                                {(cfg.search ?? []).map((s, idx) => {
+                                                                    const sd = serverFilterDraft[colKey];
+                                                                    const selected = sd?.selectedIdx === idx;
+                                                                    const draftItem = sd?.items[idx];
+
+                                                                    return (
+                                                                        <div key={idx} style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8, padding: 8, marginTop: 8 }}>
+                                                                            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                                                                <input
+                                                                                    type="radio"
+                                                                                    name={`srvf-${colKey}`}
+                                                                                    checked={!!selected}
+                                                                                    onChange={() => setServerFilterDraft(prev => ({
+                                                                                        ...prev,
+                                                                                        [colKey]: { ...(prev[colKey] ?? { selectedIdx: null, items: [] }), selectedIdx: idx }
+                                                                                    }))}
+                                                                                />
+                                                                                <span style={{ fontWeight: 500 }}>{s.name}</span>
+                                                                            </label>
+
+                                                                            {/* «Критерий» */}
+                                                                            <div className="mt-2">
+                                                                                <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 4 }}>Критерий</div>
+                                                                                <select
+                                                                                    className="form-control"
+                                                                                    disabled={!selected}
+                                                                                    value={draftItem?.method ?? s.methods[0]}
+                                                                                    onChange={e => setServerFilterDraft(prev => {
+                                                                                        const cur = prev[colKey];
+                                                                                        if (!cur) return prev;
+                                                                                        const items = cur.items.slice();
+                                                                                        items[idx] = { ...(items[idx] ?? { key: s.key, method: s.methods[0], values: [] }), method: e.target.value as FilterMethod, key: s.key };
+                                                                                        return { ...prev, [colKey]: { ...cur, items } };
+                                                                                    })}
+                                                                                >
+                                                                                    {s.methods.map(m => <option key={m} value={m}>{MethodLabel(m)}</option>)}
+                                                                                </select>
+                                                                            </div>
+
+                                                                            {/* Значения */}
+                                                                            <div className="mt-2">
+                                                                                {(() => {
+                                                                                    const method = draftItem?.method ?? s.methods[0];
+                                                                                    const opts = s.options ?? [];
+
+                                                                                    // --- DATES ---
+                                                                                    if (method === 'DATES') {
+                                                                                        const startYmd = (draftItem?.values?.[0] ?? '') as string;
+                                                                                        const endYmd   = (draftItem?.values?.[1] ?? '') as string;
+
+                                                                                        const startDate = startYmd ? parseYmd(startYmd) : null;
+                                                                                        const endDate   = endYmd ? parseYmd(endYmd) : null;
+
+                                                                                        return (
+                                                                                            <DatePicker
+                                                                                                selected={startDate}
+                                                                                                onChange={(range: [Date | null, Date | null]) => {
+                                                                                                    const [startD, endD] = range || [];
+                                                                                                    const toYmd = (d: Date | null) =>
+                                                                                                        d
+                                                                                                            ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+                                                                                                            : '';
+
+                                                                                                    const v0 = toYmd(startD);
+                                                                                                    const v1 = toYmd(endD);
+
+                                                                                                    setServerFilterDraft(prev => {
+                                                                                                        const cur = prev[colKey]; if (!cur) return prev;
+                                                                                                        const items = cur.items.slice();
+                                                                                                        items[idx] = {
+                                                                                                            ...(items[idx] ?? { key: s.key, method: 'DATES' as FilterMethod, values: [] }),
+                                                                                                            key: s.key,
+                                                                                                            method: 'DATES' as FilterMethod,
+                                                                                                            values: [v0, v1],
+                                                                                                        };
+                                                                                                        return { ...prev, [colKey]: { ...cur, items } };
+                                                                                                    });
+                                                                                                }}
+                                                                                                startDate={startDate}
+                                                                                                endDate={endDate}
+                                                                                                selectsRange
+                                                                                                placeholderText="Диапазон дат"
+                                                                                                className="form-control w-100"
+                                                                                                wrapperClassName="w-100"
+                                                                                                onChangeRaw={(e) => { e?.preventDefault(); }}
+                                                                                                onKeyDown={(e) => {
+                                                                                                    if (e.key === 'Backspace' || e.key === 'Delete') e.preventDefault();
+                                                                                                }}
+                                                                                                dateFormat="dd.MM.yyyy"
+                                                                                            />
+                                                                                        );
+                                                                                    }
+                                                                                        else if (method === 'IN' || method === 'NOT IN') {
+                                                                                            if (opts.length) {
+                                                                                                return (
+                                                                                                    <div style={{ maxHeight: 160, overflowY: 'auto', padding: 6, border: '1px solid rgba(0,0,0,0.08)', borderRadius: 6 }}>
+                                                                                                        {opts.map(opt => {
+                                                                                                            const checked = !!draftItem?.values?.includes(opt);
+                                                                                                            return (
+                                                                                                                <label key={opt} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
+                                                                                                                    <input
+                                                                                                                        type="checkbox"
+                                                                                                                        disabled={!selected}
+                                                                                                                        checked={checked}
+                                                                                                                        onChange={e => setServerFilterDraft(prev => {
+                                                                                                                            const cur = prev[colKey]; if (!cur) return prev;
+                                                                                                                            const items = cur.items.slice();
+                                                                                                                            const it = { ...(items[idx] ?? { key: s.key, method, values: [] }) };
+                                                                                                                            const set = new Set(it.values ?? []);
+                                                                                                                            if (e.target.checked) set.add(opt); else set.delete(opt);
+                                                                                                                            it.values = Array.from(set);
+                                                                                                                            items[idx] = it;
+                                                                                                                            return { ...prev, [colKey]: { ...cur, items } };
+                                                                                                                        })}
+                                                                                                                    />
+                                                                                                                    {opt}
+                                                                                                                </label>
+                                                                                                            );
+                                                                                                        })}
+                                                                                                    </div>
+                                                                                                );
+                                                                                            } else {
+                                                                                                // нет options — ввод через запятую
+                                                                                                return (
+                                                                                                    <textarea
+                                                                                                        className="form-control"
+                                                                                                        disabled={!selected}
+                                                                                                        placeholder="Значения через запятую"
+                                                                                                        value={(draftItem?.values ?? []).join(', ')}
+                                                                                                        onChange={e => setServerFilterDraft(prev => {
+                                                                                                            const cur = prev[colKey]; if (!cur) return prev;
+                                                                                                            const items = cur.items.slice();
+                                                                                                            items[idx] = { ...(items[idx] ?? { key: s.key, method, values: [] }),
+                                                                                                                values: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                                                                                                            };
+                                                                                                            return { ...prev, [colKey]: { ...cur, items } };
+                                                                                                        })}
+                                                                                                    />
+                                                                                                );
+                                                                                            }
+                                                                                        }
+
+                                                                                    // одиночное значение: если options есть — селект, иначе input
+                                                                                    if (opts.length) {
+                                                                                        const val = (draftItem?.values?.[0] ?? '') as string;
+                                                                                        return (
+                                                                                            <select
+                                                                                                className="form-control"
+                                                                                                disabled={!selected}
+                                                                                                value={val}
+                                                                                                onChange={e => setServerFilterDraft(prev => {
+                                                                                                    const cur = prev[colKey]; if (!cur) return prev;
+                                                                                                    const items = cur.items.slice();
+                                                                                                    items[idx] = { ...(items[idx] ?? { key: s.key, method, values: [] }),
+                                                                                                        values: [e.target.value]
+                                                                                                    };
+                                                                                                    return { ...prev, [colKey]: { ...cur, items } };
+                                                                                                })}
+                                                                                            >
+                                                                                                <option value="">— выберите —</option>
+                                                                                                {opts.map(o => <option key={o} value={o}>{o}</option>)}
+                                                                                            </select>
+                                                                                        );
+                                                                                    } else {
+                                                                                        const val = (draftItem?.values?.[0] ?? '') as string;
+                                                                                        return (
+                                                                                            <input
+                                                                                                className="form-control"
+                                                                                                disabled={!selected}
+                                                                                                placeholder="Значение"
+                                                                                                value={val}
+                                                                                                onChange={e => setServerFilterDraft(prev => {
+                                                                                                    const cur = prev[colKey]; if (!cur) return prev;
+                                                                                                    const items = cur.items.slice();
+                                                                                                    items[idx] = { ...(items[idx] ?? { key: s.key, method, values: [] }),
+                                                                                                        values: [e.target.value]
+                                                                                                    };
+                                                                                                    return { ...prev, [colKey]: { ...cur, items } };
+                                                                                                })}
+                                                                                            />
+                                                                                        );
+                                                                                    }
+                                                                                })()}
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })}
+
+                                                                <div className="mt-3 d-flex gap-2 justify-content-end">
+                                                                    <button className="btn btn-outline-secondary" onClick={() => setOpenFilterCol(null)}>Отмена</button>
+                                                                    <button className="btn btn-primary" onClick={() => applyColumnFilters(colKey)}>Применить</button>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </th>
+                                            );
+                                        })}
+
+                                    <th
+                                        className="border p-2"
+                                        title="Непрочитанные / Всего"
+                                        style={{ position: 'relative', whiteSpace: 'nowrap' }}
+                                    >
+                                        <span>Сообщения</span>
+                                        {unreadOnly && (
+                                            <span
+                                                style={{
+                                                    display: 'inline-block',
+                                                    width: 6,
+                                                    height: 6,
+                                                    borderRadius: 3,
+                                                    background: '#1976d2',
+                                                    marginLeft: 6,
+                                                    verticalAlign: 'middle',
+                                                }}
+                                            />
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() => setUnreadOnly(v => !v)}
+                                            className="btn btn-sm btn-link"
+                                            aria-pressed={unreadOnly}
+                                            title={unreadOnly ? 'Показать все строки' : 'Только строки с непрочитанными'}
+                                            style={{
+                                                marginLeft: 6,
+                                                padding: 0,
+                                                verticalAlign: 'middle',
+                                                color: unreadOnly ? '#1976d2' : undefined,
+                                            }}
+                                        >
+                                            <span className="material-icons" style={{ fontSize: 18 }}>filter_list</span>
+                                        </button>
+                                    </th>
 
                                     <th className="border p-2">Действия</th>
                                 </tr>
@@ -1332,36 +2118,126 @@ const PresetSelectorTable: React.FC<Props> = ({
                             </table>
                         {/*</div>*/}
                     </div>
-                {/* Пагинация */}
-                    <div className="mt-4 flex justify-center items-center space-x-2 my-2" style={{position:"absolute", right:"48%", bottom: -50, zIndex: 10}}>
-                        <button
-                            onClick={() => {
-                                const prevPage = Math.max(1, currentPage - 1);
-                                setCurrentPage(prevPage);
+                        {/* Пагинация */}
+                        <div
+                            className="mt-4"
+                            style={{
+                                position: "sticky",
+                                bottom: 0,
+                                zIndex: 10,
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                flexWrap: "wrap",
+                                gap: 12,
+                                padding: "8px 12px",
+                                background: "rgba(255,255,255,0.6)",
+                                backdropFilter: "blur(6px)",
+                                borderTop: "1px solid rgba(0,0,0,0.08)",
                             }}
-                            disabled={currentPage === 1}
-                            className="btn btn-outline-light text text-dark mx-1 ml-2"
-                            style={{padding: 0}}
                         >
-                            <span className="material-icons text-base text-gray-600">keyboard_arrow_left</span>
-                        </button>
-                        <span className="text-sm text-gray-700 font-weight-bold" style={{fontSize: 16}}>
-                            {currentPage} / {totalPages}
-                        </span>
-                        <button
-                            onClick={() => {
-                                const nextPage = Math.min(totalPages, currentPage + 1);
-                                setCurrentPage(nextPage);
-                            }}
-                            disabled={currentPage === totalPages}
-                            className="btn btn-outline-light text text-dark mx-1 "
-                            style={{padding: 0}}
-                        >
-                            <span className="material-icons text-base text-gray-600">keyboard_arrow_right</span>
-                        </button>
+                            {/* Селект «строк на странице» слева */}
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <span style={{ fontSize: 13, color: "#444", whiteSpace: 'nowrap' }}>
+                                  Показывать по
+                                </span>
+                                <select
+                                    className="form-control"
+                                    value={rowsPerPage}
+                                    onChange={(e) => setRowsPerPage(Number(e.target.value))}
+                                    style={{
+                                        height: 36,
+                                        borderRadius: 18,
+                                        border: "1px solid rgba(0,0,0,0.12)",
+                                        background: "#fff",
+                                        padding: "0 12px",
+                                        minWidth: 84,
+                                    }}
+                                    aria-label="Строк на странице"
+                                >
+                                    {[10, 25, 50].map(n => (
+                                        <option key={n} value={n}>{n}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            {/* Навигация по страницам — твоя, без изменений по логике */}
+                            {(() => {
+                                const pillBtn: React.CSSProperties = {
+                                    width: 36,
+                                    height: 36,
+                                    borderRadius: 18,
+                                    border: "1px solid rgba(0,0,0,0.12)",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    background: "#fff",
+                                    padding: 0,
+                                    cursor: totalPages === 1 ? "not-allowed" : "pointer",
+                                };
+                                const inputSx: React.CSSProperties = {
+                                    width: 72,
+                                    height: 36,
+                                    borderRadius: 18,
+                                    textAlign: "center",
+                                    border: "1px solid rgba(0,0,0,0.12)",
+                                    background: "#fff",
+                                    margin: "0 8px",
+                                    padding: "0 10px",
+                                };
+
+                                const goToPage = (n: number) => {
+                                    const clamped = Math.max(1, Math.min(totalPages, n || 1));
+                                    setCurrentPage(clamped);
+                                };
+
+                                const commitPageInput = () => {
+                                    const n = parseInt(pageInput, 10);
+                                    if (Number.isFinite(n)) goToPage(n);
+                                    else setPageInput(String(currentPage));
+                                };
+
+                                return (
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto", marginRight: "auto" }}>
+                                        <button
+                                            type="button"
+                                            onClick={() => setCurrentPage(currentPage <= 1 ? totalPages : currentPage - 1)}
+                                            disabled={totalPages === 1}
+                                            style={pillBtn}
+                                            title={currentPage === 1 ? `Перейти на ${totalPages}` : `Стр. ${currentPage - 1}`}
+                                        >
+                                            <span className="material-icons">keyboard_arrow_left</span>
+                                        </button>
+
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            max={totalPages}
+                                            value={pageInput}
+                                            onChange={(e) => setPageInput(e.target.value)}
+                                            onKeyDown={(e) => { if (e.key === "Enter") commitPageInput(); }}
+                                            onBlur={commitPageInput}
+                                            style={inputSx}
+                                            aria-label="Номер страницы"
+                                        />
+                                        <span style={{ fontSize: 14, color: "#444" }}>из {totalPages}</span>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => setCurrentPage(currentPage >= totalPages ? 1 : currentPage + 1)}
+                                            disabled={totalPages === 1}
+                                            style={pillBtn}
+                                            title={currentPage === totalPages ? "Перейти на 1" : `Стр. ${currentPage + 1}`}
+                                        >
+                                            <span className="material-icons">keyboard_arrow_right</span>
+                                        </button>
+                                    </div>
+                                );
+                            })()}
+                        </div>
 
 
-                    </div>
+
                     </div>
                 )}
 

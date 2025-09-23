@@ -19,6 +19,12 @@ export const OperatorField: React.FC<Props> = ({ value, onChange }) => {
     const [agents, setAgents] = useState<Agent[]>([]);
     const [isLoading, setIsLoading] = useState(false);
 
+    const {
+        sipLogin   = '',
+        worker     = '',
+        glagolParent      = ''
+    } = store.getState().credentials;
+
     useEffect(() => console.log("agents: ", agents),[agents])
     useEffect(() => {
         const fetchAgents = async () => {
@@ -26,7 +32,7 @@ export const OperatorField: React.FC<Props> = ({ value, onChange }) => {
             try {
                 const res = await axios.get("/api/v1/agents", {
                     params: {
-                        glagol_parent: "fs.at.akc24.ru"
+                        glagol_parent: glagolParent
                     }
                 });
                 setAgents(res.data.result || []);

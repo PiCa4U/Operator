@@ -1,14 +1,14 @@
-// src/features/manager/ManagerPanel.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { Filters } from "./components/filters";
 import { OperatorsTab } from "./components/operatorManagment";
-import { LogsTab } from "./components/integrations/components/LogsTab"
+import { LogsTab } from "./components/integrations/components/LogsTab";
+import { ManagerDashboardsTab } from "./components/dashboards"; // ← добавили
 
-type TabKey = "filters" | "operators" | "logs";
+type TabKey = "dashboards" | "filters" | "operators" | "logs"; // ← добавили dashboards
 
 export const ManagerPanel: React.FC = () => {
     const [active, setActive] = useState<TabKey>(
-        () => (localStorage.getItem("managerPanel.activeTab") as TabKey) || "filters"
+        () => (localStorage.getItem("managerPanel.activeTab") as TabKey) || "dashboards" // ← открываем дашборды по умолчанию
     );
 
     useEffect(() => {
@@ -17,6 +17,7 @@ export const ManagerPanel: React.FC = () => {
 
     const tabs = useMemo(
         () => [
+            { key: "dashboards" as const, label: "Дашборды" }, // ← новая вкладка
             { key: "filters" as const, label: "Отчёты" },
             { key: "operators" as const, label: "Операторы" },
             { key: "logs" as const, label: "Логи" },
@@ -44,6 +45,7 @@ export const ManagerPanel: React.FC = () => {
             </div>
 
             <div className="card-body">
+                {active === "dashboards" && <ManagerDashboardsTab />}
                 {active === "filters" && <Filters />}
                 {active === "operators" && <OperatorsTab />}
                 {active === "logs" && <LogsTab />}

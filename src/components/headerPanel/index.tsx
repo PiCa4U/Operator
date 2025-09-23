@@ -494,9 +494,11 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     console.log("matchedPreset:", matchedPreset);
                     setSelectedPreset(matchedPreset);
                 }
+                console.log("outActivePhoneData: ", outActivePhoneData)
 
                 // 🔽 строим filter_by из group_by + проект
                 const groupFilter = buildGroupByFilter(matchedPreset.preset.group_by, outActivePhoneData || {});
+                console.log("groupFilter: ", groupFilter)
                 const filter_by: Record<string, any> = {
                     project: ['IN', matchedPreset.preset.projects],
                     ...groupFilter,
@@ -759,19 +761,20 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             console.log("get_out_data: ", msg)
             setOutboundID(msg.phone_line[0].id)
             setOutboundCall(true)
-            // setOutActivePhone(msg.phone);
+            if (setOutActivePhoneData) {
+                setOutActivePhoneData(msg.phone_line[0])
+            }
             setOutActiveProjectName(msg.project_name);
             // setAssignedKey(msg.assigned_key);
-
             setOutPreparation(false);
-             if (!hasActiveCall && !handleOutboundCall && !expressCall) {
-                  socket.emit('call', {
-                      worker,
-                      sip_login: sipLogin,
-                      session_key: sessionKey,
-                      phone: msg.phone_line[0].phone,
-                      prefix: msg.out_extension,
-                      project_name: msg.project_name
+            if (!hasActiveCall && !handleOutboundCall && !expressCall) {
+                socket.emit('call', {
+                    worker,
+                    sip_login: sipLogin,
+                    session_key: sessionKey,
+                    phone: msg.phone_line[0].phone,
+                    prefix: msg.out_extension,
+                    project_name: msg.project_name
                 });
             }
         };
@@ -1131,7 +1134,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     };
 
     const renderButtons = () => {
-        if (!fsStatus || !fsStatus.status) return null;
+        // if (!fsStatus || !fsStatus.status) return null;
         const currentStatus = fsStatus.status;
         return (
             <>

@@ -1,26 +1,39 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { RootState } from './store';
+import type { RootState } from './store';
 
-// Интерфейс состояния для хранения параметров подключения
-interface CredentialsState {
+// Единый стор для параметров подключения и сопутствующих конфигов
+export interface CredentialsState {
     sessionKey: string;
     sipLogin: string;
     fsServer: string;
     worker: string;
+
+    // Доп. значения из data-атрибутов
+    chatServer?: string;
+    codeServer?: string;
+    glagolParent?: string;
+
+    // ВАЖНО: webrtc — это ССЫЛКА на WebSocket (или другой сокет), а не boolean
+    webrtcUrl?: string;
 }
 
-// Начальное состояние — пустые строки или возможные дефолтные значения
 const initialState: CredentialsState = {
     sessionKey: '',
     sipLogin: '',
     fsServer: '',
     worker: '',
+
+    chatServer: '',
+    codeServer: '',
+    glagolParent: '',
+    webrtcUrl: '',
 };
 
 const credentialsSlice = createSlice({
     name: 'credentials',
     initialState,
     reducers: {
+        // точечные сеттеры (оставляем для совместимости/удобства)
         setSessionKey(state, action: PayloadAction<string>) {
             state.sessionKey = action.payload;
         },
@@ -33,30 +46,49 @@ const credentialsSlice = createSlice({
         setWorker(state, action: PayloadAction<string>) {
             state.worker = action.payload;
         },
-        // опциональный экшен для массовой загрузки сразу всех значений
-        setCredentials(state, action: PayloadAction<CredentialsState>) {
-            state.sessionKey = action.payload.sessionKey;
-            state.sipLogin   = action.payload.sipLogin;
-            state.fsServer   = action.payload.fsServer;
-            state.worker     = action.payload.worker;
+        setChatServer(state, action: PayloadAction<string | undefined>) {
+            state.chatServer = action.payload ?? '';
         },
+        setCodeServer(state, action: PayloadAction<string | undefined>) {
+            state.codeServer = action.payload ?? '';
+        },
+        setGlagolParent(state, action: PayloadAction<string | undefined>) {
+            state.glagolParent = action.payload ?? '';
+        },
+        setWebrtcUrl(state, action: PayloadAction<string | undefined>) {
+            state.webrtcUrl = action.payload ?? '';
+        },
+
+        // массовая загрузка: можно передавать частичный объект
+        setCredentials(state, action: PayloadAction<Partial<CredentialsState>>) {
+            Object.assign(state, action.payload);
+        },
+        resetCredentials: () => initialState,
     },
 });
 
-// Экспорт экшенов
 export const {
     setSessionKey,
     setSipLogin,
     setFsServer,
     setWorker,
+    setChatServer,
+    setCodeServer,
+    setGlagolParent,
+    setWebrtcUrl,
     setCredentials,
+    resetCredentials,
 } = credentialsSlice.actions;
 
-// Селекторы для получения данных из стейта
-export const selectSessionKey = (state: RootState) => state.credentials.sessionKey;
-export const selectSipLogin    = (state: RootState) => state.credentials.sipLogin;
-export const selectFsServer    = (state: RootState) => state.credentials.fsServer;
-export const selectWorker      = (state: RootState) => state.credentials.worker;
-
-// Редьюсер для подключения в store
 export default credentialsSlice.reducer;
+
+/* --------- селекторы --------- */
+export const selectCredentials   = (s: RootState) => s.credentials;
+export const selectSessionKey    = (s: RootState) => s.credentials.sessionKey;
+export const selectSipLogin      = (s: RootState) => s.credentials.sipLogin;
+export const selectFsServer      = (s: RootState) => s.credentials.fsServer;
+export const selectWorker        = (s: RootState) => s.credentials.worker;
+export const selectChatServer    = (s: RootState) => s.credentials.chatServer;
+export const selectCodeServer    = (s: RootState) => s.credentials.codeServer;
+export const selectGlagolParent  = (s: RootState) => s.credentials.glagolParent;
+export const selectWebrtcUrl     = (s: RootState) => s.credentials.webrtcUrl;

@@ -4,10 +4,16 @@ import {
     Agent,
     CreateAgentPayload,
     UpdateAgentPayload,
-    TierMutationPayload, Role
+    TierMutationPayload,
+    Role,
 } from "../types";
 
-const glagol_parent = "fs.at.akc24.ru";
+import { store } from "../../../../../redux/store";
+
+/** Берём актуальные креды на момент вызова */
+function getGlagolParent(): string {
+    return store.getState()?.credentials?.glagolParent || "";
+}
 
 type ApiUser = {
     glagol_service: string | null;
@@ -30,12 +36,10 @@ type ApiUsersResponse = {
 };
 
 export async function getAgents(): Promise<Agent[]> {
+    const glagol_parent = getGlagolParent();
+
     const resp: AxiosResponse<ApiUsersResponse> = await axios.get("/api/v1/users", {
-        params: {
-            glagol_parent,
-            // TODO TEST
-            // glagol_service:"4.fs.at.akc24.ru"
-        },
+        params: { glagol_parent },
     });
 
     const usersObj = resp.data?.users ?? {};
@@ -45,17 +49,13 @@ export async function getAgents(): Promise<Agent[]> {
             // 1) добавляем login из ключа
             login,
 
-            // 2) пробрасываем все поля сервера как есть (fs_status, status, state, post, post_obrabotka, projects, talk, type, и т.д.)
+            // 2) пробрасываем все поля сервера как есть
             ...u,
 
-            // 3) НЕразрушающие алиасы для фронта (оригиналы сохраняются):
-            //    role нужен таблице, но не затираем server.type
+            // 3) алиасы для UI (не затираем оригиналы)
             role: (u?.type ?? "operator") as Role,
-            //    для совместимости с существующим UI (badge "Робот/Человек")
             postobrabotka:
-                typeof u?.post === "boolean"
-                    ? u.post
-                    : Boolean(u?.post_obrabotka),
+                typeof u?.post === "boolean" ? u.post : Boolean(u?.post_obrabotka),
         } as Agent;
     });
 
@@ -63,6 +63,8 @@ export async function getAgents(): Promise<Agent[]> {
 }
 
 export async function createAgent(payload: CreateAgentPayload): Promise<string> {
+    const glagol_parent = getGlagolParent();
+
     const resp: AxiosResponse<string> = await axios.post("/api/v1/agents/create", {
         glagol_parent,
         ...payload,
@@ -71,6 +73,8 @@ export async function createAgent(payload: CreateAgentPayload): Promise<string> 
 }
 
 export async function updateAgent(payload: UpdateAgentPayload): Promise<string> {
+    const glagol_parent = getGlagolParent();
+
     const resp: AxiosResponse<string> = await axios.put("/api/v1/agents/update", {
         glagol_parent,
         ...payload,
@@ -79,13 +83,20 @@ export async function updateAgent(payload: UpdateAgentPayload): Promise<string> 
 }
 
 export async function deleteAgent(login: string): Promise<string> {
+    const glagol_parent = getGlagolParent();
+
     const resp: AxiosResponse<string> = await axios.delete("/api/v1/agents/delete", {
         data: { glagol_parent, login },
     });
     return resp.data;
 }
 
-export async function addAgentToProject({ login, project_name }: TierMutationPayload): Promise<string> {
+export async function addAgentToProject({
+                                            login,
+                                            project_name,
+                                        }: TierMutationPayload): Promise<string> {
+    const glagol_parent = getGlagolParent();
+
     const resp: AxiosResponse<string> = await axios.post("/api/v1/agents/tier", {
         glagol_parent,
         login,
@@ -94,7 +105,12 @@ export async function addAgentToProject({ login, project_name }: TierMutationPay
     return resp.data;
 }
 
-export async function removeAgentFromProject({ login, project_name }: TierMutationPayload): Promise<string> {
+export async function removeAgentFromProject({
+                                                 login,
+                                                 project_name,
+                                             }: TierMutationPayload): Promise<string> {
+    const glagol_parent = getGlagolParent();
+
     const resp: AxiosResponse<string> = await axios.delete("/api/v1/agents/tier", {
         data: { glagol_parent, login, project_name },
     });

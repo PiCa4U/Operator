@@ -265,7 +265,12 @@ export const LogsTab: React.FC = () => {
     const filenameValueForSelect = (filters.filename ?? "").trim();
 
     // ===== проекты из redux =====
-    const { sipLogin = "" } = (store.getState() as any).credentials || {};
+    const {
+        sipLogin   = '',
+        worker     = '',
+        glagolParent      = ''
+    } = store.getState().credentials;
+
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
     const projectOptions = useMemo(
@@ -289,7 +294,7 @@ export const LogsTab: React.FC = () => {
         let cancelled = false;
         setModulesLoading(true);
 
-        const glagol_parent = "fs.at.akc24.ru";
+        const glagol_parent = glagolParent;
 
         fetchProjectModules({ glagol_parent, project_name: proj })
             .then((mods) => {

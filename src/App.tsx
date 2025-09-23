@@ -38,11 +38,12 @@ type RootHomeProps = {
     sipLogin: string;
     ha1: string;
     turnCreds: any;
+    webrtcUrl: string
 };
 
 const RootHome: React.FC<RootHomeProps> = ({
                                                ready, mode, setMode, infoOpen, setInfoOpen, infoRef,
-                                               name, glagol, phoneLogin, role, sipLogin, ha1, turnCreds
+                                               name, glagol, phoneLogin, role, sipLogin, ha1, turnCreds, webrtcUrl
                                            }) => {
     const ModeSwitch = (
         <div style={{ display: 'flex', gap: 8, padding: 8 }}>
@@ -100,9 +101,9 @@ const RootHome: React.FC<RootHomeProps> = ({
                             borderRadius: 999, padding: '6px 12px', boxShadow: '0 1px 2px rgba(0,0,0,.06)'
                         }}
                     >
-            <span style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {name}
-            </span>
+                        <span style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {name}
+                        </span>
                         <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
                             <circle cx="12" cy="12" r="10" fill="currentColor" opacity=".12" />
                             <path d="M12 8.25a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm-1.25 2.5a1.25 1.25 0 1 1 2.5 0v6a1.25 1.25 0 1 1-2.5 0v-6Z" fill="currentColor"/>
@@ -135,7 +136,7 @@ const RootHome: React.FC<RootHomeProps> = ({
                 enabled={mode === 'webrtc'}
                 userId={sipLogin}
                 ha1={ha1}
-                wsServer="wss://24webrtc.ru/ws"
+                wsServer={webrtcUrl}
                 turnCreds={turnCreds}
             >
                 <MainApp />
@@ -145,7 +146,12 @@ const RootHome: React.FC<RootHomeProps> = ({
 };
 
 export default function App() {
-    const { sipLogin = '' } = store.getState().credentials;
+    const {
+        sipLogin   = '',
+        worker     = '',
+        glagolParent = '',
+        webrtcUrl = ''
+    } = store.getState().credentials;
     const { ha1, turnCreds } = useSelector((s: RootState) => s.operator);
     const [userInfo, setUserInfo] = useState<any>({});
     const [mode, setMode] = useState<PhoneMode>(() => {
@@ -180,7 +186,7 @@ export default function App() {
     useEffect(() => {
         const fetchAgents = async () => {
             try {
-                const res = await axios.get("/api/v1/agents", { params: { glagol_parent: "fs.at.akc24.ru" } });
+                const res = await axios.get("/api/v1/agents", { params: { glagol_parent: glagolParent } });
                 const matchOperator = res.data.result.find((oper: any) => oper.login === sipLogin);
                 setUserInfo(matchOperator);
             } catch (err) {
@@ -214,6 +220,7 @@ export default function App() {
                                 sipLogin={sipLogin}
                                 ha1={ha1!}
                                 turnCreds={turnCreds!}
+                                webrtcUrl={webrtcUrl}
                             />
                         }
                     />

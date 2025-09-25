@@ -1,11 +1,11 @@
 import React, {useState, useEffect, useMemo, useRef, useCallback} from 'react';
-import Select, { SingleValue } from 'react-select';
+import * as XLSX from 'xlsx';
 import SearchableSelect from '../callControlPanel/components/select/index';
 import styles from "./components/checkbox.module.css"
-import { makeSelectFullProjectPool } from "../../redux/operatorSlice";
+import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
 import {useDispatch, useSelector} from "react-redux";
 import GroupActionModal from "./components/index";
-import { useItsmNavigation } from "../../utils/useItsmNavigation";
+import {useItsmNavigation} from "../../utils/useItsmNavigation";
 
 import Swal from "sweetalert2";
 import {socket} from "../../socket";
@@ -13,10 +13,11 @@ import {RootState, store} from "../../redux/store";
 import {ExpressState} from "../callControlPanel";
 import axios from "axios";
 import DatePicker from "react-datepicker";
-import { format } from 'date-fns';
+import {format} from 'date-fns';
 import {AssignComp} from "./components/assign";
 
-import { chatApi } from "../../features/itsm/chat/api";
+import {chatApi} from "../../features/itsm/chat/api";
+import {selectTableFilters, TableFilters, tasksTableActions} from "../../redux/tasksTableSlice";
 
 // --- Типы данных ---
 
@@ -27,7 +28,7 @@ function extractActionSteps(act?: { [k: string]: any }): Step[] {
     if (!act) return steps;
 
     if (act.action_type) {
-        steps.push({ type: String(act.action_type), code_filename: act.code_filename });
+        steps.push({type: String(act.action_type), code_filename: act.code_filename});
     }
 
     const idxs = Array.from(
@@ -60,13 +61,13 @@ type FilterMethod =
     | 'DATES';
 
 type SearchItemCfg = {
-    key: string;              // поле для filter_by на бэке
-    name: string;             // «Статус заказа», «Номер заказа» и т.п.
-    methods: FilterMethod[];  // разрешённые методы
-    options?: string[];       // если есть — показываем список (single/multi)
+    key: string;
+    name: string;
+    methods: FilterMethod[];
+    options?: string[];
 };
 
-type ColumnCfgWithSearch = {
+export type ColumnCfgWithSearch = {
     name: string;
     default: string;
     render_template: string;
@@ -94,14 +95,18 @@ interface ColumnCell {
     name: string;
     value: any[];
 }
+
 export interface ApiRow {
     id_list: number[];
+
     [columnKey: string]: ColumnCell | number[];
 }
+
 interface Action {
     action_name: string;
     action_type?: string;
     code_filename?: string;
+
     [key: string]: any;
 }
 
@@ -114,11 +119,13 @@ export interface Preset {
     group_by: string[];
     projects: string[];
 }
+
 export interface OptionType {
     value: number;
     label: string;
     preset: Preset;
 }
+
 // Опции для селекта действий
 export interface ActionOption {
     value: string;
@@ -127,11 +134,12 @@ export interface ActionOption {
 }
 
 export interface ModuleType {
-    id:            number;
-    project:       string;
-    filename:      string;
-    common_code:   boolean;
-    created_dt:    string;
+    id: number;
+    project: string;
+    filename: string;
+    common_code: boolean;
+    created_dt: string;
+
     [key: string]: any;
 }
 
@@ -149,25 +157,52 @@ type Props = {
     startDate: Date | null
     setStartDate: (startDate: Date | null) => void
     endDate: Date | null
-    setEndDate: (endDate: Date| null) => void
+    setEndDate: (endDate: Date | null) => void
     selectedStatus: string | null
     setSelectedStatus: (selectedStatus: string | null) => void
+    appliedLocalFilters: Record<string, string>;
+    setAppliedLocalFilters: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    appliedServerFilters: Record<string, ServerAppliedByCol>;
+    setAppliedServerFilters: React.Dispatch<React.SetStateAction<Record<string, ServerAppliedByCol>>>;
+    localFilterDraft: Record<string, string>;
+    setLocalFilterDraft: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    serverFilterDraft: Record<string, ServerDraftByCol>;
+    setServerFilterDraft: React.Dispatch<React.SetStateAction<Record<string, ServerDraftByCol>>>;
+    unreadOnly: boolean;
+    setUnreadOnly: React.Dispatch<React.SetStateAction<boolean>>;
 }
 const ROWS_PER_PAGE_KEY = 'tasksRowsPerPage';
+const LS_SEARCH_TERM_KEY = 'tasksSearchTerm';
+const LS_SELECTED_OPERATOR_KEY = 'tasksSelectedOperator';
+const LS_UNREAD_ONLY_KEY = 'tasksUnreadOnly';
+const LS_SORT_KEY = 'tasksSortConfig';
+// статус у тебя уже читается из 'selectedStatus' — продолжим его использовать
+const LS_SELECTED_STATUS_KEY = 'selectedStatus';
+
 const DEFAULT_ROWS_PER_PAGE = 10;
 
 function MethodLabel(m: FilterMethod) {
     switch (m) {
-        case '=': return 'равно';
-        case '!=': return 'не равно';
-        case 'LIKE': return 'содержит';
-        case 'NOT LIKE': return 'не содержит';
-        case 'IN': return 'содержит любое из значений';
-        case 'NOT IN': return 'не содержит ни одного из значений';
-        case 'DATES': return 'диапазон дат';
-        default: return m;
+        case '=':
+            return 'равно';
+        case '!=':
+            return 'не равно';
+        case 'LIKE':
+            return 'содержит';
+        case 'NOT LIKE':
+            return 'не содержит';
+        case 'IN':
+            return 'содержит любое из значений';
+        case 'NOT IN':
+            return 'не содержит ни одного из значений';
+        case 'DATES':
+            return 'диапазон дат';
+        default:
+            return m;
     }
 }
+
+const STORAGE_KEY_BASE = 'tasksTableState';
 
 const PresetSelectorTable: React.FC<Props> = ({
                                                   openedGroup,
@@ -185,19 +220,28 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                   endDate,
                                                   setEndDate,
                                                   selectedStatus,
-                                                  setSelectedStatus
+                                                  setSelectedStatus,
+                                                  appliedLocalFilters,
+                                                  setAppliedLocalFilters,
+                                                  appliedServerFilters,
+                                                  setAppliedServerFilters,
+                                                  localFilterDraft,
+                                                  setLocalFilterDraft,
+                                                  serverFilterDraft,
+                                                  setServerFilterDraft,
+                                                  unreadOnly,
+                                                  setUnreadOnly,
                                               }) => {
 
-    const { monitorUsers } = useSelector(
+    const {monitorUsers} = useSelector(
         (state: RootState) => state.operator.monitorData
     );
     const {
-        sipLogin   = '',
-        worker     = '',
-        glagolParent      = ''
+        sipLogin = '',
+        worker = '',
+        glagolParent = ''
     } = store.getState().credentials;
-    const dispatch = useDispatch();
-    const { goToItsm, openItsmNewTab } = useItsmNavigation();
+    const {goToItsm, openItsmNewTab} = useItsmNavigation();
 
     const [presets, setPresets] = useState<OptionType[]>([]);
     const [selectedActionOption, setSelectedActionOption] = useState<ActionOption | null>(null);
@@ -262,19 +306,20 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [openFilterCol, setOpenFilterCol] = useState<string | null>(null);
 
 // локальные черновики (в попапах)
-    const [localFilterDraft, setLocalFilterDraft] = useState<Record<string, string>>({});
-    const [serverFilterDraft, setServerFilterDraft] = useState<Record<string, ServerDraftByCol>>({});
+//     const [localFilterDraft, setLocalFilterDraft] = useState<Record<string, string>>({});
+//     const [serverFilterDraft, setServerFilterDraft] = useState<Record<string, ServerDraftByCol>>({});
 
 // применённые фильтры (живут между открытиями попапов)
-    const [appliedLocalFilters, setAppliedLocalFilters] = useState<Record<string, string>>({});
-    const [appliedServerFilters, setAppliedServerFilters] = useState<Record<string, ServerAppliedByCol>>({});
+//     const [appliedLocalFilters, setAppliedLocalFilters] = useState<Record<string, string>>({});
+//     const [appliedServerFilters, setAppliedServerFilters] = useState<Record<string, ServerAppliedByCol>>({});
     const [filterSide, setFilterSide] = useState<'left' | 'right'>('left');
 
     const [guidCounts, setGuidCounts] = useState<Record<string, { unread: number; total: number }>>({});
 
+    // const glagolParent2 = "fs.at.glagol.ai";
 
     // Показывать только строки, где есть непрочитанные сообщения
-    const [unreadOnly, setUnreadOnly] = useState(false);
+    // const [unreadOnly, setUnreadOnly] = useState(false);
 
 // Активен ли фильтр у конкретной колонки (локальный или серверный)
     const isColumnFiltered = useCallback(
@@ -298,7 +343,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         toFetch.slice(0, 300).forEach(g => { void fetchCountsForGuid(g); });
     }, [unreadOnly, tableData, guidCounts]);
 
-    useEffect(() => console.log("filterSide: ", filterSide),[filterSide])
+    useEffect(() => console.log("filterSide: ", filterSide), [filterSide])
     useEffect(() => {
         localStorage.setItem(ROWS_PER_PAGE_KEY, String(rowsPerPage));
         setCurrentPage(1);
@@ -316,6 +361,70 @@ const PresetSelectorTable: React.FC<Props> = ({
         sortConfig?.key,
         sortConfig?.direction,
     ]);
+// Поиск — один раз при монтировании
+    useEffect(() => {
+        const v = localStorage.getItem(LS_SEARCH_TERM_KEY);
+        if (v !== null) setSearchTerm(v);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+// Только с непрочитанными — один раз при монтировании
+    useEffect(() => {
+        const v = localStorage.getItem(LS_UNREAD_ONLY_KEY);
+        if (v !== null) setUnreadOnly(v === '1' || v === 'true');
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+// Сортировка — один раз при монтировании
+    useEffect(() => {
+        const raw = localStorage.getItem(LS_SORT_KEY);
+        if (!raw) return;
+        try {
+            const parsed = JSON.parse(raw) as { key: string; direction: 'asc' | 'desc' };
+            if (parsed && parsed.key && (parsed.direction === 'asc' || parsed.direction === 'desc')) {
+                setSortConfig(parsed);
+            }
+        } catch {}
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+// Оператор — когда список операторов готов
+    useEffect(() => {
+        const saved = localStorage.getItem(LS_SELECTED_OPERATOR_KEY);
+        if (!saved) return;
+        // валидируем, что такой оператор есть в опциях
+        if (operatorOptions.some(o => String(o.id) === saved)) {
+            setSelectedOperator(saved);
+        }
+    }, [operatorOptions, setSelectedOperator]);
+
+    // Поиск
+    useEffect(() => {
+        localStorage.setItem(LS_SEARCH_TERM_KEY, searchTerm ?? '');
+    }, [searchTerm]);
+
+// Статус — пишем в твой старый ключ, чтобы не ломать совместимость
+    useEffect(() => {
+        if (selectedStatus) localStorage.setItem(LS_SELECTED_STATUS_KEY, selectedStatus);
+        else localStorage.removeItem(LS_SELECTED_STATUS_KEY);
+    }, [selectedStatus]);
+
+// Оператор
+    useEffect(() => {
+        if (selectedOperator) localStorage.setItem(LS_SELECTED_OPERATOR_KEY, String(selectedOperator));
+        else localStorage.removeItem(LS_SELECTED_OPERATOR_KEY);
+    }, [selectedOperator]);
+
+// Только с непрочитанными
+    useEffect(() => {
+        localStorage.setItem(LS_UNREAD_ONLY_KEY, unreadOnly ? '1' : '0');
+    }, [unreadOnly]);
+
+// Сортировка
+    useEffect(() => {
+        if (sortConfig) localStorage.setItem(LS_SORT_KEY, JSON.stringify(sortConfig));
+        else localStorage.removeItem(LS_SORT_KEY);
+    }, [sortConfig?.key, sortConfig?.direction]);
 
     const getSortIcon = useCallback((key: string) => {
         if (!sortConfig || sortConfig.key !== key) return 'unfold_more'; // нейтральная
@@ -346,33 +455,50 @@ const PresetSelectorTable: React.FC<Props> = ({
     }, [selectedPreset, presets]);
 
     useEffect(() => {
-        // при смене пресета – подготовим черновики по его structure
-        const draftServer: Record<string, ServerDraftByCol> = {};
-        const draftLocal: Record<string, string> = {};
-
         const structure = (selectedPreset?.preset?.structure ?? {}) as Record<string, ColumnCfgWithSearch>;
+
+        const nextLocal: Record<string, string> = {};
+        const nextServer: Record<string, ServerDraftByCol> = {};
+
         Object.entries(structure).forEach(([colKey, cfg]) => {
+            // локальный «в найденном»
+            nextLocal[colKey] = appliedLocalFilters[colKey] ?? '';
+
+            // серверные варианты
             if (Array.isArray(cfg.search) && cfg.search.length) {
-                draftLocal[colKey] = ''; // пустая строка для «в найденном»
-                draftServer[colKey] = {
-                    selectedIdx: null,     // по умолчанию ничего не активно
-                    items: cfg.search.map(s => ({
-                        key: s.key,
-                        method: s.methods[0] as FilterMethod, // берём первый разрешённый
-                        values: [],
-                    })),
-                };
+                const applied = appliedServerFilters[colKey] || null;
+
+                const items: ServerDraftItem[] = cfg.search.map(s => ({
+                    key: s.key,
+                    method: s.methods[0],
+                    values: [],
+                }));
+
+                let selectedIdx: number | null = null;
+
+                if (applied) {
+                    const idx = cfg.search.findIndex(s => s.key === applied.key);
+                    if (idx !== -1) {
+                        selectedIdx = idx;
+                        items[idx] = {
+                            key: applied.key,
+                            method: applied.method,
+                            values: Array.isArray(applied.values) ? [...applied.values] : [],
+                        };
+                    }
+                }
+
+                nextServer[colKey] = { selectedIdx, items };
             }
         });
 
-        setLocalFilterDraft(draftLocal);
-        setServerFilterDraft(draftServer);
-
-        // при смене пресета очищаем применённые
-        setAppliedLocalFilters({});
-        setAppliedServerFilters({});
-        setOpenFilterCol(null);
-    }, [selectedPreset?.preset?.id]);
+        setLocalFilterDraft(nextLocal);
+        setServerFilterDraft(nextServer);
+    }, [
+        selectedPreset?.preset?.id,
+        appliedLocalFilters,
+        appliedServerFilters,
+    ]);
 
     useEffect(() => {
         const isSearching = !!searchTerm?.trim();
@@ -407,7 +533,7 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         Object.entries(map).forEach(([_, item]) => {
             if (!item) return;
-            const { key, method, values } = item;
+            const {key, method, values} = item;
             if (!key || !method) return;
 
             if (method === 'DATES') {
@@ -418,7 +544,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                     const e = (endYmd || startYmd);
                     if (s) {
                         const startStr = formatWithTimezone(parseYmd(s), 'start');
-                        const endStr   = formatWithTimezone(parseYmd(e || s), 'end');
+                        const endStr = formatWithTimezone(parseYmd(e || s), 'end');
                         out[key] = ['BETWEEN', [startStr, endStr]];
                     }
                 } else {
@@ -440,15 +566,15 @@ const PresetSelectorTable: React.FC<Props> = ({
         return out;
     };
 
-    const { sessionKey } = store.getState().operator
+    const {sessionKey} = store.getState().operator
     useEffect(() => {
-        const list = tableData.map( group => group.id_list )
+        const list = tableData.map(group => group.id_list)
         setGroupIDs(list)
-    },[tableData])
+    }, [tableData])
 
     useEffect(() => {
         defaultStatusToState.current = false
-    },[selectedPreset])
+    }, [selectedPreset])
     useEffect(() => {
         const handler = (payload: Record<string, ModuleType[]>) => {
             // Собираем модули в flat-массив
@@ -481,7 +607,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     }, [projectNames, sessionKey, worker]);
 
     console.log("projectNames: ", projectNames)
-    useEffect(()=> console.log("selectedRows: ", selectedRows))
+    useEffect(() => console.log("selectedRows: ", selectedRows))
 
     useEffect(() => {
         if (selectedPreset) {
@@ -496,7 +622,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                     glagol_parent: glagolParent,
                                     project_name: projectName
                                 },
-                                headers: { Accept: 'application/json' }
+                                headers: {Accept: 'application/json'}
                             })
                             .then(response => ({
                                 projectName,
@@ -532,7 +658,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                 role
             });
             const data: Preset[] = response.data;
-            const presetOptions = data.map(p => ({ value: p.id, label: p.preset_name, preset: p }));
+            const presetOptions = data.map(p => ({value: p.id, label: p.preset_name, preset: p}));
             setPresets(presetOptions);
 
             // --- Синхронизация с localStorage ---
@@ -649,16 +775,16 @@ const PresetSelectorTable: React.FC<Props> = ({
         setLoading(true);
 
         try {
-            const { preset } = selectedPreset;
+            const {preset} = selectedPreset;
 
-            const common: any = { project: ['IN', preset.projects] };
-            const filterBy: any = { ...common };
-            const filterByForSelect: any = { ...common };
+            const common: any = {project: ['IN', preset.projects]};
+            const filterBy: any = {...common};
+            const filterByForSelect: any = {...common};
 
             // даты
             if (startDate && endDate) {
                 const from = formatWithTimezone(startDate, 'start');
-                const to   = formatWithTimezone(endDate, 'end');
+                const to = formatWithTimezone(endDate, 'end');
                 filterBy.created_dt = ['BETWEEN', [from, to]];
                 filterByForSelect.created_dt = ['BETWEEN', [from, to]];
             }
@@ -710,7 +836,7 @@ const PresetSelectorTable: React.FC<Props> = ({
             setFlatPhones(flatPhones)
 
             const flat = Object.entries(projectIdData).flatMap(([project_name, list]) =>
-                list.map(item => ({ id: item.id, project_name }))
+                list.map(item => ({id: item.id, project_name}))
             );
             setIdProjectMap(flat);
 
@@ -736,7 +862,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         if (!selectedPreset) return;
 
         const bothNull = !startDate && !endDate;
-        const bothSet  = !!startDate && !!endDate;
+        const bothSet = !!startDate && !!endDate;
 
         // игнорируем промежуточку (кликнули только start или только end)
         if (!(bothNull || bothSet)) return;
@@ -807,7 +933,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         };
     }, [modulesInFlight]);
 
-    useEffect(() => console.log("actionOptions: ", actionOptions),[actionOptions])
+    useEffect(() => console.log("actionOptions: ", actionOptions), [actionOptions])
     // Внутри PresetSelectorTable:
     const processRows = (rows: ApiRow[], opt: ActionOption, operator?: string) => {
         if (!opt?.action) return;
@@ -851,7 +977,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                     glagol_parent: glagolParent,
                                     project_name,
                                     filter_by,
-                                    update: { manager: operator }
+                                    update: {manager: operator}
                                 }).catch(() => null)
                             );
                         }
@@ -863,7 +989,7 @@ const PresetSelectorTable: React.FC<Props> = ({
 
                 case "delete": {
                     Object.entries(groups).forEach(([project_name, ids]) => {
-                        socket.emit("delete_phone", { worker, session_key: sessionKey, project_name, ids });
+                        socket.emit("delete_phone", {worker, session_key: sessionKey, project_name, ids});
                     });
                     runStep(i + 1);
                     break;
@@ -888,22 +1014,22 @@ const PresetSelectorTable: React.FC<Props> = ({
                             const contact = phonesData.find((p: any) => p.id === id);
                             const ci = contact?.contact_info ?? {};
                             const kwargs: Record<string, string> = {};
-                            argDefs.forEach(({ source, default: def }) => {
+                            argDefs.forEach(({source, default: def}) => {
                                 if (!source) return;
                                 const v = ci[source];
                                 kwargs[source] = (v ?? def ?? '') as string;
                             });
 
                             const key = JSON.stringify(kwargs);
-                            if (!byArgs.has(key)) byArgs.set(key, { ids: [], kwargs });
+                            if (!byArgs.has(key)) byArgs.set(key, {ids: [], kwargs});
                             byArgs.get(key)!.ids.push(id);
                         });
 
-                        byArgs.forEach(({ kwargs }) => {
+                        byArgs.forEach(({kwargs}) => {
                             pending += 1;
                             socket.emit('run_module', {
                                 uuid: "", b_uuid: "", worker, session_key: sessionKey,
-                                projects: { [project_name]: kwargs },
+                                projects: {[project_name]: kwargs},
                                 filename: target,
                                 common_code: found.common_code,
                             });
@@ -1048,7 +1174,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         guidCounts
     ]);
 
-    useEffect( () => console.log("processedRows: ",processedRows),[processedRows] )
+    useEffect(() => console.log("processedRows: ", processedRows), [processedRows])
     // 3.3 разбиваем на страницы
     const totalPages = Math.max(1, Math.ceil(processedRows.length / rowsPerPage));
     const paginatedRows = processedRows.slice(
@@ -1058,9 +1184,9 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     const totalRowsCount = processedRows.length;
     const showingFrom = totalRowsCount ? (currentPage - 1) * rowsPerPage + 1 : 0;
-    const showingTo   = totalRowsCount ? Math.min(currentPage * rowsPerPage, totalRowsCount) : 0;
+    const showingTo = totalRowsCount ? Math.min(currentPage * rowsPerPage, totalRowsCount) : 0;
 
-    useEffect(() => console.log("selected: ", selectedPreset),[selectedPreset])
+    useEffect(() => console.log("selected: ", selectedPreset), [selectedPreset])
     // --- обработчики ---
     const toggleSort = (colKey: string) => {
         setSortConfig(prev => {
@@ -1091,7 +1217,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         setSelectedRows(newSet);
     };
 
-    const findNameProject = (projectName: string)=> {
+    const findNameProject = (projectName: string) => {
         if (!projectName) return "";
         const found = projectPool.find(
             (proj) => proj.project_name === projectName
@@ -1109,7 +1235,7 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         try {
             const response = await axios.get('/api/v1/express_agents_statuses', {
-                params: { ids },
+                params: {ids},
                 paramsSerializer: params =>
                     params.ids.map((id: number) => `ids=${id}`).join('&')
             });
@@ -1219,7 +1345,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                 resp?.count
             ) || 0;
 
-        return { unread, total };
+        return {unread, total};
     }
 
 // подгрузка счётчиков для одного guid (если ещё не в кэше)
@@ -1228,12 +1354,12 @@ const PresetSelectorTable: React.FC<Props> = ({
         if (guidCounts[guid]?.total !== undefined) return; // уже есть
 
         try {
-            const params = hasSipLogin ? { logins: loginForUnread } : undefined;
-            const { data } = await chatApi.get(`/api/v1/chat/${encodeURIComponent(guid)}/count`, { params });
-            const { unread, total } = extractCounts(data, hasSipLogin, loginForUnread);
-            setGuidCounts((prev) => ({ ...prev, [guid]: { unread, total } }));
+            const params = hasSipLogin ? {logins: loginForUnread} : undefined;
+            const {data} = await chatApi.get(`/api/v1/chat/${encodeURIComponent(guid)}/count`, {params});
+            const {unread, total} = extractCounts(data, hasSipLogin, loginForUnread);
+            setGuidCounts((prev) => ({...prev, [guid]: {unread, total}}));
         } catch {
-            setGuidCounts((prev) => ({ ...prev, [guid]: { unread: 0, total: 0 } }));
+            setGuidCounts((prev) => ({...prev, [guid]: {unread: 0, total: 0}}));
         }
     }
 
@@ -1249,7 +1375,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                 sumTotal += c.total || 0;
             }
         });
-        return { guids, sumUnread, sumTotal };
+        return {guids, sumUnread, sumTotal};
     }
 
     useEffect(() => {
@@ -1308,13 +1434,13 @@ const PresetSelectorTable: React.FC<Props> = ({
                         }}
                     >
                         {(role === "manager" ? [
-                            { label: "Проект:", value: findNameProject(project) },
-                            { label: "Express активен:", value: state.active ? "Да" : "Нет" },
-                            { label: "Операторов в ожидании:", value: state.agents.length },
-                            { label: "Активных вызовов:", value: state.calls },
+                            {label: "Проект:", value: findNameProject(project)},
+                            {label: "Express активен:", value: state.active ? "Да" : "Нет"},
+                            {label: "Операторов в ожидании:", value: state.agents.length},
+                            {label: "Активных вызовов:", value: state.calls},
                         ] : [
-                            { label: "Проект:", value: findNameProject(project) },
-                            { label: "Express активен:", value: state.active ? "Да" : "Нет" },
+                            {label: "Проект:", value: findNameProject(project)},
+                            {label: "Express активен:", value: state.active ? "Да" : "Нет"},
                         ]).map((item, idx) => (
                             <div key={idx}>
                                 <strong>{item.label}</strong>{" "}
@@ -1371,10 +1497,10 @@ const PresetSelectorTable: React.FC<Props> = ({
         let nextServerForCol: ServerAppliedByCol = null;
         if (sd && sd.selectedIdx !== null) {
             const item = sd.items[sd.selectedIdx];
-            nextServerForCol = { key: item.key, method: item.method, values: [...item.values] };
+            nextServerForCol = {key: item.key, method: item.method, values: [...item.values]};
         }
 
-        const nextServer = { ...appliedServerFilters, [colKey]: nextServerForCol };
+        const nextServer = {...appliedServerFilters, [colKey]: nextServerForCol};
         setAppliedServerFilters(nextServer);
 
         setOpenFilterCol(null);
@@ -1386,9 +1512,9 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     const resetColumnFilters = (colKey: string) => {
         // сброс локального
-        const nextLocal = { ...appliedLocalFilters, [colKey]: '' };
+        const nextLocal = {...appliedLocalFilters, [colKey]: ''};
         setAppliedLocalFilters(nextLocal);
-        setLocalFilterDraft(prev => ({ ...prev, [colKey]: '' }));
+        setLocalFilterDraft(prev => ({...prev, [colKey]: ''}));
 
         // сброс серверного
         setServerFilterDraft(prev => {
@@ -1396,10 +1522,10 @@ const PresetSelectorTable: React.FC<Props> = ({
             if (!cur) return prev;
             return {
                 ...prev,
-                [colKey]: { ...cur, selectedIdx: null, items: cur.items.map(i => ({ ...i, values: [] })) }
+                [colKey]: {...cur, selectedIdx: null, items: cur.items.map(i => ({...i, values: []}))}
             };
         });
-        const nextServer = { ...appliedServerFilters, [colKey]: null };
+        const nextServer = {...appliedServerFilters, [colKey]: null};
         setAppliedServerFilters(nextServer);
 
         setOpenFilterCol(null);
@@ -1427,12 +1553,69 @@ const PresetSelectorTable: React.FC<Props> = ({
         if (Number.isFinite(n)) goToPage(n);
     };
 
-    const  mockDataForStatus = []
     const handleDateChange = (dates: [Date | null, Date | null]) => {
         const [start, end] = dates;
         console.log("dates: ", dates)
         setStartDate(start);
         setEndDate(end);
+    }
+
+    type ExportScope = 'all' | 'page' | 'selected';
+
+    const exportToExcel = (scope: ExportScope = 'all') => {
+        if (!selectedPreset) return;
+
+        // какие строки выгружать
+        const rowsSrc =
+            scope === 'page'
+                ? paginatedRows
+                : scope === 'selected'
+                    ? processedRows.filter(r => selectedRows.has(r.id_list.join(',')))
+                    : processedRows;
+
+        // заголовки и порядок колонок — как в таблице
+        const cols = Object.entries(selectedPreset.preset.structure as Record<string, ColumnCfgWithSearch>)
+            .sort(([a], [b]) => Number(a) - Number(b));
+
+        const headers = cols.map(([_, cfg]) => cfg.name).concat('Сообщения'); // «Действия» не добавляем
+
+        // формируем двумерный массив (AOA), чтобы контролировать порядок колонок
+        const aoa: (string | number)[][] = [headers];
+
+        rowsSrc.forEach(row => {
+            const rowArr = cols.map(([colKey, cfg]) => {
+                const cell = row[colKey] as ColumnCell | undefined;
+                const val =
+                    !cell || !Array.isArray(cell.value)
+                        ? cfg.default
+                        : (cell.value.length ? cell.value.join('; ') : cfg.default);
+                return val ?? '';
+            });
+
+            // колонка «Сообщения»
+            const {sumUnread, sumTotal} = getRowMsgInfo(row);
+            rowArr.push(`${sumUnread}/${sumTotal}`);
+
+            aoa.push(rowArr);
+        });
+
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+        // чуть-чуть ширины колонок, чтобы было читабельно
+        ws['!cols'] = headers.map(h => ({wch: Math.max(12, String(h).length + 2)}));
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Задачи');
+
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        const d = String(now.getDate()).padStart(2, '0');
+        const hh = String(now.getHours()).padStart(2, '0');
+        const mm = String(now.getMinutes()).padStart(2, '0');
+
+        const fname = `tasks_${selectedPreset.preset.preset_name}_${y}-${m}-${d}_${hh}-${mm}.xlsx`;
+        XLSX.writeFile(wb, fname);
     };
 
     const statusLabels: Record<string, string> = {
@@ -1443,7 +1626,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     };
     useEffect(() => {
         console.log("selectedRows: ", selectedRows)
-    },[selectedRows])
+    }, [selectedRows])
     return (
         <div>
             {renderExpressCards()}
@@ -1457,7 +1640,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                         alignItems: 'end',
                     }}
                 >
-                {/* Пресеты */}
+                    {/* Пресеты */}
 
                     <div
                         style={{
@@ -1469,7 +1652,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                         }}
                     >
                         {/* Пресет */}
-                        <div style={{ flex: '0 0 250px' }}>
+                        <div style={{flex: '0 0 250px'}}>
                             <SearchableSelect
                                 value={selectedPreset ? selectedPreset.preset.id : ''}
                                 isSearchable
@@ -1490,7 +1673,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                         </div>
 
                         {/* Поиск */}
-                        <div style={{ flex: '0 0 250px' }}>
+                        <div style={{flex: '0 0 250px'}}>
                             <input
                                 type="text"
                                 placeholder="Поиск..."
@@ -1501,7 +1684,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                         </div>
 
                         {/* Статус */}
-                        <div style={{ flex: '0 0 250px' }}>
+                        <div style={{flex: '0 0 250px'}}>
                             <SearchableSelect
                                 value={selectedStatus ?? ''}
                                 onChange={(val: string) => setSelectedStatus(val)}
@@ -1515,7 +1698,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                         </div>
 
                         {/* Дата */}
-                        <div style={{ flex: '0 0 250px' }}>
+                        <div style={{flex: '0 0 250px'}}>
                             <DatePicker
                                 selected={startDate}
                                 onChange={handleDateChange}
@@ -1533,7 +1716,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                         </div>
 
                         {/* Оператор */}
-                        <div style={{ flex: '0 0 250px' }}>
+                        <div style={{flex: '0 0 250px'}}>
                             <SearchableSelect
                                 value={selectedOperator ?? ''}
                                 onChange={(val: string) => setSelectedOperator(val)}
@@ -1544,7 +1727,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                         </div>
 
                         {/* Действие */}
-                        <div style={{ flex: '0 0 250px' }}>
+                        <div style={{flex: '0 0 250px'}}>
                             <SearchableSelect
                                 value={selectedActionOption ? selectedActionOption.value : ''}
                                 onChange={(val: string) => {
@@ -1577,7 +1760,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 />
                             </div>
                         ) : (
-                            <div style={{ flex: '0 0 auto' }}>
+                            <div style={{flex: '0 0 auto'}}>
                                 <button
                                     onClick={() => {
                                         const keys = Array.from(selectedRows);
@@ -1599,16 +1782,39 @@ const PresetSelectorTable: React.FC<Props> = ({
                 {loading && <div>Загрузка данных...</div>}
 
                 {selectedPreset && !loading && (
-                    <div >
+                    <div>
+                        <div style={{flex: '0 0 auto', display: 'flex', gap: 8}}>
+                            <button
+                                onClick={() => exportToExcel('all')}
+                                className="btn btn-outline-success"
+                                title="Экспортировать все найденные строки"
+                            >
+                                Экспорт Excel (всё)
+                            </button>
+                            <button
+                                onClick={() => exportToExcel('page')}
+                                className="btn btn-outline-success"
+                                title="Экспортировать только текущую страницу"
+                            >
+                                Экспорт (страница)
+                            </button>
+                            <button
+                                onClick={() => exportToExcel('selected')}
+                                className="btn btn-outline-success"
+                                title="Экспортировать только выбранные строки"
+                            >
+                                Экспорт (выбранные)
+                            </button>
+                        </div>
                         <div
                             className="d-flex justify-content-between align-items-center mb-2"
                             aria-live="polite"
-                            style={{ gap: 12 }}
+                            style={{gap: 12}}
                         >
                             <div>
                                 Сформировано строк: <strong>{totalRowsCount}</strong>
                                 {totalRowsCount > 0 && (
-                                    <span className="text-muted" style={{ marginLeft: 8 }}>
+                                    <span className="text-muted" style={{marginLeft: 8}}>
                                         (показано {showingFrom}–{showingTo})
                                     </span>
                                 )}
@@ -1617,8 +1823,8 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 Выбрано: <strong>{selectedRows.size}</strong>
                             </div>
                         </div>
-                    <div style={{ height: '70vh', overflowY: 'auto' }}>
-                        {/*<div className="overflow-y-auto" style={{height: "60vh"}}>*/}
+                        <div style={{height: '70vh', overflowY: 'auto'}}>
+                            {/*<div className="overflow-y-auto" style={{height: "60vh"}}>*/}
                             <table className="w-100 table-auto border-collapse">
                                 <thead>
                                 <tr>
@@ -1644,7 +1850,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                 <th
                                                     key={colKey}
                                                     className="border p-2 select-none"
-                                                    style={{ position: 'relative', whiteSpace: 'nowrap' }}
+                                                    style={{position: 'relative', whiteSpace: 'nowrap'}}
                                                     aria-sort={
                                                         sortConfig?.key === colKey
                                                             ? (sortConfig.direction === 'asc' ? 'ascending' : 'descending')
@@ -1652,42 +1858,48 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                     }
                                                 >
                                                     <span
-                                                          onClick={() => toggleSort(colKey)}
-                                                          style={{ cursor: 'pointer', userSelect: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                                                          title={
-                                                              sortConfig?.key === colKey
-                                                                  ? (sortConfig.direction === 'asc' ? 'Сортировка: по возрастанию' : 'Сортировка: по убыванию')
-                                                                  : 'Сортировать'
-                                                          }
+                                                        onClick={() => toggleSort(colKey)}
+                                                        style={{
+                                                            cursor: 'pointer',
+                                                            userSelect: 'none',
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            gap: 6
+                                                        }}
+                                                        title={
+                                                            sortConfig?.key === colKey
+                                                                ? (sortConfig.direction === 'asc' ? 'Сортировка: по возрастанию' : 'Сортировка: по убыванию')
+                                                                : 'Сортировать'
+                                                        }
                                                     >
                                                         {cfg.name}
 
                                                         {/* Иконка сортировки */}
-                                                          <span
-                                                              className="material-icons"
-                                                              style={{
-                                                                  fontSize: 18,
-                                                                  lineHeight: 1,
-                                                                  opacity: sortConfig?.key === colKey ? 1 : 0.35, // бледная, если не активный столбец
-                                                                  verticalAlign: 'middle'
-                                                              }}
-                                                          >
+                                                        <span
+                                                            className="material-icons"
+                                                            style={{
+                                                                fontSize: 18,
+                                                                lineHeight: 1,
+                                                                opacity: sortConfig?.key === colKey ? 1 : 0.35, // бледная, если не активный столбец
+                                                                verticalAlign: 'middle'
+                                                            }}
+                                                        >
                                                           {getSortIcon(colKey)}
                                                         </span>
 
-                                                          {/* Точка-индикатор активных фильтров по колонке */}
-                                                          {isColumnFiltered(colKey) && (
-                                                              <span
-                                                                  style={{
-                                                                      display: 'inline-block',
-                                                                      width: 6,
-                                                                      height: 6,
-                                                                      borderRadius: 3,
-                                                                      background: '#1976d2',
-                                                                      verticalAlign: 'middle'
-                                                                  }}
-                                                              />
-                                                          )}
+                                                        {/* Точка-индикатор активных фильтров по колонке */}
+                                                        {isColumnFiltered(colKey) && (
+                                                            <span
+                                                                style={{
+                                                                    display: 'inline-block',
+                                                                    width: 6,
+                                                                    height: 6,
+                                                                    borderRadius: 3,
+                                                                    background: '#1976d2',
+                                                                    verticalAlign: 'middle'
+                                                                }}
+                                                            />
+                                                        )}
                                                     </span>
 
                                                     {hasSearch && (
@@ -1721,7 +1933,8 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                             }}
                                                             title="Фильтр по столбцу"
                                                         >
-                                                            <span className="material-icons" style={{ fontSize: 18 }}>filter_list</span>
+                                                            <span className="material-icons"
+                                                                  style={{fontSize: 18}}>filter_list</span>
                                                         </button>
                                                     )}
 
@@ -1739,24 +1952,40 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                 padding: 12,
                                                                 boxShadow: '0 10px 24px rgba(0,0,0,0.15)',
                                                                 // куда открываемся: влево (прилипание к правому краю th) или вправо (к левому)
-                                                                ...(filterSide === 'left' ? { right: 0 } : { left: 0 }),
+                                                                ...(filterSide === 'left' ? {right: 0} : {left: 0}),
                                                             }}
                                                         >
                                                             {/* Фильтрация в найденном */}
-                                                            <div style={{ marginBottom: 12 }}>
-                                                                <div style={{ fontWeight: 600, marginBottom: 6 }}>Фильтрация в найденном</div>
+                                                            <div style={{marginBottom: 12}}>
+                                                                <div style={{
+                                                                    fontWeight: 600,
+                                                                    marginBottom: 6
+                                                                }}>Фильтрация в найденном
+                                                                </div>
                                                                 <input
                                                                     className="form-control"
                                                                     placeholder="Поиск внутри найденного"
                                                                     value={localFilterDraft[colKey] ?? ''}
-                                                                    onChange={e => setLocalFilterDraft(prev => ({ ...prev, [colKey]: e.target.value }))}
+                                                                    onChange={e => setLocalFilterDraft(prev => ({
+                                                                        ...prev,
+                                                                        [colKey]: e.target.value
+                                                                    }))}
                                                                 />
                                                             </div>
 
                                                             {/* Фильтрация по условию */}
-                                                            <div style={{ borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 10 }}>
-                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                                                                    <div style={{ fontWeight: 600 }}>Фильтрация по условию</div>
+                                                            <div style={{
+                                                                borderTop: '1px solid rgba(0,0,0,0.08)',
+                                                                paddingTop: 10
+                                                            }}>
+                                                                <div style={{
+                                                                    display: 'flex',
+                                                                    justifyContent: 'space-between',
+                                                                    alignItems: 'baseline'
+                                                                }}>
+                                                                    <div style={{fontWeight: 600}}>Фильтрация по
+                                                                        условию
+                                                                    </div>
                                                                     <button
                                                                         type="button"
                                                                         className="btn btn-link p-0"
@@ -1773,23 +2002,43 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                     const draftItem = sd?.items[idx];
 
                                                                     return (
-                                                                        <div key={idx} style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8, padding: 8, marginTop: 8 }}>
-                                                                            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                                                        <div key={idx} style={{
+                                                                            border: '1px solid rgba(0,0,0,0.08)',
+                                                                            borderRadius: 8,
+                                                                            padding: 8,
+                                                                            marginTop: 8
+                                                                        }}>
+                                                                            <label style={{
+                                                                                display: 'flex',
+                                                                                gap: 8,
+                                                                                alignItems: 'center'
+                                                                            }}>
                                                                                 <input
                                                                                     type="radio"
                                                                                     name={`srvf-${colKey}`}
                                                                                     checked={!!selected}
                                                                                     onChange={() => setServerFilterDraft(prev => ({
                                                                                         ...prev,
-                                                                                        [colKey]: { ...(prev[colKey] ?? { selectedIdx: null, items: [] }), selectedIdx: idx }
+                                                                                        [colKey]: {
+                                                                                            ...(prev[colKey] ?? {
+                                                                                                selectedIdx: null,
+                                                                                                items: []
+                                                                                            }), selectedIdx: idx
+                                                                                        }
                                                                                     }))}
                                                                                 />
-                                                                                <span style={{ fontWeight: 500 }}>{s.name}</span>
+                                                                                <span
+                                                                                    style={{fontWeight: 500}}>{s.name}</span>
                                                                             </label>
 
                                                                             {/* «Критерий» */}
                                                                             <div className="mt-2">
-                                                                                <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 4 }}>Критерий</div>
+                                                                                <div style={{
+                                                                                    fontSize: 12,
+                                                                                    opacity: 0.7,
+                                                                                    marginBottom: 4
+                                                                                }}>Критерий
+                                                                                </div>
                                                                                 <select
                                                                                     className="form-control"
                                                                                     disabled={!selected}
@@ -1798,11 +2047,23 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                         const cur = prev[colKey];
                                                                                         if (!cur) return prev;
                                                                                         const items = cur.items.slice();
-                                                                                        items[idx] = { ...(items[idx] ?? { key: s.key, method: s.methods[0], values: [] }), method: e.target.value as FilterMethod, key: s.key };
-                                                                                        return { ...prev, [colKey]: { ...cur, items } };
+                                                                                        items[idx] = {
+                                                                                            ...(items[idx] ?? {
+                                                                                                key: s.key,
+                                                                                                method: s.methods[0],
+                                                                                                values: []
+                                                                                            }),
+                                                                                            method: e.target.value as FilterMethod,
+                                                                                            key: s.key
+                                                                                        };
+                                                                                        return {
+                                                                                            ...prev,
+                                                                                            [colKey]: {...cur, items}
+                                                                                        };
                                                                                     })}
                                                                                 >
-                                                                                    {s.methods.map(m => <option key={m} value={m}>{MethodLabel(m)}</option>)}
+                                                                                    {s.methods.map(m => <option key={m}
+                                                                                                                value={m}>{MethodLabel(m)}</option>)}
                                                                                 </select>
                                                                             </div>
 
@@ -1815,10 +2076,10 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                     // --- DATES ---
                                                                                     if (method === 'DATES') {
                                                                                         const startYmd = (draftItem?.values?.[0] ?? '') as string;
-                                                                                        const endYmd   = (draftItem?.values?.[1] ?? '') as string;
+                                                                                        const endYmd = (draftItem?.values?.[1] ?? '') as string;
 
                                                                                         const startDate = startYmd ? parseYmd(startYmd) : null;
-                                                                                        const endDate   = endYmd ? parseYmd(endYmd) : null;
+                                                                                        const endDate = endYmd ? parseYmd(endYmd) : null;
 
                                                                                         return (
                                                                                             <DatePicker
@@ -1834,15 +2095,26 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                                     const v1 = toYmd(endD);
 
                                                                                                     setServerFilterDraft(prev => {
-                                                                                                        const cur = prev[colKey]; if (!cur) return prev;
+                                                                                                        const cur = prev[colKey];
+                                                                                                        if (!cur) return prev;
                                                                                                         const items = cur.items.slice();
                                                                                                         items[idx] = {
-                                                                                                            ...(items[idx] ?? { key: s.key, method: 'DATES' as FilterMethod, values: [] }),
+                                                                                                            ...(items[idx] ?? {
+                                                                                                                key: s.key,
+                                                                                                                method: 'DATES' as FilterMethod,
+                                                                                                                values: []
+                                                                                                            }),
                                                                                                             key: s.key,
                                                                                                             method: 'DATES' as FilterMethod,
                                                                                                             values: [v0, v1],
                                                                                                         };
-                                                                                                        return { ...prev, [colKey]: { ...cur, items } };
+                                                                                                        return {
+                                                                                                            ...prev,
+                                                                                                            [colKey]: {
+                                                                                                                ...cur,
+                                                                                                                items
+                                                                                                            }
+                                                                                                        };
                                                                                                     });
                                                                                                 }}
                                                                                                 startDate={startDate}
@@ -1851,63 +2123,102 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                                 placeholderText="Диапазон дат"
                                                                                                 className="form-control w-100"
                                                                                                 wrapperClassName="w-100"
-                                                                                                onChangeRaw={(e) => { e?.preventDefault(); }}
+                                                                                                onChangeRaw={(e) => {
+                                                                                                    e?.preventDefault();
+                                                                                                }}
                                                                                                 onKeyDown={(e) => {
                                                                                                     if (e.key === 'Backspace' || e.key === 'Delete') e.preventDefault();
                                                                                                 }}
                                                                                                 dateFormat="dd.MM.yyyy"
                                                                                             />
                                                                                         );
-                                                                                    }
-                                                                                        else if (method === 'IN' || method === 'NOT IN') {
-                                                                                            if (opts.length) {
-                                                                                                return (
-                                                                                                    <div style={{ maxHeight: 160, overflowY: 'auto', padding: 6, border: '1px solid rgba(0,0,0,0.08)', borderRadius: 6 }}>
-                                                                                                        {opts.map(opt => {
-                                                                                                            const checked = !!draftItem?.values?.includes(opt);
-                                                                                                            return (
-                                                                                                                <label key={opt} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
-                                                                                                                    <input
-                                                                                                                        type="checkbox"
-                                                                                                                        disabled={!selected}
-                                                                                                                        checked={checked}
-                                                                                                                        onChange={e => setServerFilterDraft(prev => {
-                                                                                                                            const cur = prev[colKey]; if (!cur) return prev;
-                                                                                                                            const items = cur.items.slice();
-                                                                                                                            const it = { ...(items[idx] ?? { key: s.key, method, values: [] }) };
-                                                                                                                            const set = new Set(it.values ?? []);
-                                                                                                                            if (e.target.checked) set.add(opt); else set.delete(opt);
-                                                                                                                            it.values = Array.from(set);
-                                                                                                                            items[idx] = it;
-                                                                                                                            return { ...prev, [colKey]: { ...cur, items } };
-                                                                                                                        })}
-                                                                                                                    />
-                                                                                                                    {opt}
-                                                                                                                </label>
-                                                                                                            );
-                                                                                                        })}
-                                                                                                    </div>
-                                                                                                );
-                                                                                            } else {
-                                                                                                // нет options — ввод через запятую
-                                                                                                return (
-                                                                                                    <textarea
-                                                                                                        className="form-control"
-                                                                                                        disabled={!selected}
-                                                                                                        placeholder="Значения через запятую"
-                                                                                                        value={(draftItem?.values ?? []).join(', ')}
-                                                                                                        onChange={e => setServerFilterDraft(prev => {
-                                                                                                            const cur = prev[colKey]; if (!cur) return prev;
-                                                                                                            const items = cur.items.slice();
-                                                                                                            items[idx] = { ...(items[idx] ?? { key: s.key, method, values: [] }),
-                                                                                                                values: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
-                                                                                                            };
-                                                                                                            return { ...prev, [colKey]: { ...cur, items } };
-                                                                                                        })}
-                                                                                                    />
-                                                                                                );
-                                                                                            }
+                                                                                    } else if (method === 'IN' || method === 'NOT IN') {
+                                                                                        if (opts.length) {
+                                                                                            return (
+                                                                                                <div style={{
+                                                                                                    maxHeight: 160,
+                                                                                                    overflowY: 'auto',
+                                                                                                    padding: 6,
+                                                                                                    border: '1px solid rgba(0,0,0,0.08)',
+                                                                                                    borderRadius: 6
+                                                                                                }}>
+                                                                                                    {opts.map(opt => {
+                                                                                                        const checked = !!draftItem?.values?.includes(opt);
+                                                                                                        return (
+                                                                                                            <label
+                                                                                                                key={opt}
+                                                                                                                style={{
+                                                                                                                    display: 'flex',
+                                                                                                                    alignItems: 'center',
+                                                                                                                    gap: 8,
+                                                                                                                    padding: '4px 0'
+                                                                                                                }}>
+                                                                                                                <input
+                                                                                                                    type="checkbox"
+                                                                                                                    disabled={!selected}
+                                                                                                                    checked={checked}
+                                                                                                                    onChange={e => setServerFilterDraft(prev => {
+                                                                                                                        const cur = prev[colKey];
+                                                                                                                        if (!cur) return prev;
+                                                                                                                        const items = cur.items.slice();
+                                                                                                                        const it = {
+                                                                                                                            ...(items[idx] ?? {
+                                                                                                                                key: s.key,
+                                                                                                                                method,
+                                                                                                                                values: []
+                                                                                                                            })
+                                                                                                                        };
+                                                                                                                        const set = new Set(it.values ?? []);
+                                                                                                                        if (e.target.checked) set.add(opt); else set.delete(opt);
+                                                                                                                        it.values = Array.from(set);
+                                                                                                                        items[idx] = it;
+                                                                                                                        return {
+                                                                                                                            ...prev,
+                                                                                                                            [colKey]: {
+                                                                                                                                ...cur,
+                                                                                                                                items
+                                                                                                                            }
+                                                                                                                        };
+                                                                                                                    })}
+                                                                                                                />
+                                                                                                                {opt}
+                                                                                                            </label>
+                                                                                                        );
+                                                                                                    })}
+                                                                                                </div>
+                                                                                            );
+                                                                                        } else {
+                                                                                            // нет options — ввод через запятую
+                                                                                            return (
+                                                                                                <textarea
+                                                                                                    className="form-control"
+                                                                                                    disabled={!selected}
+                                                                                                    placeholder="Значения через запятую"
+                                                                                                    value={(draftItem?.values ?? []).join(', ')}
+                                                                                                    onChange={e => setServerFilterDraft(prev => {
+                                                                                                        const cur = prev[colKey];
+                                                                                                        if (!cur) return prev;
+                                                                                                        const items = cur.items.slice();
+                                                                                                        items[idx] = {
+                                                                                                            ...(items[idx] ?? {
+                                                                                                                key: s.key,
+                                                                                                                method,
+                                                                                                                values: []
+                                                                                                            }),
+                                                                                                            values: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                                                                                                        };
+                                                                                                        return {
+                                                                                                            ...prev,
+                                                                                                            [colKey]: {
+                                                                                                                ...cur,
+                                                                                                                items
+                                                                                                            }
+                                                                                                        };
+                                                                                                    })}
+                                                                                                />
+                                                                                            );
                                                                                         }
+                                                                                    }
 
                                                                                     // одиночное значение: если options есть — селект, иначе input
                                                                                     if (opts.length) {
@@ -1918,16 +2229,32 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                                 disabled={!selected}
                                                                                                 value={val}
                                                                                                 onChange={e => setServerFilterDraft(prev => {
-                                                                                                    const cur = prev[colKey]; if (!cur) return prev;
+                                                                                                    const cur = prev[colKey];
+                                                                                                    if (!cur) return prev;
                                                                                                     const items = cur.items.slice();
-                                                                                                    items[idx] = { ...(items[idx] ?? { key: s.key, method, values: [] }),
+                                                                                                    items[idx] = {
+                                                                                                        ...(items[idx] ?? {
+                                                                                                            key: s.key,
+                                                                                                            method,
+                                                                                                            values: []
+                                                                                                        }),
                                                                                                         values: [e.target.value]
                                                                                                     };
-                                                                                                    return { ...prev, [colKey]: { ...cur, items } };
+                                                                                                    return {
+                                                                                                        ...prev,
+                                                                                                        [colKey]: {
+                                                                                                            ...cur,
+                                                                                                            items
+                                                                                                        }
+                                                                                                    };
                                                                                                 })}
                                                                                             >
-                                                                                                <option value="">— выберите —</option>
-                                                                                                {opts.map(o => <option key={o} value={o}>{o}</option>)}
+                                                                                                <option value="">—
+                                                                                                    выберите —
+                                                                                                </option>
+                                                                                                {opts.map(o => <option
+                                                                                                    key={o}
+                                                                                                    value={o}>{o}</option>)}
                                                                                             </select>
                                                                                         );
                                                                                     } else {
@@ -1939,9 +2266,15 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                                 placeholder="Значение"
                                                                                                 value={val}
                                                                                                 onChange={e => setServerFilterDraft(prev => {
-                                                                                                    const cur = prev[colKey]; if (!cur) return prev;
+                                                                                                    const cur = prev[colKey];
+                                                                                                    if (!cur) return prev;
                                                                                                     const items = cur.items.slice();
-                                                                                                    items[idx] = { ...(items[idx] ?? { key: s.key, method, values: [] }),
+                                                                                                    items[idx] = {
+                                                                                                        ...(items[idx] ?? {
+                                                                                                            key: s.key,
+                                                                                                            method,
+                                                                                                            values: []
+                                                                                                        }),
                                                                                                         values: [e.target.value]
                                                                                                     };
                                                                                                     return { ...prev, [colKey]: { ...cur, items } };
@@ -1956,8 +2289,12 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                 })}
 
                                                                 <div className="mt-3 d-flex gap-2 justify-content-end">
-                                                                    <button className="btn btn-outline-secondary" onClick={() => setOpenFilterCol(null)}>Отмена</button>
-                                                                    <button className="btn btn-primary" onClick={() => applyColumnFilters(colKey)}>Применить</button>
+                                                                    <button className="btn btn-outline-secondary"
+                                                                            onClick={() => setOpenFilterCol(null)}>Отмена
+                                                                    </button>
+                                                                    <button className="btn btn-primary"
+                                                                            onClick={() => applyColumnFilters(colKey)}>Применить
+                                                                    </button>
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -1969,7 +2306,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                     <th
                                         className="border p-2"
                                         title="Непрочитанные / Всего"
-                                        style={{ position: 'relative', whiteSpace: 'nowrap' }}
+                                        style={{position: 'relative', whiteSpace: 'nowrap'}}
                                     >
                                         <span>Сообщения</span>
                                         {unreadOnly && (
@@ -1998,7 +2335,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                 color: unreadOnly ? '#1976d2' : undefined,
                                             }}
                                         >
-                                            <span className="material-icons" style={{ fontSize: 18 }}>filter_list</span>
+                                            <span className="material-icons" style={{fontSize: 18}}>filter_list</span>
                                         </button>
                                     </th>
 
@@ -2017,7 +2354,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                     className={styles.customCheckbox}
                                                     checked={selectedRows.has(key)}
                                                     onChange={() => toggleRow(key)}
-                                                    style={{ cursor: "pointer" }}
+                                                    style={{cursor: "pointer"}}
                                                 />
                                             </td>
 
@@ -2052,14 +2389,17 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                 })}
                                             <td className="border p-2 align-top">
                                                 {(() => {
-                                                    const guids = getGuidsForRow(row);                 // твоя утилита из прошлых вставок
+                                                    const guids = getGuidsForRow(row);
                                                     const firstGuid = guids[0];
 
-                                                    const { sumUnread, sumTotal } = getRowMsgInfo(row); // твоя утилита из прошлых вставок
+                                                    const {sumUnread, sumTotal} = getRowMsgInfo(row);
                                                     const showDash = !firstGuid && sumUnread === 0 && sumTotal === 0;
                                                     if (showDash) return <span className="text-muted">—</span>;
 
-                                                    const c = firstGuid ? (guidCounts[firstGuid] || { unread: 0, total: 0 }) : { unread: 0, total: 0 };
+                                                    const c = firstGuid ? (guidCounts[firstGuid] || {
+                                                        unread: 0,
+                                                        total: 0
+                                                    }) : {unread: 0, total: 0};
 
                                                     return (
                                                         <div className={styles.msgsCell}>
@@ -2081,7 +2421,7 @@ const PresetSelectorTable: React.FC<Props> = ({
 
                                             {/* Колонка с кнопками действий */}
                                             <td className="border p-2">
-                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                                <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
                                                     <button
                                                         className="btn btn-outline-light text-dark"
                                                         onClick={() => setOpenedGroup(row.id_list)}
@@ -2093,7 +2433,8 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                     {actionOptions.map(opt => {
                                                         if (opt.action?.action_type === "assign") {
                                                             return (
-                                                                <AssignComp opt={opt} row={row} processRows={processRows}/>
+                                                                <AssignComp opt={opt} row={row}
+                                                                            processRows={processRows}/>
                                                             );
                                                         }
 
@@ -2116,8 +2457,8 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 })}
                                 </tbody>
                             </table>
-                        {/*</div>*/}
-                    </div>
+                            {/*</div>*/}
+                        </div>
                         {/* Пагинация */}
                         <div
                             className="mt-4"
@@ -2137,8 +2478,8 @@ const PresetSelectorTable: React.FC<Props> = ({
                             }}
                         >
                             {/* Селект «строк на странице» слева */}
-                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <span style={{ fontSize: 13, color: "#444", whiteSpace: 'nowrap' }}>
+                            <div style={{display: "flex", alignItems: "center", gap: 8}}>
+                                <span style={{fontSize: 13, color: "#444", whiteSpace: 'nowrap'}}>
                                   Показывать по
                                 </span>
                                 <select
@@ -2198,7 +2539,13 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 };
 
                                 return (
-                                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto", marginRight: "auto" }}>
+                                    <div style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        marginLeft: "auto",
+                                        marginRight: "auto"
+                                    }}>
                                         <button
                                             type="button"
                                             onClick={() => setCurrentPage(currentPage <= 1 ? totalPages : currentPage - 1)}
@@ -2220,7 +2567,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                             style={inputSx}
                                             aria-label="Номер страницы"
                                         />
-                                        <span style={{ fontSize: 14, color: "#444" }}>из {totalPages}</span>
+                                        <span style={{fontSize: 14, color: "#444"}}>из {totalPages}</span>
 
                                         <button
                                             type="button"
@@ -2235,9 +2582,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 );
                             })()}
                         </div>
-
-
-
                     </div>
                 )}
 

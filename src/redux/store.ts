@@ -1,17 +1,18 @@
+// store.ts
 import { configureStore } from '@reduxjs/toolkit';
 import operatorReducer from './operatorSlice';
-import roomReducer from './roomSlice';
-import credentialsSlice from "./credentialsSlice";
+import credentialsSlice from './credentialsSlice';
+
+// ⬇️ твой новый слайс (как в примере выше)
+import tasksTableReducer from './tasksTableSlice';
 
 export const store = configureStore({
     reducer: {
         operator: operatorReducer,
-        room: roomReducer,
-        credentials: credentialsSlice
+        credentials: credentialsSlice,
+        tasksTable: tasksTableReducer,
     },
 });
 
-// Тип корневого состояния
 export type RootState = ReturnType<typeof store.getState>;
-// Тип dispatch
 export type AppDispatch = typeof store.dispatch;

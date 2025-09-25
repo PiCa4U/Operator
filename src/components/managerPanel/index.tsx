@@ -8,7 +8,7 @@ type TabKey = "dashboards" | "filters" | "operators" | "logs"; // ← добав
 
 export const ManagerPanel: React.FC = () => {
     const [active, setActive] = useState<TabKey>(
-        () => (localStorage.getItem("managerPanel.activeTab") as TabKey) || "dashboards" // ← открываем дашборды по умолчанию
+        () => (localStorage.getItem("managerPanel.activeTab") as TabKey) || "filters" // ← открываем дашборды по умолчанию
     );
 
     useEffect(() => {
@@ -17,7 +17,7 @@ export const ManagerPanel: React.FC = () => {
 
     const tabs = useMemo(
         () => [
-            { key: "dashboards" as const, label: "Дашборды" }, // ← новая вкладка
+            // { key: "dashboards" as const, label: "Дашборды" },
             { key: "filters" as const, label: "Отчёты" },
             { key: "operators" as const, label: "Операторы" },
             { key: "logs" as const, label: "Логи" },
@@ -45,7 +45,7 @@ export const ManagerPanel: React.FC = () => {
             </div>
 
             <div className="card-body">
-                {active === "dashboards" && <ManagerDashboardsTab />}
+                {/*{active === "dashboards" && <ManagerDashboardsTab />}*/}
                 {active === "filters" && <Filters />}
                 {active === "operators" && <OperatorsTab />}
                 {active === "logs" && <LogsTab />}

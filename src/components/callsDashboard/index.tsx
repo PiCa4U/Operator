@@ -48,7 +48,6 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
         worker     = '',
     } = store.getState().credentials;
 
-    const roomId   = useSelector((state: RootState) => state.room.roomId) || 'default_room';
     const [fsReport, setFsReport] = useState<any[]>([])
     // const fsReport = useSelector((state: RootState) => state.operator.fsReport);
     // Значения для инпутов
@@ -123,7 +122,7 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
                 phone_search: searchParams.phone,
             });
         }
-    }, [searchParams, currentPage, worker, sessionKey, sipLogin, roomId]);
+    }, [searchParams, currentPage, worker, sessionKey, sipLogin]);
 
     function cleanProjectName(name: string = ''): string {
         return name

@@ -1,6 +1,5 @@
 import React, {useState, useMemo, useEffect, useRef} from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { setRoomId } from '../../redux/roomSlice';
 import HeaderPanel, {Project} from '../headerPanel';
 import CallControlPanel, {ActiveCall, CallData} from '../callControlPanel';
 import CallsDashboard from '../callsDashboard';
@@ -9,7 +8,7 @@ import { socket } from "../../socket";
 import { getCookies, makeId } from "../../utils";
 import {makeSelectFullProjectPool, setActiveCalls, setFsStatus, setUserStatuses} from '../../redux/operatorSlice';
 import {RootState, store} from '../../redux/store';
-import TasksDashboard, {ApiRow, OptionType, Preset} from "../taskDashboard";
+import TasksDashboard, {ApiRow, ColumnCfgWithSearch, OptionType, Preset} from "../taskDashboard";
 import stylesButton from '../callControlPanel/index.module.css';
 import axios from "axios";
 import {ManagerPanel} from "../managerPanel";
@@ -24,6 +23,7 @@ import {useChatCollapsed} from "../../features/itsm/useChatCollapsed";
 import {useChatSocket} from "../../features/itsm/chat/useChatSocket";
 import {ContactFilesPanel} from "../../features/itsm/chat/FieldsPanel";
 import styles from "../../features/itsm/chat/style.module.css";
+import {FilterMethod, ServerAppliedByCol, ServerDraftByCol} from "../../redux/tasksTableSlice";
 
 function toIsoFromServer(dt: string): string {
     const [d, t = "00:00:00"] = dt.trim().split(" ");
@@ -148,9 +148,16 @@ const MainApp: React.FC = () => {
     const [scriptProject, setScriptProject] = useState<string>("");
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
     const [expressCall, setExpressCall] = useState<boolean>(false)
+    const [selectedRowsKeys, setSelectedRowsKeys] = React.useState<string[]>([]);
 
     const [phoneID, setPhoneID] = useState<number|null>(null)
     useEffect(() => console.log("expressCall:", expressCall ),[expressCall])
+
+    const [appliedLocalFilters, setAppliedLocalFilters] = useState<Record<string, string>>({});
+    const [appliedServerFilters, setAppliedServerFilters] = useState<Record<string, ServerAppliedByCol>>({});
+    const [localFilterDraft, setLocalFilterDraft] = useState<Record<string, string>>({});
+    const [serverFilterDraft, setServerFilterDraft] = useState<Record<string, ServerDraftByCol>>({});
+    const [unreadOnly, setUnreadOnly] = useState(false); // если нужно сохранять этот фильтр
 
     useEffect(() => console.log("scriptProject:", scriptProject ),[scriptProject])
     const { start: defaultStart, end: defaultEnd } = getInitialDateRange();
@@ -197,6 +204,7 @@ const MainApp: React.FC = () => {
     const firstGuid = useMemo(() => {
         return openedGuids.length > 0 ? openedGuids[0].guid : null;
     }, [openedGuids]);
+    const prevPresetIdRef = useRef<number | null>(null);
 
     const [history, setHistory] = useState<UiMessage[]>([]);
     const [chatError, setChatError] = useState<string | null>(null);
@@ -275,28 +283,10 @@ const MainApp: React.FC = () => {
     const { monitorUsers } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
-    // function labelForGuid(g: string): string {
-    //     const rows = (openedPhones ?? []).filter((it: any) => {
-    //         const v = it?.guid || it?.contact_info?.guid || it?.b_uuid || it?.uuid;
-    //         return String(v) === g;
-    //     });
-    //
-    //     if (!rows.length) return `GUID ${g.slice(0, 8)}…`;
-    //
-    //     const first = rows[0];
-    //     const phone = first?.phone || first?.contact_info?.phone || first?.msisdn || first?.phone_number;
-    //     const name  = first?.name  || first?.contact_info?.name;
-    //     const projRaw = first?.project || first?.contact_info?.project;
-    //     const projNice = projectsDict[projRaw] || projRaw; // <- подмена
-    //
-    //     if (name && phone && projNice) return `${name} · ${phone} · ${projNice}`;
-    //     if (name && phone)             return `${name} · ${phone}`;
-    //     if (phone && projNice)         return `${phone} · ${projNice}`;
-    //     if (name)                      return `${name}`;
-    //     if (phone)                     return `${phone}`;
-    //     if (projNice)                  return `${projNice}`;
-    //     return `GUID ${g.slice(0, 8)}…`;
-    // }
+    useEffect(() => {
+        setAppliedLocalFilters({});
+        setAppliedServerFilters({});
+    }, [selectedPreset]);
 
     useEffect(() => {
         if (!activeGuid) return;
@@ -871,7 +861,6 @@ const MainApp: React.FC = () => {
     }, [fullWidthCard]);
 
     const dispatch = useDispatch();
-    const roomId = useMemo(() => makeId(40), []);
 
     useEffect(() => {
         // TODO fix check_express
@@ -1225,10 +1214,6 @@ const MainApp: React.FC = () => {
         };
     }, [dispatch]);
 
-    useEffect(() => {
-        dispatch(setRoomId(roomId));
-    }, [dispatch, roomId]);
-
     useEffect(() => console.log("outActivePhone: ",outActivePhone),[outActivePhone])
     useEffect(() => {
         if (!(activeCalls[0] && Object.keys(activeCalls[0]).length > 0)) return
@@ -1374,6 +1359,16 @@ const MainApp: React.FC = () => {
                                 setEndDate={setEndDate}
                                 selectedStatus={selectedStatus}
                                 setSelectedStatus={setSelectedStatus}
+                                appliedLocalFilters={appliedLocalFilters}
+                                setAppliedLocalFilters={setAppliedLocalFilters}
+                                appliedServerFilters={appliedServerFilters}
+                                setAppliedServerFilters={setAppliedServerFilters}
+                                localFilterDraft={localFilterDraft}
+                                setLocalFilterDraft={setLocalFilterDraft}
+                                serverFilterDraft={serverFilterDraft}
+                                setServerFilterDraft={setServerFilterDraft}
+                                unreadOnly={unreadOnly}
+                                setUnreadOnly={setUnreadOnly}
                             />
                         )
                         }

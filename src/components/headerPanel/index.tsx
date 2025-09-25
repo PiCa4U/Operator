@@ -169,7 +169,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     const isManager = role === "manager";          // твоя логика роли
     const [notifOpen, setNotifOpen] = useState(false);
-    const roomId = useSelector((state: RootState) => state.room.roomId) || 'default_room';
     const userStatuses      = useSelector((state: RootState) => state.operator.userStatuses);
     const dispatch = useDispatch();
     const { monitorUsers, monitorProjects, allProjects, monitorCallcenter } = useSelector(
@@ -726,7 +725,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             socket.off('uuid_break', handleUuidBreak);
             socket.off('uuid_bridge', handleUuidBridge);
         };
-    }, [allProjects, assignedKey, specialKey, outActiveProjectName, projectPoolForCall, roomId, sessionKey, sipLogin, worker]);
+    }, [allProjects, assignedKey, specialKey, outActiveProjectName, projectPoolForCall, sessionKey, sipLogin, worker]);
 
     useEffect(() => {
         if (autocallEnabled) {
@@ -754,7 +753,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             }, 10000);
             return () => clearInterval(interval);
         }
-    }, [autocallEnabled, hasActiveCall, outPreparation, sipLogin, sessionKey, worker, roomId, projectPoolForCall, fsStatus.state, fsStatus.status]);
+    }, [autocallEnabled, hasActiveCall, outPreparation, sipLogin, sessionKey, worker, projectPoolForCall, fsStatus.state, fsStatus.status]);
 
     useEffect(() => {
         const handleGetOutStart = (msg: any) => {
@@ -783,7 +782,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         return () => {
             socket.off('get_out_start', handleGetOutStart);
         };
-    }, [sipLogin, sessionKey, roomId, worker, hasActiveCall]);
+    }, [sipLogin, sessionKey, worker, hasActiveCall]);
     // --- (B) Обработчик «Вызов по номеру» ---
     const handleCallByNumber = () => {
         if (!activeCalls[0].application) {

@@ -112,7 +112,6 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     console.log("scriptbUuid: ", bUuid)
 
     // Текущая «комната» (room_id)
-    const roomId     = useSelector((state: RootState) => state.room.roomId) || 'default_room';
 
     // Состояния, аналогичные старому коду
     const [scriptId, setScriptId] = useState('');

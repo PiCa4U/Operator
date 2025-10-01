@@ -3,9 +3,9 @@ import * as XLSX from 'xlsx';
 import SearchableSelect from '../callControlPanel/components/select/index';
 import styles from "./components/checkbox.module.css"
 import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
-import {useDispatch, useSelector} from "react-redux";
+import { useSelector} from "react-redux";
 import GroupActionModal from "./components/index";
-import {useItsmNavigation} from "../../utils/useItsmNavigation";
+import MultiSelect from "../callControlPanel/components/multiselect";
 
 import Swal from "sweetalert2";
 import {socket} from "../../socket";
@@ -60,11 +60,21 @@ type FilterMethod =
     | 'NOT IN'
     | 'DATES';
 
+type OptionDescriptor = string | { users: string[] };
 type SearchItemCfg = {
     key: string;
     name: string;
     methods: FilterMethod[];
-    options?: string[];
+    options?: OptionDescriptor[];
+    // ↓ новое поле
+    default?: {
+        method: FilterMethod;
+        // Может быть строкой или массивом:
+        // - для IN/NOT IN — массив строк
+        // - для '=', '!=', 'LIKE', 'NOT LIKE' — строка
+        // - для DATES — [from, to] (YYYY-MM-DD) или относительные "{today}", "{today-3}", "{today+7}"
+        options: string | string[];
+    };
 };
 
 export type ColumnCfgWithSearch = {
@@ -176,7 +186,7 @@ const LS_SEARCH_TERM_KEY = 'tasksSearchTerm';
 const LS_SELECTED_OPERATOR_KEY = 'tasksSelectedOperator';
 const LS_UNREAD_ONLY_KEY = 'tasksUnreadOnly';
 const LS_SORT_KEY = 'tasksSortConfig';
-// статус у тебя уже читается из 'selectedStatus' — продолжим его использовать
+const LS_LOCAL_FILTERS_KEY = (presetId: number) => `tasksLocalFilters_${presetId}`;
 const LS_SELECTED_STATUS_KEY = 'selectedStatus';
 
 const DEFAULT_ROWS_PER_PAGE = 10;
@@ -241,7 +251,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         worker = '',
         glagolParent = ''
     } = store.getState().credentials;
-    const {goToItsm, openItsmNewTab} = useItsmNavigation();
+    const phonesCacheRef = useRef<Map<number, any>>(new Map());
 
     const [presets, setPresets] = useState<OptionType[]>([]);
     const [selectedActionOption, setSelectedActionOption] = useState<ActionOption | null>(null);
@@ -252,6 +262,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc'|'desc' }|null>(null);
     const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
     const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
+    const [optionsSearch, setOptionsSearch] = useState<Record<string, string>>({});
 
     const [pageInput, setPageInput] = useState('1');
 
@@ -315,6 +326,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [filterSide, setFilterSide] = useState<'left' | 'right'>('left');
 
     const [guidCounts, setGuidCounts] = useState<Record<string, { unread: number; total: number }>>({});
+    const inflightGuidsRef = useRef<Set<string>>(new Set());
 
     // const glagolParent2 = "fs.at.glagol.ai";
 
@@ -329,18 +341,51 @@ const PresetSelectorTable: React.FC<Props> = ({
         [appliedLocalFilters, appliedServerFilters]
     );
 
+    const resetPhonesCache = useCallback(() => {
+        phonesCacheRef.current.clear();
+        setFlatPhones([]);
+        setPhonesData([]);
+        setIdProjectMap([]);
+    }, []);
+
+    const upsertFlatPhones = useCallback((items: any[]) => {
+        if (!items || !items.length) return;
+        const cache = phonesCacheRef.current;
+        let changed = false;
+
+        for (const it of items) {
+            if (!cache.has(it.id)) changed = true;
+            cache.set(it.id, it);
+        }
+
+        if (changed) {
+            const arr = Array.from(cache.values());
+            setFlatPhones(arr);
+            setPhonesData(arr);
+            setIdProjectMap(arr.map(p => ({ id: p.id, project_name: p.project })));
+        }
+    }, []);
+
+    const buildBaseFilter = useCallback(() => {
+        if (!selectedPreset) return {};
+        const { preset } = selectedPreset;
+        const base: any = { project: ['IN', preset.projects] };
+        const extra = buildExtraFilterByFromMap(appliedServerFilters);
+        Object.assign(base, extra);
+        return base;
+    }, [selectedPreset, appliedServerFilters]);
 
     useEffect(() => {
         if (!unreadOnly) return;
-        // Соберём все GUID со всех строк текущей выдачи
+
         const allGuids = new Set<string>();
-        tableData.forEach(row => {
-            getGuidsForRow(row).forEach(g => g && allGuids.add(g));
-        });
-        // Дотянем, чего нет в кэше
-        const toFetch = Array.from(allGuids).filter(g => !guidCounts[g]);
-        // На всякий — ограничим «залп» (можешь поднять/убрать лимит)
-        toFetch.slice(0, 300).forEach(g => { void fetchCountsForGuid(g); });
+        tableData.forEach(row => getGuidsForRow(row).forEach(g => g && allGuids.add(g)));
+
+        const toFetch = Array.from(allGuids).filter(
+            g => guidCounts[g] === undefined && !inflightGuidsRef.current.has(g)
+        );
+
+        void fetchCountsForGuids(toFetch.slice(0, 300));
     }, [unreadOnly, tableData, guidCounts]);
 
     useEffect(() => console.log("filterSide: ", filterSide), [filterSide])
@@ -348,6 +393,33 @@ const PresetSelectorTable: React.FC<Props> = ({
         localStorage.setItem(ROWS_PER_PAGE_KEY, String(rowsPerPage));
         setCurrentPage(1);
     }, [rowsPerPage, setCurrentPage]);
+
+    useEffect(() => {
+        const presetId = selectedPreset?.preset?.id;
+        if (!presetId) return;
+
+        const raw = localStorage.getItem(LS_LOCAL_FILTERS_KEY(presetId));
+        if (!raw) {
+            // нет сохранений — просто обнуляем локальные фильтры
+            setAppliedLocalFilters({});
+            return;
+        }
+
+        try {
+            const parsed = JSON.parse(raw) as Record<string, string>;
+            setAppliedLocalFilters(parsed && typeof parsed === 'object' ? parsed : {});
+        } catch {
+            setAppliedLocalFilters({});
+        }
+    }, [selectedPreset?.preset?.id]);
+
+    useEffect(() => {
+        const presetId = selectedPreset?.preset?.id;
+        if (!presetId) return;
+        try {
+            localStorage.setItem(LS_LOCAL_FILTERS_KEY(presetId), JSON.stringify(appliedLocalFilters));
+        } catch {}
+    }, [appliedLocalFilters, selectedPreset?.preset?.id]);
 
     useEffect(() => {
         setCurrentPage(1);
@@ -403,18 +475,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         localStorage.setItem(LS_SEARCH_TERM_KEY, searchTerm ?? '');
     }, [searchTerm]);
 
-// Статус — пишем в твой старый ключ, чтобы не ломать совместимость
-    useEffect(() => {
-        if (selectedStatus) localStorage.setItem(LS_SELECTED_STATUS_KEY, selectedStatus);
-        else localStorage.removeItem(LS_SELECTED_STATUS_KEY);
-    }, [selectedStatus]);
-
-// Оператор
-    useEffect(() => {
-        if (selectedOperator) localStorage.setItem(LS_SELECTED_OPERATOR_KEY, String(selectedOperator));
-        else localStorage.removeItem(LS_SELECTED_OPERATOR_KEY);
-    }, [selectedOperator]);
-
 // Только с непрочитанными
     useEffect(() => {
         localStorage.setItem(LS_UNREAD_ONLY_KEY, unreadOnly ? '1' : '0');
@@ -453,6 +513,48 @@ const PresetSelectorTable: React.FC<Props> = ({
             localStorage.setItem('tasksSelectedPreset', JSON.stringify(selectedPreset));
         }
     }, [selectedPreset, presets]);
+
+// 1) Инициализируем appliedServerFilters из LS/дефолтов, НО без запроса
+    useEffect(() => {
+        const presetId = selectedPreset?.preset?.id;
+        if (!presetId) return;
+
+        const lsKey  = serverFiltersKey(presetId);
+        const dayKey = serverFiltersDayKey(presetId);
+        const today  = toYmd(new Date());
+
+        let initialApplied: Record<string, ServerAppliedByCol> | null = null;
+        const savedDay = localStorage.getItem(dayKey);
+        const savedRaw = localStorage.getItem(lsKey);
+        if (savedRaw && savedDay === today) {
+            try { initialApplied = JSON.parse(savedRaw) } catch {}
+        }
+        if (!initialApplied) {
+            const structure = (selectedPreset?.preset?.structure ?? {}) as Record<string, ColumnCfgWithSearch>;
+            initialApplied = buildAppliedFromDefaults(structure);
+            localStorage.setItem(lsKey, JSON.stringify(initialApplied));
+            localStorage.setItem(dayKey, today);
+        }
+        console.log("initialApplied: ", initialApplied);
+        setAppliedServerFilters(initialApplied ?? {});
+    }, [selectedPreset?.preset?.id]);
+
+// 2) Грузим данные, когда всё готово, включая server-фильтры
+    useEffect(() => {
+        if (!selectedPreset) return
+        const bothNull = !startDate && !endDate
+        const bothSet  = !!startDate && !!endDate
+        if (!(bothNull || bothSet)) return
+
+        loadGroupedPhones() // внутри возьмёт актуальные appliedServerFilters
+    }, [
+        selectedPreset?.preset?.id,
+        startDate?.getTime(),
+        endDate?.getTime(),
+        selectedStatus,
+        selectedOperator,
+        appliedServerFilters,         // <--- вот это главное
+    ])
 
     useEffect(() => {
         const structure = (selectedPreset?.preset?.structure ?? {}) as Record<string, ColumnCfgWithSearch>;
@@ -717,6 +819,87 @@ const PresetSelectorTable: React.FC<Props> = ({
         return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0);
     }
 
+    const serverFiltersKey = (presetId: number) => `tasksServerFilters_${presetId}`;
+    const serverFiltersDayKey = (presetId: number) => `tasksServerFiltersDay_${presetId}`;
+
+// yyyy-MM-dd из Date (локальная дата)
+    function toYmd(d: Date): string {
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+    }
+
+// Разбор "{today}", "{today-3}", "{today+7}"
+    function resolveRelativeToken(token: string): string | null {
+        const m = token.trim().toLowerCase().match(/^\{today(?:([+-]\d+))?\}$/);
+        if (!m) return null;
+        const delta = Number(m[1] ?? 0);
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        if (Number.isFinite(delta)) d.setDate(d.getDate() + delta);
+        return toYmd(d);
+    }
+
+// Преобразуем default.options -> values: string[]
+    function normalizeDefaultValues(
+        method: FilterMethod,
+        raw: string | string[],
+        ctx?: any
+    ): string[] {
+        const materialize = (s: string) => resolveUserMacros(String(s ?? ''), ctx?.sipLogin ?? '');
+
+        if (method === 'IN' || method === 'NOT IN') {
+            const arr = Array.isArray(raw) ? raw : [String(raw ?? '').trim()].filter(Boolean);
+            return arr.map(s => materialize(s));
+        }
+        if (method === 'DATES') {
+            const arr = Array.isArray(raw) ? raw : [String(raw ?? '')];
+            const [a, b] = [arr[0] ?? '', arr[1] ?? ''];
+            const start = resolveRelativeToken(a) ?? a;
+            const end   = resolveRelativeToken(b) ?? b;
+            if (!start && !end) return [];
+            return [start || end, end || start];
+        }
+        const one = Array.isArray(raw) ? (raw[0] ?? '') : String(raw ?? '');
+        const rel = resolveRelativeToken(one);
+        return [materialize(rel ?? one)];
+    }
+
+// Собираем appliedServerFilters из defaults в структуре пресета
+    function buildAppliedFromDefaults(structure: Record<string, ColumnCfgWithSearch>): Record<string, ServerAppliedByCol> {
+        const out: Record<string, ServerAppliedByCol> = {};
+        const { monitorUsers } = (store.getState() as RootState).operator.monitorData || { monitorUsers: {} };
+        const { sipLogin = '' } = store.getState().credentials;
+
+        Object.entries(structure || {}).forEach(([colKey, cfg]) => {
+            const arr = (cfg.search ?? []) as (SearchItemCfg & { default?: any })[];
+            if (!arr.length) { out[colKey] = null; return; }
+
+            const withDefaultIdx = arr.findIndex(s => !!s.default);
+            if (withDefaultIdx === -1) { out[colKey] = null; return; }
+
+            const item = arr[withDefaultIdx];
+            const method = item.default!.method as FilterMethod;
+            // учитываем макросы пользователя
+            let values = normalizeDefaultValues(method, item.default!.options, { sipLogin, monitorUsers });
+
+            // Если это users-опции — дефолт всегда должен быть ЛОГИНом (мы уже так вернули из макроса)
+            // На всякий, если дефолт пришёл реальным ФИО, попробуем заменить его на логин текущего:
+            const depts = extractUsersDepartments(item.options);
+            if (depts) {
+                values = values.map(v => {
+                    // если случайно прислали имя вместо логина — ставим свой логин
+                    if (v && !/^\d+$/.test(v) && sipLogin) return sipLogin;
+                    return v;
+                });
+            }
+
+            out[colKey] = { key: item.key, method, values };
+        });
+        return out;
+    }
+
 // инкремент на 1 день
     function addDays(date: Date, days: number): Date {
         const dt = new Date(date);
@@ -771,74 +954,29 @@ const PresetSelectorTable: React.FC<Props> = ({
             return;
         }
 
-        const mySeq = ++requestSeqRef.current; // ← номер этого запроса
+        const mySeq = ++requestSeqRef.current;
         setLoading(true);
 
         try {
-            const {preset} = selectedPreset;
+            const { preset } = selectedPreset;
+            resetPhonesCache();
 
-            const common: any = {project: ['IN', preset.projects]};
-            const filterBy: any = {...common};
-            const filterByForSelect: any = {...common};
+            const common: any = { project: ['IN', preset.projects] };
+            const filterBy: any = { ...common };
 
-            // даты
-            if (startDate && endDate) {
-                const from = formatWithTimezone(startDate, 'start');
-                const to = formatWithTimezone(endDate, 'end');
-                filterBy.created_dt = ['BETWEEN', [from, to]];
-                filterByForSelect.created_dt = ['BETWEEN', [from, to]];
-            }
-            if (selectedStatus) filterBy.status = ['IN', [selectedStatus]];
-            if (selectedOperator) {
-                filterBy.manager = ['IN', [selectedOperator]];
-                filterByForSelect.manager = ['IN', [selectedOperator]];
-            }
-
-            // ⚠️ добавляем серверные фильтры по условию, собранные из попапов
+            // ⚠️ только серверные столбцовые фильтры
             const extra = extraFilterBy ?? buildExtraFilterByFromMap(appliedServerFilters);
             Object.assign(filterBy, extra);
 
-            const [response1, response2, response3] = await Promise.all([
-                axios.post<ApiRow[]>('/api/v1/get_grouped_phones', {
-                    glagol_parent: glagolParent2,
-                    group_table: preset.group_table,
-                    filter_by: filterBy,
-                    preset_id: preset.id,
-                    role
-                }),
-                axios.post<Record<string, { status: any; id: number }[]>>('/api/v1/get_grouped_phones', {
-                    glagol_parent: glagolParent2,
-                    group_by: ['project'],
-                    group_table: preset.group_table,
-                    filter_by: filterBy,
-                    role
-                }),
-                axios.post<Record<string, { status: any; id: number }[]>>('/api/v1/get_grouped_phones', {
-                    glagol_parent: glagolParent2,
-                    group_by: ['project'],
-                    group_table: preset.group_table,
-                    filter_by: filterByForSelect,
-                    role
-                }),
-            ]);
+            const response1 = await axios.post<ApiRow[]>('/api/v1/get_grouped_phones', {
+                glagol_parent: glagolParent2,
+                group_table: preset.group_table,
+                filter_by: filterBy,
+                preset_id: preset.id,
+                role
+            });
 
-            // если за время ожидания стартовал новый запрос — выходим молча
             if (requestSeqRef.current !== mySeq) return;
-
-            const statusOptions = Object.values(response3.data).flat().map(p => p.status);
-            const uniqueStatusOptions = statusOptions.filter((s, i, arr) => arr.indexOf(s) === i);
-            setStatusOptions(uniqueStatusOptions);
-
-            const projectIdData = response2.data;
-            const flatPhones = Object.values(projectIdData).flat();
-            console.log("flatPhones: ", flatPhones)
-            setPhonesData(flatPhones);
-            setFlatPhones(flatPhones)
-
-            const flat = Object.entries(projectIdData).flatMap(([project_name, list]) =>
-                list.map(item => ({id: item.id, project_name}))
-            );
-            setIdProjectMap(flat);
 
             setTableData(response1.data);
             setSelectedActionOption(null);
@@ -846,9 +984,6 @@ const PresetSelectorTable: React.FC<Props> = ({
             if (response1.data.length < 11) setCurrentPage(1);
             setSortConfig(null);
             setSelectedRows(new Set());
-
-            // ⚠️ НЕ сбрасывай searchTerm здесь, иначе сломается «память страницы при поиске»
-            // setSearchTerm('');
         } catch (err) {
             if (requestSeqRef.current === mySeq) {
                 console.error('Ошибка загрузки данных:', err);
@@ -858,18 +993,87 @@ const PresetSelectorTable: React.FC<Props> = ({
         }
     };
 
-    useEffect(() => {
-        if (!selectedPreset) return;
+    /** Есть ли среди options объект { users: [...] } */
+    // function extractUsersDepartments(options?: OptionDescriptor[]): string[] | null {
+    //     if (!Array.isArray(options)) return null;
+    //     for (const o of options) {
+    //         if (o && typeof o === "object" && "users" in o && Array.isArray((o as any).users)) {
+    //             return (o as any).users.filter(Boolean).map(String);
+    //         }
+    //     }
+    //     return null;
+    // }
 
-        const bothNull = !startDate && !endDate;
-        const bothSet = !!startDate && !!endDate;
+    /** Унифицируем массив отделов у юзера */
+    function readUserDepartments(u: any): string[] {
+        // пытаемся найти поле с отделом(ами)
+        const raw =
+            u?.department ??
+            u?.departments ??
+            u?.otdel ??
+            u?.dept ??
+            u?.team ??
+            u?.group ??
+            u?.division ??
+            null;
 
-        // игнорируем промежуточку (кликнули только start или только end)
-        if (!(bothNull || bothSet)) return;
+        if (!raw) return [];
+        if (Array.isArray(raw)) return raw.map(String);
+        return String(raw).split(",").map(s => s.trim()).filter(Boolean);
+    }
 
-        loadGroupedPhones();
-    }, [selectedPreset, startDate, endDate, selectedStatus, selectedOperator]);
+    /** Унифицируем список проектов у юзера (если есть) */
+    function readUserProjects(u: any): string[] {
+        const raw = u?.projects ?? u?.projects_names ?? null;
+        if (!raw) return [];
+        if (Array.isArray(raw)) return raw.map(String);
+        return String(raw).split(",").map(s => s.trim()).filter(Boolean);
+    }
 
+    /** true, если юзер попадает под отделы (если отделы заданы) */
+    function userMatchesDepartments(u: any, wanted: string[] | null): boolean {
+        if (!wanted || !wanted.length) return true;
+        const deps = readUserDepartments(u).map(d => d.toLowerCase());
+        return wanted.some(w => deps.includes(String(w).toLowerCase()));
+    }
+
+    /** true, если юзер связан с проектами пресета (если у юзера есть такая инфа) */
+    function userMatchesProjects(u: any, presetProjects: string[]): boolean {
+        const up = readUserProjects(u);
+        if (!up.length) return true; // нет инфы — не режем
+        const set = new Set(up.map(String));
+        return presetProjects.some(p => set.has(String(p)));
+    }
+
+    /** Построить список опций юзеров: [{label: 'Иван Иванов (1001)', value: '1001'}] */
+    function buildUserOptionsByDepartments(
+        monitorUsers: Record<string, any> | undefined,
+        departments: string[] | null,
+        presetProjects: string[] = [],
+    ): { label: string; value: string }[] {
+        if (!monitorUsers) return [];
+        const out: { label: string; value: string }[] = [];
+
+        Object.entries(monitorUsers).forEach(([login, u]) => {
+            // login может быть и в u.login, но надёжнее ключ
+            if (!userMatchesDepartments(u, departments)) return;
+            if (!userMatchesProjects(u, presetProjects)) return;
+
+            const name = (u?.name && String(u.name).trim()) || String(login);
+            out.push({ label: `${name} (${login})`, value: String(login) });
+        });
+
+        // Стабильная сортировка по имени
+        out.sort((a, b) => a.label.localeCompare(b.label, 'ru'));
+        return out;
+    }
+
+    /** Разрешаем макросы пользователя. По требованию — и {user.name}, и {user.login} -> ЛОГИН */
+    function resolveUserMacros(token: string, sipLogin: string): string {
+        const low = token.toLowerCase().trim();
+        if (low === "{user.login}" || low === "{user.name}") return String(sipLogin || "");
+        return token;
+    }
     // Опции для выпадающего списка действий в шапке
     const actionOptions: ActionOption[] = useMemo(() => {
         if (!selectedPreset) return [];
@@ -1181,6 +1385,69 @@ const PresetSelectorTable: React.FC<Props> = ({
         (currentPage - 1) * rowsPerPage,
         currentPage * rowsPerPage
     );
+    useEffect(() => {
+        if (!selectedPreset || !paginatedRows.length) return;
+
+        // Берём все id из видимых групп на странице
+        const idsOnPage = Array.from(
+            new Set(paginatedRows.flatMap(r => r.id_list))
+        );
+
+        // Что уже есть в кэше — не запрашиваем
+        const missing = idsOnPage.filter(id => !phonesCacheRef.current.has(id));
+        if (!missing.length) return;
+
+        const { preset } = selectedPreset;
+
+        // ВАЖНО: если PK на бэке не "id", поменяй ключ здесь
+        const filterFlat = { ...buildBaseFilter(), id: ['IN', missing] };
+
+        axios.post<Record<string, any[]>>('/api/v1/get_grouped_phones', {
+            glagol_parent: glagolParent2,
+            group_by: ['project'],
+            group_table: preset.group_table,
+            filter_by: filterFlat,
+            role
+        })
+            .then(res => {
+                const flat = Object.values(res.data || {}).flat();
+                upsertFlatPhones(flat);
+            })
+            .catch(err => {
+                console.error('Ошибка подкачки flat по id:', err);
+            });
+    }, [paginatedRows, selectedPreset?.preset?.id, role, buildBaseFilter]);
+
+
+    useEffect(() => {
+        if (!selectedPreset || selectedRows.size === 0) return;
+
+        const wantedIds = Array.from(selectedRows)
+            .flatMap(key => key.split(',').map(n => Number(n)))
+            .filter(Boolean);
+
+        const uniqMissing = Array.from(
+            new Set(wantedIds.filter(id => !phonesCacheRef.current.has(id)))
+        );
+
+        if (!uniqMissing.length) return;
+
+        const { preset } = selectedPreset;
+        const filterFlat = { ...buildBaseFilter(), id: ['IN', uniqMissing] };
+
+        axios.post<Record<string, any[]>>('/api/v1/get_grouped_phones', {
+            glagol_parent: glagolParent2,
+            group_by: ['project'],
+            group_table: preset.group_table,
+            filter_by: filterFlat,
+            role
+        })
+            .then(res => {
+                const flat = Object.values(res.data || {}).flat();
+                upsertFlatPhones(flat);
+            })
+            .catch(err => console.error('Ошибка подкачки flat по выбранным id:', err));
+    }, [selectedRows, selectedPreset?.preset?.id, role, buildBaseFilter]);
 
     const totalRowsCount = processedRows.length;
     const showingFrom = totalRowsCount ? (currentPage - 1) * rowsPerPage + 1 : 0;
@@ -1349,17 +1616,68 @@ const PresetSelectorTable: React.FC<Props> = ({
     }
 
 // подгрузка счётчиков для одного guid (если ещё не в кэше)
-    async function fetchCountsForGuid(guid: string) {
-        if (!guid) return;
-        if (guidCounts[guid]?.total !== undefined) return; // уже есть
+    const repeatParams = (p: { guid?: string[]; logins?: string[] }) => {
+        const parts: string[] = [];
+        if (Array.isArray(p.guid))   parts.push(...p.guid.map(g => `guid=${encodeURIComponent(g)}`));
+        if (Array.isArray(p.logins)) parts.push(...p.logins.map(l => `logins=${encodeURIComponent(l)}`));
+        return parts.join("&");
+    };
+
+    async function fetchCountsForGuids(guids: string[]) {
+        const list = Array.from(new Set(guids.filter(Boolean)));
+        if (!list.length) return;
+
+        // нужно то, чего нет в кэше и не в полёте
+        const need = list.filter(
+            g => guidCounts[g] === undefined && !inflightGuidsRef.current.has(g)
+        );
+        if (!need.length) return;
+
+        // помечаем «в полёте», чтобы параллельные эффекты не дёргали повторно
+        need.forEach(g => inflightGuidsRef.current.add(g));
 
         try {
-            const params = hasSipLogin ? {logins: loginForUnread} : undefined;
-            const {data} = await chatApi.get(`/api/v1/chat/${encodeURIComponent(guid)}/count`, {params});
-            const {unread, total} = extractCounts(data, hasSipLogin, loginForUnread);
-            setGuidCounts((prev) => ({...prev, [guid]: {unread, total}}));
-        } catch {
-            setGuidCounts((prev) => ({...prev, [guid]: {unread: 0, total: 0}}));
+            const params: any = { guid: need };
+            if (hasSipLogin) params.logins = [loginForUnread];
+
+            const { data } = await chatApi.get(`/api/v1/chat/messages/count`, {
+                params,
+                paramsSerializer: repeatParams,
+            });
+
+            const merge: Record<string, { unread: number; total: number }> = {};
+            const put = (g: string, payload: any) => {
+                const { unread, total } = extractCounts(payload, hasSipLogin, loginForUnread);
+                merge[g] = { unread, total };
+            };
+
+            if (Array.isArray(data)) {
+                // массив объектов — поддерживаем на всякий
+                for (const item of data) {
+                    const g = String(item?.guid ?? item?.GUID ?? item?.id ?? "");
+                    if (g) put(g, item);
+                }
+            } else if (data && typeof data === "object") {
+                // объект-словарь: пропускаем служебные поля, типа "status"
+                for (const [k, payload] of Object.entries<any>(data)) {
+                    if (k === "status") continue; // <-- важно
+                    put(k, payload);
+                }
+            }
+
+            // 🔴 критично: то, что бек НЕ вернул, закрываем нулями — иначе вечные повторные запросы
+            need.forEach(g => {
+                if (!merge[g]) merge[g] = { unread: 0, total: 0 };
+            });
+
+            setGuidCounts(prev => ({ ...prev, ...merge }));
+        } catch (e) {
+            // ошибка — тоже закрываем нулями, чтобы не дергать снова
+            const zeros = Object.fromEntries(need.map(g => [g, { unread: 0, total: 0 }]));
+            setGuidCounts(prev => ({ ...prev, ...zeros }));
+        } finally {
+            // снимаем пометки «в полёте»
+            need.forEach(g => inflightGuidsRef.current.delete(g));
         }
     }
 
@@ -1379,19 +1697,15 @@ const PresetSelectorTable: React.FC<Props> = ({
     }
 
     useEffect(() => {
-        // соберём все guid на текущей странице
         const pageGuids = new Set<string>();
-        paginatedRows.forEach((row) => {
-            getGuidsForRow(row).forEach((g) => pageGuids.add(g));
-        });
+        paginatedRows.forEach(row => getGuidsForRow(row).forEach(g => g && pageGuids.add(g)));
 
-        // дотянуть недостающие
-        pageGuids.forEach((g) => {
-            if (!guidCounts[g]) {
-                void fetchCountsForGuid(g);
-            }
-        });
-    }, [paginatedRows, phonesData, hasSipLogin, loginForUnread]); // deps ОК
+        const missing = Array.from(pageGuids).filter(
+            g => guidCounts[g] === undefined && !inflightGuidsRef.current.has(g)
+        );
+
+        void fetchCountsForGuids(missing);
+    }, [paginatedRows, phonesData, hasSipLogin, loginForUnread, guidCounts]);
 
     useEffect(() => {
         if (!Object.keys(expressConfig).length) return;
@@ -1502,6 +1816,11 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         const nextServer = {...appliedServerFilters, [colKey]: nextServerForCol};
         setAppliedServerFilters(nextServer);
+        const presetId = selectedPreset?.preset?.id;
+        if (presetId) {
+            localStorage.setItem(serverFiltersKey(presetId), JSON.stringify(nextServer));
+            localStorage.setItem(serverFiltersDayKey(presetId), toYmd(new Date()));
+        }
 
         setOpenFilterCol(null);
 
@@ -1509,6 +1828,18 @@ const PresetSelectorTable: React.FC<Props> = ({
         const extra = buildExtraFilterByFromMap(nextServer);
         loadGroupedPhones(extra);
     };
+
+    const isUsersDescriptor = (o: OptionDescriptor): o is { users: string[] } =>
+        typeof o === "object" && o !== null && "users" in o && Array.isArray(o.users);
+
+    const toPlainOptions = (opts?: OptionDescriptor[]): string[] =>
+        (opts ?? []).filter((o): o is string => typeof o === "string");
+
+    /** Если среди options есть объект {users: [...]}, вернём массив отделов, иначе null */
+    function extractUsersDepartments(options?: OptionDescriptor[]): string[] | null {
+        const found = (options ?? []).find(isUsersDescriptor);
+        return found ? found.users.map(String).filter(Boolean) : null;
+    }
 
     const resetColumnFilters = (colKey: string) => {
         // сброс локального
@@ -1527,6 +1858,11 @@ const PresetSelectorTable: React.FC<Props> = ({
         });
         const nextServer = {...appliedServerFilters, [colKey]: null};
         setAppliedServerFilters(nextServer);
+        const presetId = selectedPreset?.preset?.id;
+        if (presetId) {
+            localStorage.setItem(serverFiltersKey(presetId), JSON.stringify(nextServer));
+            localStorage.setItem(serverFiltersDayKey(presetId), toYmd(new Date()));
+        }
 
         setOpenFilterCol(null);
 
@@ -1664,10 +2000,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                         setSelectedPreset(p);
                                     }
                                 }}
-                                options={presets.map(p => ({
-                                    id: p.value,
-                                    name: p.label,
-                                }))}
+                                options={presets.map(p => ({ id: p.value, name: p.label }))}
                                 placeholder="Выберите пресет..."
                             />
                         </div>
@@ -1683,49 +2016,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                             />
                         </div>
 
-                        {/* Статус */}
-                        <div style={{flex: '0 0 250px'}}>
-                            <SearchableSelect
-                                value={selectedStatus ?? ''}
-                                onChange={(val: string) => setSelectedStatus(val)}
-                                isSearchable
-                                options={statusOptions.map(s => ({
-                                    id: s,
-                                    name: statusLabels[s] || s
-                                }))}
-                                placeholder="Выберите статус..."
-                            />
-                        </div>
-
-                        {/* Дата */}
-                        <div style={{flex: '0 0 250px'}}>
-                            <DatePicker
-                                selected={startDate}
-                                onChange={handleDateChange}
-                                startDate={startDate}
-                                endDate={endDate}
-                                selectsRange
-                                placeholderText="Выберите период"
-                                className="form-control"
-                                onChangeRaw={(e) => { e?.preventDefault(); }}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Backspace' || e.key === 'Delete') e.preventDefault();
-                                }}
-                                dateFormat="dd.MM.yyyy"
-                            />
-                        </div>
-
-                        {/* Оператор */}
-                        <div style={{flex: '0 0 250px'}}>
-                            <SearchableSelect
-                                value={selectedOperator ?? ''}
-                                onChange={(val: string) => setSelectedOperator(val)}
-                                isSearchable
-                                options={operatorOptions}
-                                placeholder="Выберите оператора..."
-                            />
-                        </div>
-
                         {/* Действие */}
                         <div style={{flex: '0 0 250px'}}>
                             <SearchableSelect
@@ -1735,38 +2025,22 @@ const PresetSelectorTable: React.FC<Props> = ({
                                     setSelectedActionOption(found);
                                 }}
                                 isSearchable={false}
-                                options={actionOptions.map(a => ({
-                                    id: a.value,
-                                    name: a.label
-                                }))}
+                                options={actionOptions.map(a => ({ id: a.value, name: a.label }))}
                                 placeholder="Выберите действие..."
                             />
                         </div>
 
                         {/* AssignComp или кнопка */}
                         {selectedActionOption?.action.action_type === "assign" ? (
-                            <div
-                                style={{
-                                    flex: '0 0 auto',
-                                    minWidth: 400,
-                                    maxWidth: '100%',
-                                    overflow: 'hidden',
-                                }}
-                            >
-                                <AssignComp
-                                    opt={selectedActionOption}
-                                    rows={selectedRows}
-                                    processRows={processRows}
-                                />
+                            <div style={{flex: '0 0 auto', minWidth: 400, maxWidth: '100%', overflow: 'hidden'}}>
+                                <AssignComp opt={selectedActionOption} rows={selectedRows} processRows={processRows} />
                             </div>
                         ) : (
                             <div style={{flex: '0 0 auto'}}>
                                 <button
                                     onClick={() => {
                                         const keys = Array.from(selectedRows);
-                                        const rows = processedRows.filter(r =>
-                                            keys.includes(r.id_list.join(','))
-                                        );
+                                        const rows = processedRows.filter(r => keys.includes(r.id_list.join(',')));
                                         handleBulkProcess(rows);
                                     }}
                                     className="btn btn-outline-light text text-dark mx-1 ml-2"
@@ -1947,45 +2221,32 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                 top: 'calc(100% + 6px)',
                                                                 zIndex: 50,
                                                                 width: 360,
-                                                                // на узких экранах не вываливаться за края
                                                                 maxWidth: 'min(360px, calc(100vw - 24px))',
                                                                 padding: 12,
                                                                 boxShadow: '0 10px 24px rgba(0,0,0,0.15)',
-                                                                // куда открываемся: влево (прилипание к правому краю th) или вправо (к левому)
-                                                                ...(filterSide === 'left' ? {right: 0} : {left: 0}),
+                                                                ...(filterSide === 'left' ? { right: 0 } : { left: 0 }),
                                                             }}
                                                         >
                                                             {/* Фильтрация в найденном */}
-                                                            <div style={{marginBottom: 12}}>
-                                                                <div style={{
-                                                                    fontWeight: 600,
-                                                                    marginBottom: 6
-                                                                }}>Фильтрация в найденном
-                                                                </div>
+                                                            <div style={{ marginBottom: 12 }}>
+                                                                <div style={{ fontWeight: 600, marginBottom: 6 }}>Фильтрация в найденном</div>
                                                                 <input
                                                                     className="form-control"
                                                                     placeholder="Поиск внутри найденного"
                                                                     value={localFilterDraft[colKey] ?? ''}
-                                                                    onChange={e => setLocalFilterDraft(prev => ({
-                                                                        ...prev,
-                                                                        [colKey]: e.target.value
-                                                                    }))}
+                                                                    onChange={(e) =>
+                                                                        setLocalFilterDraft((prev) => ({
+                                                                            ...prev,
+                                                                            [colKey]: e.target.value,
+                                                                        }))
+                                                                    }
                                                                 />
                                                             </div>
 
                                                             {/* Фильтрация по условию */}
-                                                            <div style={{
-                                                                borderTop: '1px solid rgba(0,0,0,0.08)',
-                                                                paddingTop: 10
-                                                            }}>
-                                                                <div style={{
-                                                                    display: 'flex',
-                                                                    justifyContent: 'space-between',
-                                                                    alignItems: 'baseline'
-                                                                }}>
-                                                                    <div style={{fontWeight: 600}}>Фильтрация по
-                                                                        условию
-                                                                    </div>
+                                                            <div style={{ borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 10 }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                                                                    <div style={{ fontWeight: 600 }}>Фильтрация по условию</div>
                                                                     <button
                                                                         type="button"
                                                                         className="btn btn-link p-0"
@@ -1995,89 +2256,86 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                     </button>
                                                                 </div>
 
-                                                                {/* список вариантов из search[] */}
                                                                 {(cfg.search ?? []).map((s, idx) => {
                                                                     const sd = serverFilterDraft[colKey];
                                                                     const selected = sd?.selectedIdx === idx;
                                                                     const draftItem = sd?.items[idx];
 
                                                                     return (
-                                                                        <div key={idx} style={{
-                                                                            border: '1px solid rgba(0,0,0,0.08)',
-                                                                            borderRadius: 8,
-                                                                            padding: 8,
-                                                                            marginTop: 8
-                                                                        }}>
-                                                                            <label style={{
-                                                                                display: 'flex',
-                                                                                gap: 8,
-                                                                                alignItems: 'center'
-                                                                            }}>
+                                                                        <div
+                                                                            key={idx}
+                                                                            style={{
+                                                                                border: '1px solid rgba(0,0,0,0.08)',
+                                                                                borderRadius: 8,
+                                                                                padding: 8,
+                                                                                marginTop: 8,
+                                                                            }}
+                                                                        >
+                                                                            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                                                                                 <input
                                                                                     type="radio"
                                                                                     name={`srvf-${colKey}`}
                                                                                     checked={!!selected}
-                                                                                    onChange={() => setServerFilterDraft(prev => ({
-                                                                                        ...prev,
-                                                                                        [colKey]: {
-                                                                                            ...(prev[colKey] ?? {
-                                                                                                selectedIdx: null,
-                                                                                                items: []
-                                                                                            }), selectedIdx: idx
-                                                                                        }
-                                                                                    }))}
+                                                                                    onChange={() =>
+                                                                                        setServerFilterDraft((prev) => ({
+                                                                                            ...prev,
+                                                                                            [colKey]: {
+                                                                                                ...(prev[colKey] ?? {
+                                                                                                    selectedIdx: null,
+                                                                                                    items: (cfg.search ?? []).map((ss) => ({
+                                                                                                        key: ss.key,
+                                                                                                        method: ss.methods[0],
+                                                                                                        values: [] as string[],
+                                                                                                    })),
+                                                                                                }),
+                                                                                                selectedIdx: idx,
+                                                                                            },
+                                                                                        }))
+                                                                                    }
                                                                                 />
-                                                                                <span
-                                                                                    style={{fontWeight: 500}}>{s.name}</span>
+                                                                                <span style={{ fontWeight: 500 }}>{s.name}</span>
                                                                             </label>
 
-                                                                            {/* «Критерий» */}
+                                                                            {/* Критерий */}
                                                                             <div className="mt-2">
-                                                                                <div style={{
-                                                                                    fontSize: 12,
-                                                                                    opacity: 0.7,
-                                                                                    marginBottom: 4
-                                                                                }}>Критерий
-                                                                                </div>
+                                                                                <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 4 }}>Критерий</div>
                                                                                 <select
                                                                                     className="form-control"
                                                                                     disabled={!selected}
                                                                                     value={draftItem?.method ?? s.methods[0]}
-                                                                                    onChange={e => setServerFilterDraft(prev => {
-                                                                                        const cur = prev[colKey];
-                                                                                        if (!cur) return prev;
-                                                                                        const items = cur.items.slice();
-                                                                                        items[idx] = {
-                                                                                            ...(items[idx] ?? {
+                                                                                    onChange={(e) =>
+                                                                                        setServerFilterDraft((prev) => {
+                                                                                            const cur = prev[colKey];
+                                                                                            if (!cur) return prev;
+                                                                                            const items = cur.items.slice();
+                                                                                            items[idx] = {
+                                                                                                ...(items[idx] ?? { key: s.key, method: s.methods[0], values: [] }),
                                                                                                 key: s.key,
-                                                                                                method: s.methods[0],
-                                                                                                values: []
-                                                                                            }),
-                                                                                            method: e.target.value as FilterMethod,
-                                                                                            key: s.key
-                                                                                        };
-                                                                                        return {
-                                                                                            ...prev,
-                                                                                            [colKey]: {...cur, items}
-                                                                                        };
-                                                                                    })}
+                                                                                                method: e.target.value as FilterMethod,
+                                                                                            };
+                                                                                            return { ...prev, [colKey]: { ...cur, items } };
+                                                                                        })
+                                                                                    }
                                                                                 >
-                                                                                    {s.methods.map(m => <option key={m}
-                                                                                                                value={m}>{MethodLabel(m)}</option>)}
+                                                                                    {s.methods.map((m) => (
+                                                                                        <option key={m} value={m}>
+                                                                                            {MethodLabel(m)}
+                                                                                        </option>
+                                                                                    ))}
                                                                                 </select>
                                                                             </div>
 
                                                                             {/* Значения */}
                                                                             <div className="mt-2">
                                                                                 {(() => {
-                                                                                    const method = draftItem?.method ?? s.methods[0];
-                                                                                    const opts = s.options ?? [];
+                                                                                    const method = (draftItem?.method ?? s.methods[0]) as FilterMethod;
+                                                                                    const selectedVals = draftItem?.values ?? [];
+                                                                                    const isMulti = method === 'IN' || method === 'NOT IN';
 
-                                                                                    // --- DATES ---
+                                                                                    // 1) Диапазон дат
                                                                                     if (method === 'DATES') {
-                                                                                        const startYmd = (draftItem?.values?.[0] ?? '') as string;
-                                                                                        const endYmd = (draftItem?.values?.[1] ?? '') as string;
-
+                                                                                        const startYmd = selectedVals[0] || '';
+                                                                                        const endYmd = selectedVals[1] || '';
                                                                                         const startDate = startYmd ? parseYmd(startYmd) : null;
                                                                                         const endDate = endYmd ? parseYmd(endYmd) : null;
 
@@ -2086,35 +2344,25 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                                 selected={startDate}
                                                                                                 onChange={(range: [Date | null, Date | null]) => {
                                                                                                     const [startD, endD] = range || [];
-                                                                                                    const toYmd = (d: Date | null) =>
+                                                                                                    const toY = (d: Date | null) =>
                                                                                                         d
-                                                                                                            ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+                                                                                                            ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+                                                                                                                d.getDate()
+                                                                                                            ).padStart(2, '0')}`
                                                                                                             : '';
-
-                                                                                                    const v0 = toYmd(startD);
-                                                                                                    const v1 = toYmd(endD);
-
-                                                                                                    setServerFilterDraft(prev => {
+                                                                                                    const v0 = toY(startD);
+                                                                                                    const v1 = toY(endD);
+                                                                                                    setServerFilterDraft((prev) => {
                                                                                                         const cur = prev[colKey];
                                                                                                         if (!cur) return prev;
                                                                                                         const items = cur.items.slice();
                                                                                                         items[idx] = {
-                                                                                                            ...(items[idx] ?? {
-                                                                                                                key: s.key,
-                                                                                                                method: 'DATES' as FilterMethod,
-                                                                                                                values: []
-                                                                                                            }),
+                                                                                                            ...(items[idx] ?? { key: s.key, method: 'DATES' as FilterMethod, values: [] }),
                                                                                                             key: s.key,
                                                                                                             method: 'DATES' as FilterMethod,
                                                                                                             values: [v0, v1],
                                                                                                         };
-                                                                                                        return {
-                                                                                                            ...prev,
-                                                                                                            [colKey]: {
-                                                                                                                ...cur,
-                                                                                                                items
-                                                                                                            }
-                                                                                                        };
+                                                                                                        return { ...prev, [colKey]: { ...cur, items } };
                                                                                                     });
                                                                                                 }}
                                                                                                 startDate={startDate}
@@ -2123,165 +2371,136 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                                 placeholderText="Диапазон дат"
                                                                                                 className="form-control w-100"
                                                                                                 wrapperClassName="w-100"
-                                                                                                onChangeRaw={(e) => {
-                                                                                                    e?.preventDefault();
-                                                                                                }}
+                                                                                                onChangeRaw={(e) => e?.preventDefault()}
                                                                                                 onKeyDown={(e) => {
                                                                                                     if (e.key === 'Backspace' || e.key === 'Delete') e.preventDefault();
                                                                                                 }}
                                                                                                 dateFormat="dd.MM.yyyy"
                                                                                             />
                                                                                         );
-                                                                                    } else if (method === 'IN' || method === 'NOT IN') {
-                                                                                        if (opts.length) {
-                                                                                            return (
-                                                                                                <div style={{
-                                                                                                    maxHeight: 160,
-                                                                                                    overflowY: 'auto',
-                                                                                                    padding: 6,
-                                                                                                    border: '1px solid rgba(0,0,0,0.08)',
-                                                                                                    borderRadius: 6
-                                                                                                }}>
-                                                                                                    {opts.map(opt => {
-                                                                                                        const checked = !!draftItem?.values?.includes(opt);
-                                                                                                        return (
-                                                                                                            <label
-                                                                                                                key={opt}
-                                                                                                                style={{
-                                                                                                                    display: 'flex',
-                                                                                                                    alignItems: 'center',
-                                                                                                                    gap: 8,
-                                                                                                                    padding: '4px 0'
-                                                                                                                }}>
-                                                                                                                <input
-                                                                                                                    type="checkbox"
-                                                                                                                    disabled={!selected}
-                                                                                                                    checked={checked}
-                                                                                                                    onChange={e => setServerFilterDraft(prev => {
-                                                                                                                        const cur = prev[colKey];
-                                                                                                                        if (!cur) return prev;
-                                                                                                                        const items = cur.items.slice();
-                                                                                                                        const it = {
-                                                                                                                            ...(items[idx] ?? {
-                                                                                                                                key: s.key,
-                                                                                                                                method,
-                                                                                                                                values: []
-                                                                                                                            })
-                                                                                                                        };
-                                                                                                                        const set = new Set(it.values ?? []);
-                                                                                                                        if (e.target.checked) set.add(opt); else set.delete(opt);
-                                                                                                                        it.values = Array.from(set);
-                                                                                                                        items[idx] = it;
-                                                                                                                        return {
-                                                                                                                            ...prev,
-                                                                                                                            [colKey]: {
-                                                                                                                                ...cur,
-                                                                                                                                items
-                                                                                                                            }
-                                                                                                                        };
-                                                                                                                    })}
-                                                                                                                />
-                                                                                                                {opt}
-                                                                                                            </label>
-                                                                                                        );
-                                                                                                    })}
-                                                                                                </div>
-                                                                                            );
-                                                                                        } else {
-                                                                                            // нет options — ввод через запятую
-                                                                                            return (
-                                                                                                <textarea
-                                                                                                    className="form-control"
-                                                                                                    disabled={!selected}
-                                                                                                    placeholder="Значения через запятую"
-                                                                                                    value={(draftItem?.values ?? []).join(', ')}
-                                                                                                    onChange={e => setServerFilterDraft(prev => {
-                                                                                                        const cur = prev[colKey];
-                                                                                                        if (!cur) return prev;
-                                                                                                        const items = cur.items.slice();
-                                                                                                        items[idx] = {
-                                                                                                            ...(items[idx] ?? {
-                                                                                                                key: s.key,
-                                                                                                                method,
-                                                                                                                values: []
-                                                                                                            }),
-                                                                                                            values: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
-                                                                                                        };
-                                                                                                        return {
-                                                                                                            ...prev,
-                                                                                                            [colKey]: {
-                                                                                                                ...cur,
-                                                                                                                items
-                                                                                                            }
-                                                                                                        };
-                                                                                                    })}
-                                                                                                />
-                                                                                            );
-                                                                                        }
                                                                                     }
 
-                                                                                    // одиночное значение: если options есть — селект, иначе input
-                                                                                    if (opts.length) {
-                                                                                        const val = (draftItem?.values?.[0] ?? '') as string;
-                                                                                        return (
-                                                                                            <select
-                                                                                                className="form-control"
-                                                                                                disabled={!selected}
-                                                                                                value={val}
-                                                                                                onChange={e => setServerFilterDraft(prev => {
-                                                                                                    const cur = prev[colKey];
-                                                                                                    if (!cur) return prev;
-                                                                                                    const items = cur.items.slice();
-                                                                                                    items[idx] = {
-                                                                                                        ...(items[idx] ?? {
-                                                                                                            key: s.key,
-                                                                                                            method,
-                                                                                                            values: []
-                                                                                                        }),
-                                                                                                        values: [e.target.value]
-                                                                                                    };
-                                                                                                    return {
-                                                                                                        ...prev,
-                                                                                                        [colKey]: {
-                                                                                                            ...cur,
-                                                                                                            items
-                                                                                                        }
-                                                                                                    };
-                                                                                                })}
-                                                                                            >
-                                                                                                <option value="">—
-                                                                                                    выберите —
-                                                                                                </option>
-                                                                                                {opts.map(o => <option
-                                                                                                    key={o}
-                                                                                                    value={o}>{o}</option>)}
-                                                                                            </select>
+                                                                                    // 2) Опции-пользователи { users: [...] } → мультиселект
+                                                                                    const wantedDepts = extractUsersDepartments(s.options);
+                                                                                    if (wantedDepts) {
+                                                                                        const userOptions = buildUserOptionsByDepartments(
+                                                                                            monitorUsers,
+                                                                                            wantedDepts,
+                                                                                            selectedPreset?.preset?.projects ?? []
                                                                                         );
-                                                                                    } else {
-                                                                                        const val = (draftItem?.values?.[0] ?? '') as string;
+
+                                                                                        const msOptions = userOptions.map((o) => ({ id: o.value, name: o.label }));
+                                                                                        const msValue = (isMulti ? selectedVals : [selectedVals[0] ?? '']).filter(Boolean);
+
+                                                                                        return (
+                                                                                            <div style={{ pointerEvents: selected ? 'auto' : 'none', opacity: selected ? 1 : 0.6 }}>
+                                                                                                <MultiSelect
+                                                                                                    value={msValue}
+                                                                                                    options={msOptions}
+                                                                                                    placeholder="Выберите пользователя..."
+                                                                                                    isSearchable
+                                                                                                    onChange={(vals) =>
+                                                                                                        setServerFilterDraft((prev) => {
+                                                                                                            const cur = prev[colKey];
+                                                                                                            if (!cur) return prev;
+                                                                                                            const items = cur.items.slice();
+                                                                                                            items[idx] = {
+                                                                                                                ...(items[idx] ?? { key: s.key, method, values: [] }),
+                                                                                                                key: s.key,
+                                                                                                                method,
+                                                                                                                values: isMulti ? vals : [vals[0] ?? ''],
+                                                                                                            };
+                                                                                                            return { ...prev, [colKey]: { ...cur, items } };
+                                                                                                        })
+                                                                                                    }
+                                                                                                />
+                                                                                            </div>
+                                                                                        );
+                                                                                    }
+
+                                                                                    // 3) Обычные строковые options → мультиселект
+                                                                                    const plainOptions = toPlainOptions(s.options);
+                                                                                    if (plainOptions.length) {
+                                                                                        const msOptions = plainOptions.map((v) => ({ id: v, name: v }));
+                                                                                        const msValue = (isMulti ? selectedVals : [selectedVals[0] ?? '']).filter(Boolean);
+
+                                                                                        return (
+                                                                                            <div style={{ pointerEvents: selected ? 'auto' : 'none', opacity: selected ? 1 : 0.6 }}>
+                                                                                                <MultiSelect
+                                                                                                    value={msValue}
+                                                                                                    options={msOptions}
+                                                                                                    placeholder="Выберите значение..."
+                                                                                                    isSearchable
+                                                                                                    onChange={(vals) =>
+                                                                                                        setServerFilterDraft((prev) => {
+                                                                                                            const cur = prev[colKey];
+                                                                                                            if (!cur) return prev;
+                                                                                                            const items = cur.items.slice();
+                                                                                                            items[idx] = {
+                                                                                                                ...(items[idx] ?? { key: s.key, method, values: [] }),
+                                                                                                                key: s.key,
+                                                                                                                method,
+                                                                                                                values: isMulti ? vals : [vals[0] ?? ''],
+                                                                                                            };
+                                                                                                            return { ...prev, [colKey]: { ...cur, items } };
+                                                                                                        })
+                                                                                                    }
+                                                                                                />
+                                                                                            </div>
+                                                                                        );
+                                                                                    }
+
+                                                                                    // 4) Фолбэк: нет options → текстовое поле (для IN/NOT IN — CSV)
+                                                                                    if (isMulti) {
+                                                                                        const csv = (selectedVals || []).join(', ');
                                                                                         return (
                                                                                             <input
                                                                                                 className="form-control"
                                                                                                 disabled={!selected}
-                                                                                                placeholder="Значение"
-                                                                                                value={val}
-                                                                                                onChange={e => setServerFilterDraft(prev => {
+                                                                                                placeholder="Значения через запятую"
+                                                                                                value={csv}
+                                                                                                onChange={(e) => {
+                                                                                                    const values = e.target.value.split(',').map((s) => s.trim()).filter(Boolean);
+                                                                                                    setServerFilterDraft((prev) => {
+                                                                                                        const cur = prev[colKey];
+                                                                                                        if (!cur) return prev;
+                                                                                                        const items = cur.items.slice();
+                                                                                                        items[idx] = {
+                                                                                                            ...(items[idx] ?? { key: s.key, method, values: [] }),
+                                                                                                            key: s.key,
+                                                                                                            method,
+                                                                                                            values,
+                                                                                                        };
+                                                                                                        return { ...prev, [colKey]: { ...cur, items } };
+                                                                                                    });
+                                                                                                }}
+                                                                                            />
+                                                                                        );
+                                                                                    }
+
+                                                                                    const val = selectedVals[0] ?? '';
+                                                                                    return (
+                                                                                        <input
+                                                                                            className="form-control"
+                                                                                            disabled={!selected}
+                                                                                            placeholder="Значение"
+                                                                                            value={val}
+                                                                                            onChange={(e) =>
+                                                                                                setServerFilterDraft((prev) => {
                                                                                                     const cur = prev[colKey];
                                                                                                     if (!cur) return prev;
                                                                                                     const items = cur.items.slice();
                                                                                                     items[idx] = {
-                                                                                                        ...(items[idx] ?? {
-                                                                                                            key: s.key,
-                                                                                                            method,
-                                                                                                            values: []
-                                                                                                        }),
-                                                                                                        values: [e.target.value]
+                                                                                                        ...(items[idx] ?? { key: s.key, method, values: [] }),
+                                                                                                        key: s.key,
+                                                                                                        method,
+                                                                                                        values: [e.target.value],
                                                                                                     };
                                                                                                     return { ...prev, [colKey]: { ...cur, items } };
-                                                                                                })}
-                                                                                            />
-                                                                                        );
-                                                                                    }
+                                                                                                })
+                                                                                            }
+                                                                                        />
+                                                                                    );
                                                                                 })()}
                                                                             </div>
                                                                         </div>
@@ -2289,11 +2508,11 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                 })}
 
                                                                 <div className="mt-3 d-flex gap-2 justify-content-end">
-                                                                    <button className="btn btn-outline-secondary"
-                                                                            onClick={() => setOpenFilterCol(null)}>Отмена
+                                                                    <button className="btn btn-outline-secondary" onClick={() => setOpenFilterCol(null)}>
+                                                                        Отмена
                                                                     </button>
-                                                                    <button className="btn btn-primary"
-                                                                            onClick={() => applyColumnFilters(colKey)}>Применить
+                                                                    <button className="btn btn-primary" onClick={() => applyColumnFilters(colKey)}>
+                                                                        Применить
                                                                     </button>
                                                                 </div>
                                                             </div>
@@ -2302,7 +2521,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                 </th>
                                             );
                                         })}
-
                                     <th
                                         className="border p-2"
                                         title="Непрочитанные / Всего"

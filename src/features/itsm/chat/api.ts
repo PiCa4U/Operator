@@ -1,8 +1,26 @@
 import axios from "axios";
 
-// можно переопределить через VITE_CHAT_API_BASE, иначе дефолт:
+const DEFAULT_CHAT_BASE = "https://wwstest.glagol.ai/chat";
+
+function readChatBaseURL(): string {
+    const el = document.getElementById("root") as HTMLElement | null;
+    let raw = (el?.dataset?.chatServer || el?.dataset?.chatApiBase || "").trim();
+    if (!raw) return DEFAULT_CHAT_BASE;
+
+    // если начинается с // — добавим текущий протокол (https: или http:)
+    if (raw.startsWith("//")) {
+        raw = `${window.location.protocol}${raw}`;
+    }
+    // если протокола нет вообще — тоже добавим текущий протокол
+    else if (!/^[a-zA-Z][\w+.-]*:\/\//.test(raw)) {
+        raw = `${window.location.protocol}//${raw}`;
+    }
+
+    return raw.replace(/\/+$/, "");
+}
+
 export const chatApi = axios.create({
-    baseURL: "https://wwstest.glagol.ai/chat",
+    baseURL: readChatBaseURL(), // теперь будет, например, "https://wwstest.glagol.ai/chat"
     headers: { Accept: "application/json" },
 });
 

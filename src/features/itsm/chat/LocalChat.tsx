@@ -13,8 +13,34 @@ export type Role = "client" | "operator" | "manager";
 
 /* ===== скачивание вложений через my.glagol.ai/get_cc_files ===== */
 const DOWNLOAD_HOST = "https://my.glagol.ai";
-// адрес сокет-сервера как host[:port] БЕЗ протокола
-const SOCKET_HOST = "wwstest.glagol.ai/chat";
+
+/** host[:port]/chat из data-атрибутов (без протокола), ровно один раз */
+function readSocketHostForDownloads(): string {
+    const el = document.getElementById("root") as HTMLElement | null;
+    let raw =
+        (el?.dataset?.chatServer ||
+            el?.dataset?.chatApiBase ||
+            el?.dataset?.fsServer ||
+            "")!.trim();
+
+    if (!raw) return "wwstest.glagol.ai/chat";
+
+    if (raw.startsWith("//")) raw = `${window.location.protocol}${raw}`;
+    if (!/^[a-zA-Z][\w+.-]*:\/\//.test(raw)) raw = `${window.location.protocol}//${raw}`;
+
+    try {
+        const u = new URL(raw);
+        // берём только host и приклеиваем /chat ровно один раз
+        return `${u.host}/chat`;
+    } catch {
+        const noProto = raw.replace(/^[a-zA-Z][\w+.-]*:\/\//, "");
+        const host = noProto.split("/")[0];
+        return `${host}/chat`;
+    }
+}
+
+// адрес сокет-сервера как host[:port]/chat (без протокола)
+const SOCKET_HOST = readSocketHostForDownloads();
 
 /** https://my.glagol.ai/get_cc_files/{SOCKET_HOST}/{guid}/{filename} */
 function buildDownloadUrl(hostOnly: string, guid: string, filename: string) {
@@ -70,11 +96,9 @@ export type UiMessage = {
     errorText?: string;
 };
 
-/* ===== типы статусов прочтения ===== */
 type ReadStatus = { watched: string[]; responsible_watch: boolean };
 type ReadMap = Record<string, ReadStatus>;
 
-// ===== helpers (русское форматирование) =====
 const ruDate = (d: Date) =>
     d.toLocaleDateString("ru-RU", {
         day: "numeric",
@@ -90,11 +114,7 @@ const sameDay = (a: Date, b: Date) =>
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate();
 
-function isOutgoing(
-    m: UiMessage,
-    selfLogin?: string | null,
-    selfRole: Role = "client"
-) {
+function isOutgoing(m: UiMessage, selfLogin?: string | null, selfRole: Role = "client") {
     if (selfLogin) return (m.authorLogin ?? null) === selfLogin;
     return m.authorRole === selfRole;
 }
@@ -128,11 +148,9 @@ function displayReader(login: string, dict?: Record<string, string>) {
 function formatBytes(n: number) {
     if (!Number.isFinite(n)) return "";
     const u = ["B", "KB", "MB", "GB", "TB"];
-    let i = 0,
-        v = n;
+    let i = 0, v = n;
     while (v >= 1024 && i < u.length - 1) {
-        v /= 1024;
-        i++;
+        v /= 1024; i++;
     }
     return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${u[i]}`;
 }
@@ -151,7 +169,6 @@ export default function LocalChat({
                                       operatorDict,
                                       formatOperatorFn,
                                       title,
-                                      // subtitle,
                                       readMap,
                                   }: {
     guid: string;
@@ -167,7 +184,6 @@ export default function LocalChat({
     operatorDict?: Record<string, string>;
     formatOperatorFn?: (login: string, dict?: Record<string, string>) => string;
     title?: string;
-    // subtitle?: string;
     readMap?: ReadMap;
 }) {
     const isControlled = Array.isArray(messages);
@@ -203,7 +219,6 @@ export default function LocalChat({
         if (dragCounter.current <= 0) { setDragging(false); dragCounter.current = 0; }
     }
     function dzDragOver(e: React.DragEvent) {
-        // не мешаем обычному перетаскиванию текста: реагируем только на файлы
         if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
         e.preventDefault(); e.stopPropagation();
         e.dataTransfer.dropEffect = "copy";
@@ -234,12 +249,9 @@ export default function LocalChat({
             return prev.filter((_, i) => i !== idx);
         });
     }
-    useEffect(
-        () => () => {
-            pendingUrls.forEach((u) => URL.revokeObjectURL(u));
-        },
-        [] // cleanup on unmount
-    );
+    useEffect(() => () => {
+        pendingUrls.forEach((u) => URL.revokeObjectURL(u));
+    }, []); // cleanup on unmount
 
     function onDragEnter(e: React.DragEvent) {
         e.preventDefault();
@@ -272,7 +284,7 @@ export default function LocalChat({
 
     async function sendNow() {
         const trimmed = text.trim();
-        if (!trimmed) return; // 🔒 обязательно нужен текст (даже если есть файлы)
+        if (!trimmed) return;
 
         const id = crypto.randomUUID();
         const atts: UiAttachment[] = pendingFiles.map((f, i) => ({
@@ -327,7 +339,6 @@ export default function LocalChat({
 
             {!collapsed && (
                 <div style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1, minHeight: 360 }}>
-                    {/* локальная drop-зона только вокруг чата */}
                     <div
                         ref={dropZoneRef}
                         className={`${styles.dropZone} ${isDragging ? styles.dropZoneActive : ""}`}
@@ -345,9 +356,7 @@ export default function LocalChat({
                         <MainContainer>
                             <ChatContainer style={{ height: "100%" }} className={styles.chat}>
                                 <ConversationHeader>
-                                    <ConversationHeader.Content
-                                        userName={title ?? "Чат"}
-                                    />
+                                    <ConversationHeader.Content userName={title ?? "Чат"} />
                                 </ConversationHeader>
 
                                 <MessageList autoScrollToBottom>
@@ -430,11 +439,14 @@ export default function LocalChat({
                                                     )}
 
                                                     <Message.Footer>
-                                                        <span className="text-muted small" style={{ display: "inline-block", marginLeft: "auto" }}
-                                                              title={readTooltip || undefined}>
-                                                            {ruTime(cur)}
-                                                            {direction === "outgoing" && (m.isRead || isReadByOthers) ? " · ✓" : ""}
-                                                        </span>
+                            <span
+                                className="text-muted small"
+                                style={{ display: "inline-block", marginLeft: "auto" }}
+                                title={readTooltip || undefined}
+                            >
+                              {ruTime(cur)}
+                                {direction === "outgoing" && (m.isRead || isReadByOthers) ? " · ✓" : ""}
+                            </span>
                                                     </Message.Footer>
                                                 </Message>
                                             </div>
@@ -473,11 +485,18 @@ export default function LocalChat({
                                 <div className={styles.pendingWrap}>
                                     {pendingFiles.map((f, i) => (
                                         <span key={`${f.name}-${i}`} className={styles.pendingChip} title={f.name}>
-                                          <PaperclipIcon className={styles.iconXs} />
-                                          <span className={styles.ellipsis}>{f.name}</span>
-                                          <span className={styles.sizeMuted}>· {formatBytes(f.size)}</span>
-                                          <button type="button" className={styles.removeBtn} onClick={() => removePending(i)} aria-label="Убрать файл">×</button>
-                                        </span>
+                      <PaperclipIcon className={styles.iconXs} />
+                      <span className={styles.ellipsis}>{f.name}</span>
+                      <span className={styles.sizeMuted}>· {formatBytes(f.size)}</span>
+                      <button
+                          type="button"
+                          className={styles.removeBtn}
+                          onClick={() => removePending(i)}
+                          aria-label="Убрать файл"
+                      >
+                        ×
+                      </button>
+                    </span>
                                     ))}
                                 </div>
                             )}
@@ -501,7 +520,7 @@ export default function LocalChat({
                             type="button"
                             className="btn btn-dark"
                             onClick={sendNow}
-                            disabled={!text.trim()}   // только если есть текст
+                            disabled={!text.trim()}
                             title="Отправить (Enter)"
                         >
                             Отправить
@@ -512,4 +531,3 @@ export default function LocalChat({
         </div>
     );
 }
-

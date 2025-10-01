@@ -233,6 +233,8 @@ const MainApp: React.FC = () => {
         return { role, name, login, worker: worker || null };
     }, [sipLogin, worker]);
 
+    useEffect(() => console.log("appliedServerFilters: ", appliedServerFilters),[appliedServerFilters])
+
     const collapsed = useChatCollapsed(firstGuid);
 
     useEffect(() => {
@@ -283,10 +285,10 @@ const MainApp: React.FC = () => {
     const { monitorUsers } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
-    useEffect(() => {
-        setAppliedLocalFilters({});
-        setAppliedServerFilters({});
-    }, [selectedPreset]);
+    // useEffect(() => {
+    //     setAppliedLocalFilters({});
+    //     setAppliedServerFilters({});
+    // }, [selectedPreset]);
 
     useEffect(() => {
         if (!activeGuid) return;
@@ -348,7 +350,7 @@ const MainApp: React.FC = () => {
 
     async function fetchUnreadForGuid(g: string, hasSipLogin: boolean, login: string) {
         try {
-            const params = hasSipLogin ? { logins: login } : undefined; // лучше массивом
+            const params = hasSipLogin ? { logins: login } : undefined;
             const { data } = await chatApi.get(`/api/v1/chat/${encodeURIComponent(g)}/count`, { params });
             return extractUnreadCount(data, hasSipLogin, login);
         } catch {
@@ -599,19 +601,19 @@ const MainApp: React.FC = () => {
     }
     const logoutShownRef = useRef(false);
 
-    const handleLogout = () => {
-        if (logoutShownRef.current) return;
-
-        logoutShownRef.current = true;
-
-        window.location.href = "https://my.glagol.ai/login_work/";
-    };
-
     useEffect(() => {
-        socket.on('logout', handleLogout);
-        return () => {
-            socket.off('logout', handleLogout);
+        const onLogout = (payload: any) => {
+            const msg = String(payload?.message || '').toLowerCase();
+            // «невалидный ключ» теперь обрабатывается внутри socket.ts мягко — игнорируем редирект
+            if (msg.includes('invalid session key') || msg.includes('expired')) return;
+            // остальные причины — реальный логаут
+            if (logoutShownRef.current) return;
+            logoutShownRef.current = true;
+            window.location.href = "https://my.glagol.ai/login_work/    ";
         };
+
+        socket.on('logout', onLogout);
+        return () => { socket.off('logout', onLogout); };
     }, []);
 
     useEffect(() => {

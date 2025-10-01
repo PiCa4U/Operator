@@ -1,30 +1,53 @@
-// src/features/itsm/chat/FieldsPanel.tsx
 /* ======= общий список файлов по GUID’ам контактов (всегда открываемый по желанию) ======= */
 
+import { useEffect, useRef, useState } from "react";
 import Swal from "sweetalert2";
 import { chatApi } from "./api";
-import { useEffect, useRef, useState } from "react";
 
 const DOWNLOAD_HOST_CC = "https://my.glagol.ai";
-const SOCKET_HOST_CC   = "wwstest.glagol.ai/chat";
 
-/** https://my.glagol.ai/get_cc_files/{SOCKET_HOST}/{guid}/{filename} */
-function buildContactDownloadUrl(hostOnly: string, guid: string, filename: string) {
-    const encFile = encodeURIComponent(filename);
+/** host[:port]/chat из data-атрибутов (без протокола), ровно один раз */
+function readSocketHostForDownloads(): string {
+    const el = document.getElementById("root") as HTMLElement | null;
+    let raw =
+        (el?.dataset?.chatServer ||
+            el?.dataset?.chatApiBase ||
+            el?.dataset?.fsServer ||
+            "")!.trim();
+
+    if (!raw) return "wwstest.glagol.ai/chat";
+
+    if (raw.startsWith("//")) raw = `${window.location.protocol}${raw}`;
+    if (!/^[a-zA-Z][\w+.-]*:\/\//.test(raw)) raw = `${window.location.protocol}//${raw}`;
+
+    try {
+        const u = new URL(raw);
+        return `${u.host}/chat`;
+    } catch {
+        const noProto = raw.replace(/^[a-zA-Z][\w+.-]*:\/\//, "");
+        const host = noProto.split("/")[0];
+        return `${host}/chat`;
+    }
+}
+
+/** https://my.glagol.ai/get_cc_files/{ENCODED_CHAT_BASE}/{guid}/{filename} */
+function buildContactDownloadUrl(chatBaseUrl: string, guid: string, filename: string) {
+    const encBase = encodeURIComponent((chatBaseUrl || "").replace(/\/+$/, ""));
     const encGuid = encodeURIComponent(guid);
-    return `${DOWNLOAD_HOST_CC}/get_cc_files/${hostOnly}/${encGuid}/${encFile}`;
+    const encFile = encodeURIComponent(filename);
+    return `${DOWNLOAD_HOST_CC}/get_cc_files/${encBase}/${encGuid}/${encFile}`;
 }
 
 function fileEmojiByExt(name: string) {
     const ext = (name.split(".").pop() || "").toLowerCase();
-    if (["png","jpg","jpeg","gif","webp","bmp","svg"].includes(ext)) return "🖼️";
-    if (["pdf"].includes(ext))                                         return "📄";
-    if (["doc","docx","odt","rtf"].includes(ext))                      return "📝";
-    if (["xls","xlsx","ods","csv"].includes(ext))                      return "📊";
-    if (["ppt","pptx","odp"].includes(ext))                            return "📈";
-    if (["zip","rar","7z","gz","tar"].includes(ext))                   return "🗜️";
-    if (["mp3","wav","ogg","m4a"].includes(ext))                       return "🎵";
-    if (["mp4","mov","avi","mkv","webm"].includes(ext))                return "🎞️";
+    if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext)) return "🖼️";
+    if (["pdf"].includes(ext)) return "📄";
+    if (["doc", "docx", "odt", "rtf"].includes(ext)) return "📝";
+    if (["xls", "xlsx", "ods", "csv"].includes(ext)) return "📊";
+    if (["ppt", "pptx", "odp"].includes(ext)) return "📈";
+    if (["zip", "rar", "7z", "gz", "tar"].includes(ext)) return "🗜️";
+    if (["mp3", "wav", "ogg", "m4a"].includes(ext)) return "🎵";
+    if (["mp4", "mov", "avi", "mkv", "webm"].includes(ext)) return "🎞️";
     return "📎";
 }
 
@@ -60,9 +83,12 @@ export function ContactFilesPanel({
     alwaysOpen?: boolean;
 }) {
     const [filesFlat, setFilesFlat] = useState<FlatFile[]>([]);
-    const [busy, setBusy]           = useState<Set<string>>(new Set());
-    const [isOpen, setIsOpen]       = useState(false);
-    const contentRef                = useRef<HTMLDivElement | null>(null);
+    const [busy, setBusy] = useState<Set<string>>(new Set());
+    const [isOpen, setIsOpen] = useState(false);
+    const contentRef = useRef<HTMLDivElement | null>(null);
+
+    // host[:port]/chat
+    const SOCKET_HOST_CC = readSocketHostForDownloads();
 
     // пересобираем список файлов
     useEffect(() => {
@@ -128,7 +154,7 @@ export function ContactFilesPanel({
 
         try {
             await chatApi.delete("/api/v1/contacts/storage/remove", { data: { guid, storage: [fname] } });
-            await chatApi.delete("/api/v1/storage/delete",         { data: { guid, storage: [fname] } });
+            await chatApi.delete("/api/v1/storage/delete", { data: { guid, storage: [fname] } });
             await Swal.fire({ icon: "success", title: "Готово", text: "Файл удалён", timer: 1200, showConfirmButton: false });
         } catch (e: any) {
             setFilesFlat((prev) => {
@@ -143,12 +169,13 @@ export function ContactFilesPanel({
             });
         } finally {
             setBusy((prev) => {
-                const next = new Set(prev); next.delete(key); return next;
+                const next = new Set(prev);
+                next.delete(key);
+                return next;
             });
         }
     }
 
-    // Заголовок + пустое состояние (без стрелки, если alwaysOpen)
     if (!filesFlat.length) {
         return (
             <div>
@@ -156,7 +183,9 @@ export function ContactFilesPanel({
                     <h5 className="mb-0">Файлы</h5>
                     <span>(0)</span>
                 </div>
-                <div className="text-muted" style={{ paddingTop: 4 }}>Файлы не найдены</div>
+                <div className="text-muted" style={{ paddingTop: 4 }}>
+                    Файлы не найдены
+                </div>
             </div>
         );
     }
@@ -185,19 +214,13 @@ export function ContactFilesPanel({
                         title={opened ? "Свернуть" : "Развернуть"}
                         style={{ display: "inline-flex", alignItems: "center", position: "relative", zIndex: 2 }}
                     >
-                        <svg
-                            width="18"
-                            height="18"
-                            viewBox="0 0 20 20"
-                            style={{ transition: "transform 180ms ease", transform: opened ? "rotate(180deg)" : "rotate(0deg)" }}
-                        >
+                        <svg width="18" height="18" viewBox="0 0 20 20" style={{ transition: "transform 180ms ease", transform: opened ? "rotate(180deg)" : "rotate(0deg)" }}>
                             <path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="2" />
                         </svg>
                     </button>
                 )}
             </div>
 
-            {/* Контент: если alwaysOpen — без анимации и ограничений высоты */}
             <div
                 id="files-collapse"
                 ref={contentRef}
@@ -216,9 +239,9 @@ export function ContactFilesPanel({
                     }}
                 >
                     {filesFlat.map(({ guid, fname }) => {
-                        const href  = buildContactDownloadUrl(SOCKET_HOST_CC, String(guid), fname);
+                        const href = buildContactDownloadUrl(SOCKET_HOST_CC, String(guid), fname);
                         const emoji = fileEmojiByExt(fname);
-                        const key   = `${guid}::${fname}`;
+                        const key = `${guid}::${fname}`;
                         const isBusy = busy.has(key);
 
                         return (
@@ -262,7 +285,9 @@ export function ContactFilesPanel({
                                             {fname}
                                         </div>
                                     </a>
-                                    <div className="text-muted" style={{ fontSize: 12 }}>Скачать</div>
+                                    <div className="text-muted" style={{ fontSize: 12 }}>
+                                        Скачать
+                                    </div>
                                 </div>
 
                                 <button
@@ -279,9 +304,11 @@ export function ContactFilesPanel({
                                     }}
                                     disabled={isBusy}
                                 >
-                                    {isBusy
-                                        ? <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
-                                        : "Удалить"}
+                                    {isBusy ? (
+                                        <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
+                                    ) : (
+                                        "Удалить"
+                                    )}
                                 </button>
                             </div>
                         );

@@ -16,6 +16,117 @@ import axios from "axios";
 import { ContactFilesPanel } from '../../features/itsm/chat/FieldsPanel';
 import { chatApi } from '../../features/itsm/chat/api';
 
+// --- ALERT helpers ---
+type AlertMsg = {
+    title?: string;
+    text?: string;
+    type?: 'success' | 'error' | 'warning' | 'info';
+};
+
+// на случай бегущего счётчика — держим его в ref
+const runningModulesCountRef = { current: 0 } as React.MutableRefObject<number>;
+
+// очередь алертов, чтобы не конфликтовало с «Выполняются модули»
+const alertsQueueRef = { current: [] as AlertMsg[] } as React.MutableRefObject<AlertMsg[]>;
+const isShowingAlertRef = { current: false } as React.MutableRefObject<boolean>;
+
+const mapIcon = (t?: string): 'success'|'error'|'warning'|'info' => {
+    const s = String(t || '').toLowerCase();
+    if (s === 'success' || s === 'error' || s === 'warning' || s === 'info') return s as any;
+    if (s === 'ok' || s === 'passed' || s === 'accepted') return 'success';
+    if (s === 'warn') return 'warning';
+    return 'info';
+};
+
+// достаём ВСЕ алерты из любого места payload'а
+function collectAlerts(payload: any): AlertMsg[] {
+    const out: AlertMsg[] = [];
+    const seen = new Set<string>();
+
+    const push = (m: AlertMsg) => {
+        const key = JSON.stringify({ t: m.title || '', x: m.text || '', i: m.type || '' });
+        if (!seen.has(key) && (m.title || m.text)) {
+            seen.add(key);
+            out.push(m);
+        }
+    };
+
+    const looksLikeAlertObj = (obj: any) => {
+        if (!obj || typeof obj !== 'object') return false;
+        const t = String(obj.type ?? '').toLowerCase();
+        const hasType = ['success','error','warning','info','ok','passed','accepted','warn'].includes(t);
+        const destAlert = String((obj as any).destination ?? '')?.toLowerCase() === 'alert';
+        const hasTitleOrText = typeof (obj as any).title === 'string' || typeof (obj as any).text === 'string';
+        return hasTitleOrText && (hasType || destAlert);
+    };
+
+    const walk = (node: any) => {
+        if (!node || typeof node !== 'object') return;
+
+        // 1) destination/msg-формат
+        if (node.destination === 'alert' && node.msg && typeof node.msg === 'object') {
+            push({ title: node.msg.title, text: node.msg.text, type: mapIcon(node.msg.type) });
+        }
+
+        // 2) alert-объект как поле
+        if (node.alert && looksLikeAlertObj(node.alert)) {
+            push({ title: node.alert.title, text: node.alert.text, type: mapIcon(node.alert.type) });
+        }
+
+        // рекурсивно
+        for (const k in node) {
+            if (!Object.prototype.hasOwnProperty.call(node, k)) continue;
+            const v = (node as any)[k];
+            if (v && typeof v === 'object') walk(v);
+        }
+    };
+
+    walk(payload);
+    return out;
+}
+
+// показать один алерт (ставится в очередь, не конфликтует со «спиннером»)
+function enqueueAlert(m: AlertMsg, swalRef: React.MutableRefObject<any>) {
+    alertsQueueRef.current.push(m);
+    processAlerts(swalRef);
+}
+
+function processAlerts(swalRef: React.MutableRefObject<any>) {
+    if (isShowingAlertRef.current) return;
+    const next = alertsQueueRef.current.shift();
+    if (!next) return;
+
+    isShowingAlertRef.current = true;
+
+    // если сейчас показывается «Выполняются модули», временно закроем
+    if (swalRef.current) {
+        Swal.close();
+        swalRef.current = null;
+    }
+
+    Swal.fire({
+        title: next.title || 'Уведомление',
+        text: next.text || '',
+        icon: mapIcon(next.type),
+        allowOutsideClick: false,
+        confirmButtonText: 'Ок'
+    }).then(() => {
+        isShowingAlertRef.current = false;
+
+        // если ещё что-то крутится — вернём прогресс-диалог
+        if (runningModulesCountRef.current > 0 && !swalRef.current) {
+            swalRef.current = Swal.fire({
+                title: 'Выполняются модули',
+                html: `Осталось <strong>${runningModulesCountRef.current}</strong> модулей`,
+                allowOutsideClick: false,
+                didOpen: () => Swal.showLoading()
+            });
+        }
+
+        // показать следующий алерт из очереди
+        processAlerts(swalRef);
+    });
+}
 
 // Типы (упрощённые — оставьте свои)
 interface PhoneCombo {
@@ -531,6 +642,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
         return hasAnySelected; // есть пересечение с выбранными, но ни одного таба
     }
+    useEffect(() => {
+        runningModulesCountRef.current = runningModulesCount;
+    }, [runningModulesCount]);
 
 // есть ли вообще поля-остатки для текущих selectedProjects
     const hasLeftovers = useMemo(
@@ -639,7 +753,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // const hasActiveCall = Array.isArray(activeCalls) ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
 
     // Логика «постобработки»
-    const POST_LIMIT = worker.includes('fs@akc24.ru') ? 12000 : 15;
+    const POST_LIMIT = worker.includes('fs@akc24.ru') ? 12000 : 1200;
     const [postSeconds, setPostSeconds] = useState(POST_LIMIT);
     useEffect(() => console.log("postCall: ", postCallData),[postCallData])
 
@@ -1204,82 +1318,79 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 // Слушаем ответы от run_module и распределяем значения по проектам
     useEffect(() => {
         const handleModuleResult = (...args: any[]) => {
-            // 1) Найдём первый аргумент-объект
-            const dataObj: Record<string, any> | undefined = args.find(
-                a => typeof a === 'object' && a !== null
-            );
-            if (!dataObj) return;
-            setRunningModulesCount(prev => Math.max(0, prev - 1));
-            // 2) Случай: { project_name, result: {...} }
-            if ('project_name' in dataObj && 'result' in dataObj && tuskMode) {
-                const project = dataObj.project_name;
-                const result  = dataObj.result || {};
+            // 1) вытаскиваем первый объектный аргумент
+            const raw: Record<string, any> | undefined = args.find(a => typeof a === 'object' && a !== null);
+            if (!raw) return;
 
+            // 2) сразу собираем алерты из всех мест (корень + spec + вложенности)
+            const alerts = collectAlerts(raw);
+            alerts.forEach(a => enqueueAlert(a, swalRef));
+
+            // 3) тикаем счётчик прогресса
+            setRunningModulesCount(prev => Math.max(0, prev - 1));
+
+            // 4) для применения значений по полям работаем в первую очередь со spec (если он есть)
+            const dataObj = raw;
+            const core = (dataObj && typeof dataObj === 'object' && typeof dataObj.spec === 'object')
+                ? dataObj.spec
+                : dataObj;
+
+            // несколько различных форматов, которые уже были — оставляем, но кормим их "core"
+            if ('project_name' in dataObj && 'result' in dataObj && tuskMode) {
+                const project = dataObj.project_name as string;
+                const result  = dataObj.result || {};
                 Object.entries(result).forEach(([fieldKey, value]) => {
+                    if (fieldKey === 'msg' || fieldKey === 'alert' || fieldKey === 'title' || fieldKey === 'text' || fieldKey === 'type') return;
                     let v: string;
-                    if (value == null) {
-                        v = '';
-                    } else if (typeof value === 'object') {
-                        v = JSON.stringify(value);
-                    } else {
-                        v = String(value);
-                    }
+                    if (value == null) v = '';
+                    else if (typeof value === 'object') v = JSON.stringify(value);
+                    else v = String(value);
                     applyFieldUpdate(project, fieldKey, v);
                 });
+                return;
+            }
 
-                // 3) Новый групповой формат: { projectA: {...}, projectB: {...} }
-            } else if (Object.values(dataObj).every(v => typeof v === 'object')) {
-                Object.entries(dataObj).forEach(([project, result]) => {
+            // карта проектов → объекты — (когда приходит множество проектов)
+            if (core && typeof core === 'object' &&
+                Object.values(core).length > 0 &&
+                Object.values(core).every(v => typeof v === 'object' && v !== null && !Array.isArray(v))) {
+                Object.entries(core).forEach(([project, result]) => {
                     Object.entries(result || {}).forEach(([fieldKey, value]) => {
+                        if (fieldKey === 'msg' || fieldKey === 'alert' || fieldKey === 'title' || fieldKey === 'text' || fieldKey === 'type') return;
                         let v: string;
-                        if (value == null) {
-                            v = '';
-                        } else if (typeof value === 'object') {
-                            v = JSON.stringify(value);
-                        } else {
-                            v = String(value);
-                        }
+                        if (value == null) v = '';
+                        else if (typeof value === 'object') v = JSON.stringify(value);
+                        else v = String(value);
                         applyFieldUpdate(project, fieldKey, v);
                     });
                 });
-
-                // 4) fallback — старый плоский формат без project_name
-            } else {
-                let project = activeProject;
-                if (tuskMode) {
-                    // пытаемся угадать проект по ключам
-                    const fieldKeys = Object.keys(dataObj);
-                    const guess = fieldKeys.find(f =>
-                        Object.entries(values).some(([proj, fields]) =>
-                            Object.keys(fields).includes(f)
-                        )
-                    );
-                    if (guess) {
-                        const entry = Object.entries(values).find(([proj, fields]) =>
-                            fields.hasOwnProperty(guess)
-                        );
-                        if (entry) project = entry[0];
-                    }
-                }
-
-                Object.entries(dataObj).forEach(([fieldKey, value]) => {
-                    let v: string;
-                    if (value == null) {
-                        v = '';
-                    } else if (typeof value === 'object') {
-                        v = JSON.stringify(value);
-                    } else {
-                        v = String(value);
-                    }
-                    applyFieldUpdate(project, fieldKey, v);
-                });
+                return;
             }
 
-            // Swal.fire({
-            //     title: 'Успех',
-            //     text: 'Результат работы модуля передан в систему',
-            //     icon: 'success'
-            // });
+            // плоский ответ с полями (теперь — чаще это core === spec)
+            let project = activeProject;
+            if (tuskMode) {
+                const fieldKeys = Object.keys(core || {});
+                const guess = fieldKeys.find(f =>
+                    Object.entries(values).some(([_, fields]) => Object.keys(fields).includes(f))
+                );
+                if (guess) {
+                    const entry = Object.entries(values).find(([_, fields]) => fields.hasOwnProperty(guess));
+                    if (entry) project = entry[0];
+                }
+            }
+
+            Object.entries(core || {}).forEach(([fieldKey, value]) => {
+                // игнорируем служебные ключи, чтобы не портить значения
+                if (fieldKey === 'msg' || fieldKey === 'alert' || fieldKey === 'title' || fieldKey === 'text' || fieldKey === 'type' || fieldKey === 'destination') return;
+
+                let v: string;
+                if (value == null) v = '';
+                else if (typeof value === 'object') v = JSON.stringify(value);
+                else v = String(value);
+
+                applyFieldUpdate(project, fieldKey, v);
+            });
         };
 
         socket.on('run_module', handleModuleResult);
@@ -1297,36 +1408,35 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     ]);
 
 
-    function applyFieldUpdate(
-        project: string,
-        fieldKey: string,
-        v: string
-    ) {
+
+    function applyFieldUpdate(project: string, fieldKey: string, v: string) {
+        // не заливаем служебные ключи в базовые поля
+        if (fieldKey === 'alert' || fieldKey === 'title' || fieldKey === 'text' || fieldKey === 'type' || fieldKey === 'destination') {
+            return;
+        }
+
         switch (fieldKey) {
-            case 'call_reason':
-                setCallReason(v);
-                break;
-            case 'call_result':
-                setCallResult(v);
-                break;
-            case 'comment':
-                setComment(v);
-                break;
+            case 'msg':
+                try {
+                    const maybe = JSON.parse(v);
+                    if (maybe && typeof maybe === 'object' && (maybe.title || maybe.text)) {
+                        enqueueAlert({ title: maybe.title, text: maybe.text, type: mapIcon(maybe.type) }, swalRef);
+                    }
+                } catch { /* ignore */ }
+                return;
+
+            case 'call_reason': setCallReason(v); return;
+            case 'call_result': setCallResult(v); return;
+            case 'comment':     setComment(v);    return;
+
             default:
-                    console.log("ASDFGHJKLKJHGF")
-                    setValues(prev => ({
-                        ...prev,
-                        [project]: {
-                            ...prev[project],
-                            [fieldKey]: v
-                        }
-                    }));
-                // } else {
-                //     setBaseFieldValues(prev => ({
-                //         ...prev,
-                //         [fieldKey]: v
-                //     }));
-                // }
+                setValues(prev => ({
+                    ...prev,
+                    [project]: {
+                        ...prev[project],
+                        [fieldKey]: v
+                    }
+                }));
         }
     }
 

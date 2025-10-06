@@ -2,42 +2,34 @@ import React, { useMemo } from "react";
 import { useSelector } from "react-redux";
 import ManagerDashboards from "./components/ManagerDashboards";
 import type { RootState } from "../../../../redux/store";
+import { store } from "../../../../redux/store";
+
+/** Нормализация worker → glagol-логин:
+ * - если уже содержит ".at." — оставляем как есть
+ * - если содержит "@", меняем ПЕРВОЕ вхождение на ".at."
+ * - иначе возвращаем как есть
+ */
+function normalizeWorkerLogin(raw: string): string {
+    const s = String(raw ?? "").trim();
+    if (!s) return "";
+    if (s.includes(".at.")) return s;
+
+    const at = s.indexOf("@");
+    if (at >= 0) {
+        return `${s.slice(0, at)}.at.${s.slice(at + 1)}`;
+    }
+    return s;
+}
 
 /**
- * Хук окружения: достаём glagolParent (fs_server) и userLogin (sip_login)
+ * Хук окружения: достаём glagolParent (fs_server) и userLogin (worker)
  * приоритет: Redux → data-* на #root → дефолты.
  */
-function useGlagolEnv() {
-    // Всегда вызываем хуки в одном и том же порядке — без short-circuit!
-    const fsServerOperator = useSelector<RootState, string | undefined>(
-        (s) => (s as any)?.operator?.fs_server
-    );
-    const fsServerCreds = useSelector<RootState, string | undefined>(
-        (s) => (s as any)?.credentials?.fs_server
-    );
-
-    const sipLoginOperator = useSelector<RootState, string | undefined>(
-        (s) => (s as any)?.operator?.sip_login
-    );
-    const sipLoginCreds = useSelector<RootState, string | undefined>(
-        (s) => (s as any)?.credentials?.sip_login
-    );
-
-    // Затем уже склеиваем значения
-    const fsServerRedux = fsServerOperator ?? fsServerCreds;
-    const sipLoginRedux = sipLoginOperator ?? sipLoginCreds;
-
-    // dataset как запасной источник
-    const root = document.getElementById("root") as HTMLElement | null;
-    const ds = (root?.dataset ?? {}) as Partial<Record<string, string>>;
-
-    const glagolParent =
-        fsServerRedux ?? ds.fsServer ?? ds.glagolParent ?? "fs.at.akc24.ru";
-
-    const userLogin =
-        sipLoginRedux ?? ds.sipLogin ?? ds.user ?? "1.fs.at.akc24.ru";
-
-    return { glagolParent, userLogin };
+function getCreds() {
+    const { credentials } = store.getState();
+    const { worker = "", glagolParent = "" } = credentials || {};
+    const userLogin = normalizeWorkerLogin(worker);
+    return { userLogin, glagolParent: glagolParent || "" };
 }
 
 export const ManagerDashboardsTab: React.FC<{
@@ -47,7 +39,7 @@ export const ManagerDashboardsTab: React.FC<{
           listEndpoint = "https://tmpapi.glagol.ai/get_dash_boards",
           gridRowHeight = 120,
       }) => {
-    const { glagolParent, userLogin } = useGlagolEnv();
+    const { glagolParent, userLogin } = getCreds();
 
     const props = useMemo(
         () => ({ listEndpoint, glagolParent, userLogin, gridRowHeight }),

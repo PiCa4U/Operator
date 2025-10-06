@@ -369,7 +369,16 @@ const PresetSelectorTable: React.FC<Props> = ({
     const buildBaseFilter = useCallback(() => {
         if (!selectedPreset) return {};
         const { preset } = selectedPreset;
-        const base: any = { project: ['IN', preset.projects] };
+
+        const projects = Array.isArray(preset.projects)
+            ? preset.projects.map(String).filter(Boolean)
+            : [];
+
+        const base: any = {};
+        if (projects.length) {
+            base.project = ['IN', projects];
+        }
+        // серверные
         const extra = buildExtraFilterByFromMap(appliedServerFilters);
         Object.assign(base, extra);
         return base;
@@ -635,34 +644,38 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         Object.entries(map).forEach(([_, item]) => {
             if (!item) return;
-            const {key, method, values} = item;
+            const { key, method } = item;
             if (!key || !method) return;
 
             if (method === 'DATES') {
-                const [startYmd, endYmd] = [values?.[0] || '', values?.[1] || ''];
+                const a = nonEmptyStr(item.values?.[0]);
+                const b = nonEmptyStr(item.values?.[1]);
+                if (!a && !b) return;
 
                 if (isRealTimestampKey(key)) {
-                    const s = (startYmd || endYmd);
-                    const e = (endYmd || startYmd);
-                    if (s) {
-                        const startStr = formatWithTimezone(parseYmd(s), 'start');
-                        const endStr = formatWithTimezone(parseYmd(e || s), 'end');
-                        out[key] = ['BETWEEN', [startStr, endStr]];
-                    }
+                    // timestamp → BETWEEN
+                    const s = parseYmd((a ?? b)!);
+                    const e = parseYmd((b ?? a)!);
+                    const startStr = formatWithTimezone(s <= e ? s : e, 'start');
+                    const endStr   = formatWithTimezone(s <= e ? e : s, 'end');
+                    out[key] = ['BETWEEN', [startStr, endStr]];
                 } else {
-                    const days = expandDateStrings(startYmd, endYmd);
+                    // строковые даты → LIKE IN по списку yyyy-MM-dd
+                    const days = expandDateStrings(a ?? '', b ?? '');
                     if (days.length) out[key] = ['LIKE IN', days];
                 }
                 return;
             }
 
             if (method === 'IN' || method === 'NOT IN') {
-                out[key] = [method, values];
+                const list = sanitizeList(item.values);
+                if (list.length) out[key] = [method, list];
                 return;
             }
 
-            // прочие бинарные методы (=, !=, LIKE, NOT LIKE)
-            out[key] = [method, values?.[0] ?? ''];
+            // '=', '!=', 'LIKE', 'NOT LIKE'
+            const v = nonEmptyStr(item.values?.[0]);
+            if (v) out[key] = [method, v];
         });
 
         return out;
@@ -925,10 +938,42 @@ const PresetSelectorTable: React.FC<Props> = ({
         return out;
     }
 
-// ключ считается timestamp-колонкой (created_dt/next_call_dt)?
+    // ключ считается timestamp-колонкой (created_dt/next_call_dt/deadline)?
     function isRealTimestampKey(key: string): boolean {
         const k = (key || '').toLowerCase();
-        return /\bcreated_dt\b/.test(k) || /\bnext_call_dt\b/.test(k);
+        return /\b(created_dt|next_call_dt|deadline|deadline_dt|deadline_date)\b/.test(k);
+    }
+
+    function sanitizeList(vals: unknown): string[] {
+        const arr = Array.isArray(vals) ? vals : [];
+        // trim + фильтруем пустые + уникализируем
+        return Array.from(new Set(arr.map(v => String(v ?? '').trim()).filter(Boolean)));
+    }
+
+    function nonEmptyStr(val: unknown): string | null {
+        const s = String(val ?? '').trim();
+        return s.length ? s : null;
+    }
+
+// Превращаем черновик по колонке в применённый фильтр,
+// отбрасывая пустые кейсы. Вернёт null, если нет валидных значений.
+    function coerceAppliedFromDraft(item: ServerDraftItem): ServerAppliedByCol {
+        const { key, method } = item;
+
+        if (method === 'IN' || method === 'NOT IN') {
+            const list = sanitizeList(item.values);
+            return list.length ? { key, method, values: list } : null;
+        }
+
+        if (method === 'DATES') {
+            const a = nonEmptyStr(item.values?.[0]);
+            const b = nonEmptyStr(item.values?.[1]);
+            return (a || b) ? { key, method, values: [a ?? '', b ?? ''] } : null;
+        }
+
+        // '=', '!=', 'LIKE', 'NOT LIKE'
+        const v = nonEmptyStr(item.values?.[0]);
+        return v ? { key, method, values: [v] } : null;
     }
 
     useEffect(() => {
@@ -961,12 +1006,10 @@ const PresetSelectorTable: React.FC<Props> = ({
             const { preset } = selectedPreset;
             resetPhonesCache();
 
-            const common: any = { project: ['IN', preset.projects] };
-            const filterBy: any = { ...common };
-
-            // ⚠️ только серверные столбцовые фильтры
-            const extra = extraFilterBy ?? buildExtraFilterByFromMap(appliedServerFilters);
-            Object.assign(filterBy, extra);
+            // базовый (в т.ч. project IN [...]) + серверные
+            const base = buildBaseFilter();
+            // если зовём с extra (после "Применить") — оно уже отфильтровано
+            const filterBy: any = extraFilterBy ? { ...base, ...extraFilterBy } : base;
 
             const response1 = await axios.post<ApiRow[]>('/api/v1/get_grouped_phones', {
                 glagol_parent: glagolParent2,
@@ -992,6 +1035,7 @@ const PresetSelectorTable: React.FC<Props> = ({
             if (requestSeqRef.current === mySeq) setLoading(false);
         }
     };
+
 
     /** Есть ли среди options объект { users: [...] } */
     // function extractUsersDepartments(options?: OptionDescriptor[]): string[] | null {
@@ -1799,23 +1843,26 @@ const PresetSelectorTable: React.FC<Props> = ({
     };
 
     const applyColumnFilters = (colKey: string) => {
-        // локальный фильтр (в найденном)
+        // локальный «в найденном»
         const nextLocal = {
             ...appliedLocalFilters,
             [colKey]: (localFilterDraft[colKey] ?? '').trim(),
         };
         setAppliedLocalFilters(nextLocal);
 
-        // серверный фильтр по радиокнопке
+        // серверный (радиокнопка)
         const sd = serverFilterDraft[colKey];
         let nextServerForCol: ServerAppliedByCol = null;
+
         if (sd && sd.selectedIdx !== null) {
-            const item = sd.items[sd.selectedIdx];
-            nextServerForCol = {key: item.key, method: item.method, values: [...item.values]};
+            const draft = sd.items[sd.selectedIdx];
+            // 🔴 тут отбрасываем пустые кейсы:
+            nextServerForCol = coerceAppliedFromDraft(draft);
         }
 
-        const nextServer = {...appliedServerFilters, [colKey]: nextServerForCol};
+        const nextServer = { ...appliedServerFilters, [colKey]: nextServerForCol };
         setAppliedServerFilters(nextServer);
+
         const presetId = selectedPreset?.preset?.id;
         if (presetId) {
             localStorage.setItem(serverFiltersKey(presetId), JSON.stringify(nextServer));
@@ -1824,7 +1871,7 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         setOpenFilterCol(null);
 
-        // ⚠️ главное: грузим с ТЕМ, что только что применили
+        // грузим уже с отфильтрованным набором условий
         const extra = buildExtraFilterByFromMap(nextServer);
         loadGroupedPhones(extra);
     };

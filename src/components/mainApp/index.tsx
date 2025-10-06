@@ -601,19 +601,19 @@ const MainApp: React.FC = () => {
     }
     const logoutShownRef = useRef(false);
 
-    useEffect(() => {
-        const onLogout = (payload: any) => {
-            const msg = String(payload?.message || '').toLowerCase();
-            // «невалидный ключ» теперь обрабатывается внутри socket.ts мягко — игнорируем редирект
-            if (msg.includes('invalid session key') || msg.includes('expired')) return;
-            // остальные причины — реальный логаут
-            if (logoutShownRef.current) return;
-            logoutShownRef.current = true;
-            window.location.href = "https://my.glagol.ai/login_work/    ";
-        };
+    const handleLogout = () => {
+        if (logoutShownRef.current) return;
 
-        socket.on('logout', onLogout);
-        return () => { socket.off('logout', onLogout); };
+        logoutShownRef.current = true;
+
+        window.location.href = "https://my.glagol.ai/login_work/";
+    };
+
+    useEffect(() => {
+        socket.on('logout', handleLogout);
+        return () => {
+            socket.off('logout', handleLogout);
+        };
     }, []);
 
     useEffect(() => {

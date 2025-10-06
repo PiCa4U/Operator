@@ -10,10 +10,10 @@ import { queryClient } from "./queryClient";
 import axios from "axios";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import ItsmGuidRoute from "./features/itsm/ItsmGuidRoute";
-import { webrtcOwner } from './webrtcOwner';
 
 type PhoneMode = 'softphone' | 'webrtc';
 
+// 🔹 ВНЕ App: маленькая строка
 const Row: React.FC<{ label: string; value: string; mono?: boolean }> = ({ label, value, mono }) => (
     <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: 8, padding: '4px 0' }}>
         <div style={{ color: '#6c757d' }}>{label}:</div>
@@ -23,6 +23,7 @@ const Row: React.FC<{ label: string; value: string; mono?: boolean }> = ({ label
     </div>
 );
 
+// 🔹 ВНЕ App: корневая страница
 type RootHomeProps = {
     ready: boolean;
     mode: PhoneMode;
@@ -37,14 +38,12 @@ type RootHomeProps = {
     sipLogin: string;
     ha1: string;
     turnCreds: any;
-    webrtcUrl: string;
-    owner: { isOwner: boolean; claim: () => Promise<boolean> };
+    webrtcUrl: string
 };
 
 const RootHome: React.FC<RootHomeProps> = ({
                                                ready, mode, setMode, infoOpen, setInfoOpen, infoRef,
-                                               name, glagol, phoneLogin, role, sipLogin, ha1, turnCreds, webrtcUrl,
-                                               owner
+                                               name, glagol, phoneLogin, role, sipLogin, ha1, turnCreds, webrtcUrl
                                            }) => {
     const ModeSwitch = (
         <div style={{ display: 'flex', gap: 8, padding: 8 }}>
@@ -59,37 +58,6 @@ const RootHome: React.FC<RootHomeProps> = ({
         </div>
     );
 
-    // жёлтый баннер – ВНУТРИ верхней полосы, между переключателем и бейджем
-    const OwnerBannerInline = (mode === 'webrtc' && !owner.isOwner) ? (
-        <div
-            role="status"
-            style={{
-                flex: 1,
-                margin: '0 16px',
-                background: '#fff3cd',
-                border: '1px solid #ffe69c',
-                color: '#664d03',
-                borderRadius: 10,
-                padding: '8px 12px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                minWidth: 240
-            }}
-        >
-            <span>Эта вкладка не отвечает за звонки. Телефония активна в другой вкладке.</span>
-            <button
-                className="btn btn-sm btn-warning"
-                onClick={async () => {
-                    const ok = await owner.claim();
-                    if (!ok) alert('Текущая звонковая вкладка занята (идёт звонок). Попробуйте позже.');
-                }}
-            >
-                Сделать эту вкладку звонковой
-            </button>
-        </div>
-    ) : <div style={{ flex: 1 }} />; // заполнитель, чтобы бейдж справа не прыгал
-
     if (!ready) {
         return (
             <div style={{ padding: 16 }}>
@@ -101,11 +69,12 @@ const RootHome: React.FC<RootHomeProps> = ({
 
     return (
         <>
-            {/* Верхняя полоса */}
+            {/* Верхняя панель */}
             <div
                 style={{
                     display: "flex",
                     flexDirection: "row",
+                    justifyContent: "space-between",
                     alignItems: "center",
                     gap: 8,
                     padding: "8px 16px",
@@ -113,9 +82,7 @@ const RootHome: React.FC<RootHomeProps> = ({
             >
                 <div style={{ marginLeft: 24 }}>{ModeSwitch}</div>
 
-                {OwnerBannerInline}
-
-                {/* Бейдж оператора */}
+                {/* Бейдж оператора с поповером */}
                 <div
                     ref={infoRef}
                     style={{ marginRight: 20, position: 'relative', display: 'flex', alignItems: 'center' }}
@@ -134,9 +101,9 @@ const RootHome: React.FC<RootHomeProps> = ({
                             borderRadius: 999, padding: '6px 12px', boxShadow: '0 1px 2px rgba(0,0,0,.06)'
                         }}
                     >
-            <span style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {name}
-            </span>
+                        <span style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {name}
+                        </span>
                         <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
                             <circle cx="12" cy="12" r="10" fill="currentColor" opacity=".12" />
                             <path d="M12 8.25a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm-1.25 2.5a1.25 1.25 0 1 1 2.5 0v6a1.25 1.25 0 1 1-2.5 0v-6Z" fill="currentColor"/>
@@ -164,9 +131,9 @@ const RootHome: React.FC<RootHomeProps> = ({
                 </div>
             </div>
 
-            {/* Основное приложение + телефония */}
+            {/* Телефония и основное приложение */}
             <SipProvider
-                enabled={mode === 'webrtc' && owner.isOwner}
+                enabled={mode === 'webrtc'}
                 userId={sipLogin}
                 ha1={ha1}
                 wsServer={webrtcUrl}
@@ -185,7 +152,6 @@ export default function App() {
         glagolParent = '',
         webrtcUrl = ''
     } = store.getState().credentials;
-
     const { ha1, turnCreds } = useSelector((s: RootState) => s.operator);
     const [userInfo, setUserInfo] = useState<any>({});
     const [mode, setMode] = useState<PhoneMode>(() => {
@@ -201,8 +167,6 @@ export default function App() {
     const [infoOpen, setInfoOpen] = useState(false);
     const infoRef = useRef<HTMLDivElement | null>(null);
 
-    const [isOwner, setIsOwner] = useState<boolean>(false);
-
     useEffect(() => {
         const onDocClick = (e: MouseEvent) => {
             if (!infoRef.current) return;
@@ -213,17 +177,11 @@ export default function App() {
     }, []);
 
     useEffect(() => {
-        webrtcOwner.init(`fs:${sipLogin}`);
-        const unsubscribe = webrtcOwner.subscribe((owner) => setIsOwner(owner));
-        return () => { unsubscribe(); };
-    }, [sipLogin]);
-
-    useEffect(() => {
         localStorage.setItem('phone_mode', mode);
-        if (mode === 'webrtc' && isOwner) enableWebRTC();
+        if (mode === 'webrtc') enableWebRTC();
         else disableWebRTC();
         return () => disableWebRTC();
-    }, [mode, isOwner]);
+    }, [mode]);
 
     useEffect(() => {
         const fetchAgents = async () => {
@@ -236,13 +194,9 @@ export default function App() {
             }
         };
         fetchAgents();
-    }, [sipLogin, glagolParent]);
+    }, [sipLogin]);
 
-    // Рендер блокируем только когда вкладка — владелец в режиме WebRTC и ещё нет creds
-    const ready = useMemo(
-        () => (mode === 'webrtc' && isOwner) ? Boolean(ha1 && turnCreds) : true,
-        [mode, isOwner, ha1, turnCreds]
-    );
+    const ready = useMemo(() => (mode === 'softphone' ? true : Boolean(ha1 && turnCreds)), [mode, ha1, turnCreds]);
 
     return (
         <QueryClientProvider client={queryClient}>
@@ -267,7 +221,6 @@ export default function App() {
                                 ha1={ha1!}
                                 turnCreds={turnCreds!}
                                 webrtcUrl={webrtcUrl}
-                                owner={{ isOwner, claim: () => webrtcOwner.claim() }}
                             />
                         }
                     />

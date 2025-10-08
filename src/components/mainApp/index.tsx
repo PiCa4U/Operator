@@ -432,8 +432,13 @@ const MainApp: React.FC = () => {
                     return { ...m, attachments: nextAtts };
                 })
             );
-            if (activeGuid) void refreshContactFiles(activeGuid);
 
+            if (activeGuid) {
+                void refreshContactFiles(activeGuid);
+                window.dispatchEvent(
+                    new CustomEvent('contact-files:refresh', { detail: { guid: activeGuid } })
+                );
+            }
         }
     });
 
@@ -1432,7 +1437,7 @@ const MainApp: React.FC = () => {
                                     height={collapsed.value ? "52px" : "clamp(420px, 65vh, 820px)"}
                                     onSend={handleSend}
                                     operatorDict={operatorDict}
-                                    formatOperatorFn={formatOperator}
+                                    // formatOperatorFn={formatOperator}
                                     title={`Чат · ${activeGuid ?? ""}`}
                                     // subtitle={labelForGuid(activeGuid)}
                                     readMap={readMap}

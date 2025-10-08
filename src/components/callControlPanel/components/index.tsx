@@ -15,6 +15,29 @@ interface EditableFieldsProps {
 }
 registerLocale('ru', ru);
 setDefaultLocale('ru')
+function linkifyParts(text: string): React.ReactNode[] {
+    if (!text) return [text];
+    const re =
+        /(https?:\/\/[^\s]+|www\.[^\s]+|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g;
+    const parts: React.ReactNode[] = [];
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+        if (m.index > last) parts.push(text.slice(last, m.index));
+        const raw = m[0];
+        const isEmail = raw.includes("@") && !raw.startsWith("http") && !raw.startsWith("www.");
+        const href = isEmail ? `mailto:${raw}` : raw.startsWith("http") ? raw : `http://${raw}`;
+        parts.push(
+            <a key={`${m.index}-${raw}`} href={href} target="_blank" rel="noopener noreferrer">
+                {raw}
+            </a>
+        );
+        last = m.index + raw.length;
+    }
+    if (last < text.length) parts.push(text.slice(last));
+    return parts;
+}
+
 const EditableFields: React.FC<EditableFieldsProps> = ({
                                                            params,
                                                            initialValues = {},
@@ -102,10 +125,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         </label>
                         {param.field_type === 'regular' && (
                             param.editable ? (
-                                <input
-                                    type="text"
-                                    {...commonProps}
-                                />
+                                <input type="text" {...commonProps} />
                             ) : (
                                 <span
                                     style={{
@@ -117,7 +137,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                         backgroundColor: '#e9ecef'
                                     }}
                                 >
-                                    {currentValue}
+                                    {linkifyParts(currentValue)}
                                 </span>
                             )
                         )}
@@ -127,24 +147,26 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
 
                         {param.field_type === 'textarea' && (
                             param.editable ? (
-                                <textarea
-                                    {...commonProps}
-                                />
+                                <textarea {...commonProps} />
                             ) : (
                                 <span
                                     style={{
-                                        whiteSpace: 'pre-wrap',
-                                        display: 'block',
+                                        whiteSpace: 'normal',
                                         padding: '0.375rem 0.75rem',
-                                        border: '1px solid transparent',
-                                        borderRadius: '0.25rem',
                                         backgroundColor: '#e9ecef'
                                     }}
                                 >
-                                    {currentValue}
+                                    {/* пункт 4 — см. ниже про разделители строк */}
+                                    {currentValue.split(/\r?\n/).map((line, idx) => (
+                                        <div key={idx} style={{ padding: '6px 0' }}>
+                                            {idx > 0 && <div style={{ borderTop: '1px solid #e5e7eb', marginBottom: 6 }} />}
+                                            <div style={{ lineHeight: 1.35 }}>{linkifyParts(line || '\u00a0')}</div>
+                                        </div>
+                                    ))}
                                 </span>
                             )
                         )}
+
                         {param.field_type === 'select' && (() => {
                             // 1) Парсим дефолтные опции из param.field_vals
                             const rawVals = param.field_vals || "";

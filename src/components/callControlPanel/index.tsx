@@ -23,6 +23,7 @@ type AlertMsg = {
     type?: 'success' | 'error' | 'warning' | 'info';
 };
 
+
 // на случай бегущего счётчика — держим его в ref
 const runningModulesCountRef = { current: 0 } as React.MutableRefObject<number>;
 
@@ -551,6 +552,92 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         [openedPhones]
     );
     const guidsCsv = useMemo(() => guidsFromOpened.join(','), [guidsFromOpened]);
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+    const hasAnyGuid = guidsFromOpened.length > 0;
+
+
+    function extractUploadedNames(up: any): string[] {
+        // 1) чаще всего сервер отдаёт массив объектов
+        if (Array.isArray(up)) {
+            return up.map((o: any) => o?.filename || o?.name || o?.storage_name).filter(Boolean);
+        }
+        // 2) иногда заворачивают в поле data / result / uploaded
+        const candidates = [up?.data, up?.result, up?.uploaded, up?.files, up?.storage];
+        for (const c of candidates) {
+            if (Array.isArray(c)) {
+                return c.map((o: any) => o?.filename || o?.name || o?.storage_name).filter(Boolean);
+            }
+        }
+        // 3) fallback: одиночный объект
+        if (typeof up === 'object' && up?.filename) return [up.filename];
+        return [];
+    }
+
+    async function uploadFilesToAllGuids(files: FileList) {
+        if (!files?.length || !guidsFromOpened?.length) return;
+
+        const bin   = Array.from(files);
+        const guids = Array.from(new Set(guidsFromOpened));
+
+        await Promise.allSettled(
+            guids.map(async (guid) => {
+                try {
+                    // upload
+                    const fd = new FormData();
+                    bin.forEach(f => fd.append('files', f, f.name)); // имя файла не обязательно, но полезно
+                    const { data: up } = await chatApi.post(
+                        `/api/v1/storage/upload/${encodeURIComponent(guid)}`,
+                        fd
+                    );
+                    const storage = extractUploadedNames(up);
+                    if (!storage.length) {
+                        console.warn('upload ok, but no filenames in response:', up);
+                        // если бэк сам сразу привязывает — просто пинганём рефреш
+                        window.dispatchEvent(new CustomEvent('contact-files:refresh', { detail: { guid } }));
+                        return;
+                    }
+
+                    // attach (если требуется явная привязка)
+                    try {
+                        await chatApi.post(`/api/v1/contacts/storage/add`, { guid, storage });
+                    } catch (e: any) {
+                        // если файл уже привязан и бэк даёт 409/400 — не роняем цепочку
+                        const code = e?.response?.status;
+                        if (code !== 409 && code !== 400) throw e;
+                    }
+
+                    // обновляем карточку только после успешной привязки
+                    window.dispatchEvent(new CustomEvent('contact-files:refresh', { detail: { guid } }));
+                } catch (e) {
+                    console.warn('upload/attach failed for guid', guid, e);
+                }
+            })
+        );
+    }
+
+    function setCallResultByAny(v: any) {
+        const str = v == null ? '' : String(v);
+        if (str === '') { setCallResult(''); return; }
+        // 1) по id
+        const byId = callResults.find(r => String(r.id) === str);
+        if (byId) { setCallResult(String(byId.id)); return; }
+        // 2) по name
+        const byName = callResults.find(r => String(r.name) === str);
+        if (byName) { setCallResult(String(byName.id)); return; }
+        // иначе сброс
+        setCallResult('');
+    }
+
+    function setCallReasonByAny(v: any) {
+        const str = v == null ? '' : String(v);
+        if (str === '') { setCallReason(''); return; }
+        const byId = callReasons.find(r => String(r.id) === str);
+        if (byId) { setCallReason(String(byId.id)); return; }
+        const byName = callReasons.find(r => String(r.name) === str);
+        if (byName) { setCallReason(String(byName.id)); return; }
+        setCallReason('');
+    }
 
     async function refreshContactFilesByGuid(g: string) {
         if (!g) return;
@@ -1325,6 +1412,22 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             // 2) сразу собираем алерты из всех мест (корень + spec + вложенности)
             const alerts = collectAlerts(raw);
             alerts.forEach(a => enqueueAlert(a, swalRef));
+            // 2.1) целевая "дырка" через destination
+            const dst = String((raw as any)?.destination ?? (raw as any)?.spec?.destination ?? '').toLowerCase();
+            if (dst === 'comment' || dst === 'call_result' || dst === 'call_reason') {
+                const v =
+                    (raw as any)?.value ??
+                    (raw as any)?.text ??
+                    (raw as any)?.spec?.value ??
+                    (raw as any)?.spec?.text ?? '';
+                if (dst === 'comment')       setComment(String(v ?? ''));
+                else if (dst === 'call_result') setCallResultByAny(v);
+                else if (dst === 'call_reason') setCallReasonByAny(v);
+
+                setRunningModulesCount(prev => Math.max(0, prev - 1));
+                return; // дальше не маппим поля — целевое назначение уже обработали
+            }
+
 
             // 3) тикаем счётчик прогресса
             setRunningModulesCount(prev => Math.max(0, prev - 1));
@@ -1803,6 +1906,20 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         setPostSeconds(POST_LIMIT);
         onClose();
     };
+    const availableTabs = useMemo(() => {
+        const set = new Set<string>();
+        for (const f of mergedFields) {
+            for (const proj of f.projects) {
+                if (!selectedProjects.includes(proj)) continue;
+                const tk = f.tabsByProject?.[proj];
+                if (tk != null && String(tk).trim() !== '') set.add(String(tk));
+            }
+        }
+        const arr = Array.from(set).sort(sortTabKeys);
+        if (hasFiles || hasAnyGuid) arr.push(TAB_FILES);   // <-- ВАЖНО
+        return arr;
+    }, [mergedFields, selectedProjects, hasFiles, hasAnyGuid]);
+
     const handlePostSave = () => {
         // if (!callReason || !callResult) {
         //     Swal.fire({
@@ -2785,26 +2902,19 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         setValues(nextValues);
     }, [openedPhones, contactInfoOptions, selectedProjects]);
 
-    // const commonFields = mergedFields.filter(f => f.projects.length > 1);
-    // const uniqueFieldsByProject: Record<string, MergedField[]> = {};
-    // selectedProjects.forEach(proj => {
-    //     uniqueFieldsByProject[proj] =
-    //         mergedFields.filter(f => f.projects.length === 1 && f.projects[0] === proj);
-    // });
-// TABS: какие вкладки есть для выбранных проектов
-    const availableTabs = useMemo(() => {
-        const set = new Set<string>();
-        for (const f of mergedFields) {
-            for (const proj of f.projects) {
-                if (!selectedProjects.includes(proj)) continue;
-                const tk = f.tabsByProject?.[proj];
-                if (tk != null && String(tk).trim() !== '') set.add(String(tk));
-            }
-        }
-        const arr = Array.from(set).sort(sortTabKeys);
-        if (hasFiles) arr.push(TAB_FILES);
-        return arr;
-    }, [mergedFields, selectedProjects, hasFiles]);
+//     const availableTabs = useMemo(() => {
+//         const set = new Set<string>();
+//         for (const f of mergedFields) {
+//             for (const proj of f.projects) {
+//                 if (!selectedProjects.includes(proj)) continue;
+//                 const tk = f.tabsByProject?.[proj];
+//                 if (tk != null && String(tk).trim() !== '') set.add(String(tk));
+//             }
+//         }
+//         const arr = Array.from(set).sort(sortTabKeys);
+//         if (hasFiles) arr.push(TAB_FILES);
+//         return arr;
+//     }, [mergedFields, selectedProjects, hasFiles]);
 
 // TABS: корректно переключаемся, учитывая «Остатки»
     useEffect(() => {
@@ -3013,6 +3123,28 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                     )}
                                     {activeTab === TAB_FILES && (
                                         <div style={{ marginTop: 8, marginBottom: 12 }}>
+                                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                                                <button
+                                                    className="btn btn-outline-secondary"
+                                                    title="Прикрепить файлы"
+                                                    onClick={() => fileInputRef.current?.click()}
+                                                    disabled={!hasAnyGuid}
+                                                >
+                                                    <span className="material-icons" style={{ verticalAlign: 'middle' }}>attach_file</span>
+                                                </button>
+                                                <input
+                                                    ref={fileInputRef}
+                                                    type="file"
+                                                    multiple
+                                                    style={{ display: 'none' }}
+                                                    onChange={(e) => {
+                                                        if (e.target.files) void uploadFilesToAllGuids(e.target.files);
+                                                        // сбрасываем, чтобы повторно можно было выбрать тот же файл
+                                                        e.currentTarget.value = '';
+                                                    }}
+                                                />
+                                            </div>
+
                                             <ContactFilesPanel
                                                 contacts={(openedPhones || [])}
                                                 serverFilesByGuid={serverFilesByGuid}
@@ -3486,15 +3618,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                     </button>
                                 </div>
                             )}
-                            {(tuskMode && openedPhones && !hasActiveCall && !isClient) && (
-                                <button
-                                    className="btn btn-outline-success"
-                                    onClick={handleSetTusk}
-                                    style={{width: 250}}
-                                >
-                                    Закрепить за мной
-                                </button>
-                            )}
+                            {/*{(tuskMode && openedPhones && !hasActiveCall && !isClient) && (*/}
+                            {/*    <button*/}
+                            {/*        className="btn btn-outline-success"*/}
+                            {/*        onClick={handleSetTusk}*/}
+                            {/*        style={{width: 250}}*/}
+                            {/*    >*/}
+                            {/*        Закрепить за мной*/}
+                            {/*    </button>*/}
+                            {/*)}*/}
                         </div>
                         {(tuskMode && !isChating && !checkBox) &&
                             <div className="d-flex justify-end mb-3">

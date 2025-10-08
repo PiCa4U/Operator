@@ -709,7 +709,7 @@ export default function ItsmGuidScreen() {
                             height={collapsed.value ? "52px" : "clamp(420px, 65vh, 820px)"}
                             onSend={handleSend}
                             operatorDict={operatorDict}
-                            formatOperatorFn={formatOperator}
+                            // formatOperatorFn={formatOperator}
                             title={`Чат · ${activeGuid ?? ""}`}
                             // subtitle={labelForGuid(activeGuid)}
                             readMap={readMap}

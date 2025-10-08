@@ -51,6 +51,13 @@ function extractActionSteps(act?: { [k: string]: any }): Step[] {
     return steps;
 }
 
+const UI = {
+    font: 14,   // тело таблицы
+    head: 15,   // заголовки столбцов
+    menu: 14,   // выпадающее меню действий
+    icon: 18,   // иконки в колонке "Действия"
+} as const;
+
 type FilterMethod =
     | '='
     | '!='
@@ -265,6 +272,14 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [optionsSearch, setOptionsSearch] = useState<Record<string, string>>({});
 
     const [pageInput, setPageInput] = useState('1');
+    const [openActionsRow, setOpenActionsRow] = useState<string | null>(null);
+
+
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpenActionsRow(null); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, []);
 
     const pageBeforeSearchRef = useRef<number | null>(null);
     const wasSearchingRef = useRef(false);
@@ -301,6 +316,10 @@ const PresetSelectorTable: React.FC<Props> = ({
         return currentOption ? [currentOption, ...otherOptions] : otherOptions;
     }, [monitorUsers, sipLogin]);
 
+    const [openExportMenu, setOpenExportMenu] = useState(false);
+    const [exportSide, setExportSide] = useState<'left' | 'right'>('right'); // куда прижать меню
+    const exportMenuRef = useRef<HTMLDivElement | null>(null);
+
     const [modulesInFlight, setModulesInFlight] = useState(0);
     const modulesCompletedRef = useRef(0);
     const moduleStartTableRef = useRef(false)
@@ -316,22 +335,51 @@ const PresetSelectorTable: React.FC<Props> = ({
     // какой столбец сейчас открыт в попапе
     const [openFilterCol, setOpenFilterCol] = useState<string | null>(null);
 
-// локальные черновики (в попапах)
-//     const [localFilterDraft, setLocalFilterDraft] = useState<Record<string, string>>({});
-//     const [serverFilterDraft, setServerFilterDraft] = useState<Record<string, ServerDraftByCol>>({});
-
-// применённые фильтры (живут между открытиями попапов)
-//     const [appliedLocalFilters, setAppliedLocalFilters] = useState<Record<string, string>>({});
-//     const [appliedServerFilters, setAppliedServerFilters] = useState<Record<string, ServerAppliedByCol>>({});
     const [filterSide, setFilterSide] = useState<'left' | 'right'>('left');
 
     const [guidCounts, setGuidCounts] = useState<Record<string, { unread: number; total: number }>>({});
     const inflightGuidsRef = useRef<Set<string>>(new Set());
 
-    // const glagolParent2 = "fs.at.glagol.ai";
+    const resetAllFiltersToDefaults = useCallback(() => {
+        if (!selectedPreset) return;
 
-    // Показывать только строки, где есть непрочитанные сообщения
-    // const [unreadOnly, setUnreadOnly] = useState(false);
+        const presetId = selectedPreset.preset.id;
+        const structure = (selectedPreset.preset.structure ?? {}) as Record<string, ColumnCfgWithSearch>;
+
+        // соберём appliedServerFilters из defaults (учтёт {today} и макросы пользователя)
+        const defaults = buildAppliedFromDefaults(structure);
+
+        // применяем
+        setAppliedServerFilters(defaults);
+        setAppliedLocalFilters({});             // локальные "в найденном" — очистим
+        setOpenFilterCol(null);
+
+        // сохраняем в LS как актуальные на сегодня
+        try {
+            localStorage.setItem(serverFiltersKey(presetId), JSON.stringify(defaults));
+            localStorage.setItem(serverFiltersDayKey(presetId), toYmd(new Date()));
+            localStorage.setItem(LS_LOCAL_FILTERS_KEY(presetId), JSON.stringify({}));
+        } catch {}
+
+        // перезагрузка с учётом дефолтов
+        const extra = buildExtraFilterByFromMap(defaults);
+        loadGroupedPhones(extra);
+    }, [selectedPreset, setAppliedServerFilters, setAppliedLocalFilters]);
+
+
+    useEffect(() => {
+        const onDocClick = (e: MouseEvent) => {
+            if (!exportMenuRef.current) return;
+            if (!exportMenuRef.current.contains(e.target as Node)) setOpenExportMenu(false);
+        };
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpenExportMenu(false); };
+        document.addEventListener('mousedown', onDocClick);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('mousedown', onDocClick);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, []);
 
 // Активен ли фильтр у конкретной колонки (локальный или серверный)
     const isColumnFiltered = useCallback(
@@ -1422,6 +1470,57 @@ const PresetSelectorTable: React.FC<Props> = ({
         guidCounts
     ]);
 
+    const TOP_HSCROLL_H = 16;
+
+    const topHScrollRef = useRef<HTMLDivElement>(null);
+    const gridScrollRef = useRef<HTMLDivElement>(null);
+    const tableRef      = useRef<HTMLTableElement>(null);
+
+    const [contentWidth, setContentWidth] = useState(0);
+    const [viewportW, setViewportW] = useState(0);
+    const [needsHScroll, setNeedsHScroll] = useState(false);
+    const [scrollLeft, setScrollLeft] = useState(0);
+
+    const isDraggingRef = useRef(false);
+    const dragStartXRef = useRef(0);
+    const dragStartLeftRef = useRef(0);
+
+    const stickyTop = needsHScroll ? TOP_HSCROLL_H : 0;
+
+    useEffect(() => {
+        const update = () => {
+            const contentW  = tableRef.current?.scrollWidth || 0;
+            const viewport  = gridScrollRef.current?.clientWidth || 0;
+            setContentWidth(contentW);
+            setViewportW(viewport);
+            setNeedsHScroll(contentW > viewport + 1);
+        };
+        update();
+
+        let ro1: ResizeObserver | null = null;
+        let ro2: ResizeObserver | null = null;
+
+        if ('ResizeObserver' in window) {
+            if (tableRef.current)  { ro1 = new ResizeObserver(update); ro1.observe(tableRef.current); }
+            if (gridScrollRef.current) { ro2 = new ResizeObserver(update); ro2.observe(gridScrollRef.current); }
+        }
+        window.addEventListener('resize', update);
+        return () => {
+            ro1?.disconnect?.(); ro2?.disconnect?.();
+            window.removeEventListener('resize', update);
+        };
+    }, [selectedPreset?.preset?.id, processedRows.length]);
+
+    const syncScroll = (from: 'top' | 'body') => {
+        if (!gridScrollRef.current) return;
+        if (from === 'body') {
+            setScrollLeft(gridScrollRef.current.scrollLeft);
+        } else {
+            // управление из верхнего бара (перетаскивание/клик)
+            gridScrollRef.current.scrollLeft = scrollLeft;
+        }
+    };
+
     useEffect(() => console.log("processedRows: ", processedRows), [processedRows])
     // 3.3 разбиваем на страницы
     const totalPages = Math.max(1, Math.ceil(processedRows.length / rowsPerPage));
@@ -1945,6 +2044,29 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     type ExportScope = 'all' | 'page' | 'selected';
 
+    const onDrag = (e: MouseEvent) => {
+        if (!isDraggingRef.current || !topHScrollRef.current || !gridScrollRef.current) return;
+        const trackW  = Math.max(0, topHScrollRef.current.clientWidth - 16);
+        const thumbW  = Math.max(24, Math.round((viewportW / contentWidth) * trackW));
+        const maxLeft = Math.max(0, trackW - thumbW);
+        const dx = e.clientX - dragStartXRef.current;
+        const newLeft = Math.max(0, Math.min(dragStartLeftRef.current + dx, maxLeft));
+
+        const maxScroll = Math.max(1, contentWidth - viewportW);
+        const newScrollLeft = (newLeft / maxLeft) * maxScroll || 0;
+
+        gridScrollRef.current.scrollLeft = newScrollLeft;
+        setScrollLeft(newScrollLeft);
+    };
+
+    const onDragEnd = () => {
+        isDraggingRef.current = false;
+        document.removeEventListener('mousemove', onDrag);
+        document.removeEventListener('mouseup', onDragEnd);
+    };
+
+    useEffect(() => () => onDragEnd(), []);
+
     const exportToExcel = (scope: ExportScope = 'all') => {
         if (!selectedPreset) return;
 
@@ -2000,6 +2122,8 @@ const PresetSelectorTable: React.FC<Props> = ({
         const fname = `tasks_${selectedPreset.preset.preset_name}_${y}-${m}-${d}_${hh}-${mm}.xlsx`;
         XLSX.writeFile(wb, fname);
     };
+
+    const hasRows = paginatedRows.length > 0;
 
     const statusLabels: Record<string, string> = {
         to_call: "Необработано",
@@ -2062,6 +2186,14 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 className="form-control"
                             />
                         </div>
+                        <button
+                            onClick={resetAllFiltersToDefaults}
+                            className="btn btn-outline-light text text-dark mx-1 ml-2"
+                            title="Применить значения по умолчанию из search (например, {today})"
+                        >
+                            {/*<span className="material-icons" style={{fontSize: 18, verticalAlign: 'middle'}}>restart_alt</span>*/}
+                            <span className="ml-1">Фильтры: по умолчанию</span>
+                        </button>
 
                         {/* Действие */}
                         <div style={{flex: '0 0 250px'}}>
@@ -2104,29 +2236,71 @@ const PresetSelectorTable: React.FC<Props> = ({
 
                 {selectedPreset && !loading && (
                     <div>
-                        <div style={{flex: '0 0 auto', display: 'flex', gap: 8}}>
+                        <div ref={exportMenuRef} style={{ position: 'relative', display: 'inline-block' }}>
                             <button
-                                onClick={() => exportToExcel('all')}
+                                type="button"
                                 className="btn btn-outline-success"
-                                title="Экспортировать все найденные строки"
+                                onClick={() => setOpenExportMenu(v => !v)}
+                                aria-haspopup="true"
+                                aria-expanded={openExportMenu}
+                                title="Экспортировать данные"
                             >
-                                Экспорт Excel (всё)
+                                Экспорт
+                                <span className="material-icons" style={{ fontSize: 18, marginLeft: 6, verticalAlign: 'middle' }}>
+                                  expand_more
+                                </span>
                             </button>
-                            <button
-                                onClick={() => exportToExcel('page')}
-                                className="btn btn-outline-success"
-                                title="Экспортировать только текущую страницу"
-                            >
-                                Экспорт (страница)
-                            </button>
-                            <button
-                                onClick={() => exportToExcel('selected')}
-                                className="btn btn-outline-success"
-                                title="Экспортировать только выбранные строки"
-                            >
-                                Экспорт (выбранные)
-                            </button>
+
+                            {openExportMenu && (
+                                <div
+                                    className="card"
+                                    role="menu"
+                                    style={{
+                                        position: 'absolute',
+                                        zIndex: 70,
+                                        top: 'calc(100% + 6px)',
+                                        minWidth: 240,
+                                        padding: 8,
+                                        boxShadow: '0 10px 24px rgba(0,0,0,0.15)',
+                                        ...(exportSide === 'left' ? { right: 0 } : { left: 0 }),
+                                    }}
+                                >
+                                    <button
+                                        className="btn btn-link w-100 text-left"
+                                        role="menuitem"
+                                        disabled={processedRows.length === 0}
+                                        onClick={() => { exportToExcel('all'); setOpenExportMenu(false); }}
+                                        title={processedRows.length ? '' : 'Нет данных для экспорта'}
+                                        style={{ fontWeight: 600, fontSize: 16 }}
+                                    >
+                                        Экспорт Excel (всё)
+                                    </button>
+
+                                    <button
+                                        className="btn btn-link w-100 text-left"
+                                        role="menuitem"
+                                        disabled={paginatedRows.length === 0}
+                                        onClick={() => { exportToExcel('page'); setOpenExportMenu(false); }}
+                                        title={paginatedRows.length ? '' : 'На текущей странице нет строк'}
+                                        style={{ fontWeight: 600, fontSize: 16 }}
+                                    >
+                                        Экспорт (страница)
+                                    </button>
+
+                                    <button
+                                        className="btn btn-link w-100 text-left"
+                                        role="menuitem"
+                                        disabled={selectedRows.size === 0}
+                                        onClick={() => { exportToExcel('selected'); setOpenExportMenu(false); }}
+                                        title={selectedRows.size ? '' : 'Не выбрано ни одной строки'}
+                                        style={{ fontWeight: 600, fontSize: 16 }}
+                                    >
+                                        Экспорт (выбранные)
+                                    </button>
+                                </div>
+                            )}
                         </div>
+
                         <div
                             className="d-flex justify-content-between align-items-center mb-2"
                             aria-live="polite"
@@ -2144,13 +2318,138 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 Выбрано: <strong>{selectedRows.size}</strong>
                             </div>
                         </div>
-                        <div style={{height: '70vh', overflowY: 'auto'}}>
+                        <div
+                            style={{
+                                height: '70vh',
+                                // важный момент: вертикальный скролл теперь у gridScrollRef,
+                                // поэтому тут не включаем overflow, чтобы sticky работал как надо
+                                position: 'relative',
+                                display: 'flex',
+                                flexDirection: 'column',
+                            }}
+                        >
+                            {/* ВЕРХНИЙ ПСЕВДО-СКРОЛЛ */}
+                            <div
+                                ref={topHScrollRef}
+                                style={{
+                                    position: 'sticky',
+                                    top: 0,
+                                    zIndex: 16,
+                                    background: '#fff',
+                                    height: needsHScroll ? TOP_HSCROLL_H : 0,
+                                    display: needsHScroll ? 'block' : 'none',
+                                    borderBottom: '1px solid rgba(0,0,0,0.08)',
+                                    userSelect: 'none',
+                                }}
+                                // колесо/трекпад поверх верхней полоски будет крутить низ
+                                onWheel={(e) => {
+                                    if (!gridScrollRef.current) return;
+                                    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+                                    gridScrollRef.current.scrollLeft += d;
+                                    setScrollLeft(gridScrollRef.current.scrollLeft);
+                                    e.preventDefault();
+                                }}
+                            >
+                                {/* Трек */}
+                                <div
+                                    onMouseDown={(e) => {
+                                        if (!topHScrollRef.current) return;
+                                        const track = topHScrollRef.current.getBoundingClientRect();
+                                        const P = 8; // отступы трека
+                                        const trackW = Math.max(0, track.width - P*2);
+                                        const maxScroll = Math.max(1, contentWidth - viewportW);
+
+                                        // центрируем «прыжок» к месту клика
+                                        const clickX = e.clientX - track.left - P;
+                                        const thumbW = Math.max(24, Math.round((viewportW / contentWidth) * trackW));
+                                        const maxLeft = Math.max(0, trackW - thumbW);
+                                        const newLeft = Math.max(0, Math.min(clickX - thumbW / 2, maxLeft));
+                                        const newScrollLeft = (newLeft / maxLeft) * maxScroll || 0;
+                                        gridScrollRef.current!.scrollLeft = newScrollLeft;
+                                        setScrollLeft(newScrollLeft);
+                                    }}
+                                    style={{
+                                        position: 'relative',
+                                        height: 8,
+                                        margin: '4px 8px',
+                                        borderRadius: 4,
+                                        background: 'rgba(0,0,0,0.06)',
+                                        cursor: 'default',
+                                    }}
+                                >
+                                    {/* Ползунок */}
+                                    {(() => {
+                                        const trackW  = Math.max(0, (topHScrollRef.current?.clientWidth || 0) - 16);
+                                        const thumbW  = Math.max(24, Math.round((viewportW / contentWidth) * trackW));
+                                        const maxLeft = Math.max(0, trackW - thumbW);
+                                        const maxScroll = Math.max(1, contentWidth - viewportW);
+                                        const left = Math.round((scrollLeft / maxScroll) * maxLeft);
+
+                                        return (
+                                            <div
+                                                onMouseDown={(e) => {
+                                                    e.stopPropagation();
+                                                    isDraggingRef.current = true;
+                                                    dragStartXRef.current = e.clientX;
+                                                    dragStartLeftRef.current = left;
+                                                    document.addEventListener('mousemove', onDrag);
+                                                    document.addEventListener('mouseup', onDragEnd);
+                                                }}
+                                                style={{
+                                                    position: 'absolute',
+                                                    top: 0,
+                                                    height: 8,
+                                                    left,
+                                                    width: thumbW,
+                                                    borderRadius: 4,
+                                                    background: 'rgba(0,0,0,0.35)',
+                                                    cursor: 'grab',
+                                                }}
+                                            />
+                                        );
+                                    })()}
+                                </div>
+                            </div>
+
+
+                            {/* Основной скроллируемый контейнер: и по X, и по Y */}
+                            <div
+                                ref={gridScrollRef}
+                                onScroll={() => {
+                                    setScrollLeft(gridScrollRef.current!.scrollLeft);
+                                }}
+                                style={{
+                                    /* важно: растягиваемся внутри родителя 70vh */
+                                    flex: '1 1 0%',
+                                    minHeight: 0,              // критично для корректного скролла во flex-контейнерах
+                                    /* по X всегда скроллим, а по Y — только если есть строки */
+                                    overflowX: 'auto',
+                                    overflowY: hasRows ? 'auto' : 'visible',
+                                    /* maxHeight уже не нужен, но можно оставить, если хочешь лимит */
+                                    // maxHeight: `calc(70vh - ${needsHScroll ? TOP_HSCROLL_H : 0}px)`,
+                                    paddingBottom: 8,
+                                }}
+                            >
+
                             {/*<div className="overflow-y-auto" style={{height: "60vh"}}>*/}
-                            <table className="w-100 table-auto border-collapse">
+                                <table
+                                    ref={tableRef}
+                                    className="table-auto border-collapse"
+                                    style={{ width: 'max-content', minWidth: '100%' }}
+                                >
                                 <thead>
                                 <tr>
-                                    <th className="border p-2 text-center">
-                                        <input
+                                    <th
+                                        className="border p-2 text-center"
+                                        style={{
+                                            position: 'sticky',
+                                            top: 0,
+                                            zIndex: 15,
+                                            background: '#fff',
+                                            boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.08)',
+                                        }}
+                                    >
+                                    <input
                                             type="checkbox"
                                             className={styles.customCheckbox}
                                             checked={
@@ -2160,6 +2459,22 @@ const PresetSelectorTable: React.FC<Props> = ({
                                             style={{cursor: "pointer"}}
                                             onChange={toggleSelectAll}
                                         />
+                                    </th>
+                                    <th
+                                        className="border p-2 text-center"
+                                        style={{
+                                            position: 'sticky',
+                                            top: 0,
+                                            zIndex: 15,
+                                            background: '#fff',
+                                            width: 1,
+                                            whiteSpace: 'nowrap',
+                                            boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.08)'
+
+                                        }}
+                                        title="Быстрые действия"
+                                    >
+                                        Действия
                                     </th>
                                     {Object.entries(selectedPreset.preset.structure as Record<string, ColumnCfgWithSearch>)
                                         .sort(([a], [b]) => Number(a) - Number(b))
@@ -2171,7 +2486,14 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                 <th
                                                     key={colKey}
                                                     className="border p-2 select-none"
-                                                    style={{position: 'relative', whiteSpace: 'nowrap'}}
+                                                    style={{
+                                                        position: 'sticky',
+                                                        top: 0,
+                                                        zIndex: 15,
+                                                        background: '#fff',
+                                                        whiteSpace: 'nowrap',
+                                                        boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.08)'
+                                                    }}
                                                     aria-sort={
                                                         sortConfig?.key === colKey
                                                             ? (sortConfig.direction === 'asc' ? 'ascending' : 'descending')
@@ -2571,7 +2893,14 @@ const PresetSelectorTable: React.FC<Props> = ({
                                     <th
                                         className="border p-2"
                                         title="Непрочитанные / Всего"
-                                        style={{position: 'relative', whiteSpace: 'nowrap'}}
+                                        style={{
+                                            position: 'sticky',
+                                            top: 0,
+                                            zIndex: 15,
+                                            background: '#fff',
+                                            whiteSpace: 'nowrap',
+                                            boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.08)'
+                                        }}
                                     >
                                         <span>Сообщения</span>
                                         {unreadOnly && (
@@ -2604,7 +2933,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                         </button>
                                     </th>
 
-                                    <th className="border p-2">Действия</th>
+                                    {/*<th className="border p-2">Действия</th>*/}
                                 </tr>
                                 </thead>
                                 <tbody>
@@ -2623,6 +2952,86 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                 />
                                             </td>
 
+                                            {/* ДЕЙСТВИЯ — компактно, сразу после чекбокса */}
+                                            <td className="border p-2 align-top" style={{position: 'relative', width: 1, whiteSpace: 'nowrap'}}>
+                                                <div style={{display: 'inline-flex', gap: 6}}>
+                                                    {/* Открыть */}
+                                                    <button
+                                                        className="btn btn-sm btn-outline-light text-dark"
+                                                        title="Открыть"
+                                                        onClick={() => setOpenedGroup(row.id_list)}
+                                                    >
+                                                        <span className="material-icons" style={{fontSize: 16, lineHeight: 1}}>open_in_new</span>
+                                                    </button>
+
+                                                    {/* Меню действий */}
+                                                    <button
+                                                        className="btn btn-sm btn-outline-light text-dark"
+                                                        title="Действия"
+                                                        onClick={() => setOpenActionsRow(openActionsRow === key ? null : key)}
+                                                        aria-expanded={openActionsRow === key}
+                                                    >
+                                                        <span className="material-icons" style={{fontSize: 18, lineHeight: 1}}>more_horiz</span>
+                                                    </button>
+                                                </div>
+
+                                                {/* Дропдаун со списком действий */}
+                                                {openActionsRow === key && (
+                                                    <div
+                                                        className="card"
+                                                        style={{
+                                                            position: 'absolute',
+                                                            zIndex: 60,
+                                                            top: 'calc(100% + 6px)',
+                                                            left: 0,
+                                                            minWidth: 220,
+                                                            maxWidth: 340,
+                                                            padding: 8,
+                                                            boxShadow: '0 10px 24px rgba(0,0,0,0.15)'
+                                                        }}
+                                                    >
+                                                        <div style={{fontWeight: 600, fontSize: 16, marginBottom: 6}}>Действия</div>
+
+                                                        {/* Кнопки-элементы меню для всех НЕ-assign действий */}
+                                                        {actionOptions
+                                                            .filter(opt => opt.action?.action_type !== "assign")
+                                                            .map(opt => (
+                                                                <button
+                                                                    key={opt.label}
+                                                                    className="btn btn-sm btn-link w-100 text-left"
+                                                                    onClick={() => {
+                                                                        handleBulkProcess([row], opt, true);
+                                                                        setOpenActionsRow(null);
+                                                                    }}
+                                                                    style={{whiteSpace: 'normal', fontWeight: 600, fontSize: 16}}
+                                                                >
+                                                                    {opt.label}
+                                                                </button>
+                                                            ))}
+
+                                                        {/* Блок «Назначить» — убираем громоздкие инлайновые кнопки из таблицы */}
+                                                        {actionOptions.some(opt => opt.action?.action_type === "assign") && (
+                                                            <div style={{borderTop: '1px solid rgba(0,0,0,0.08)', marginTop: 8, paddingTop: 8}}>
+                                                                <div style={{fontSize: 16, opacity: 0.7, marginBottom: 6}}>Назначить</div>
+                                                                {actionOptions
+                                                                    .filter(opt => opt.action?.action_type === "assign")
+                                                                    .map(opt => (
+                                                                        <div key={'assign-' + opt.value} style={{minWidth: 220}}>
+                                                                            <AssignComp
+                                                                                opt={opt}
+                                                                                row={row}
+                                                                                processRows={(rows, o, operator) => {
+                                                                                    processRows(rows, o, operator);
+                                                                                    setOpenActionsRow(null);
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                    ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </td>
                                             {/* Данные по колонкам */}
                                             {Object.keys(selectedPreset.preset.structure)
                                                 .sort((a, b) => Number(a) - Number(b))
@@ -2683,46 +3092,12 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                     );
                                                 })()}
                                             </td>
-
-                                            {/* Колонка с кнопками действий */}
-                                            <td className="border p-2">
-                                                <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>
-                                                    <button
-                                                        className="btn btn-outline-light text-dark"
-                                                        onClick={() => setOpenedGroup(row.id_list)}
-                                                    >
-                                                        Открыть
-                                                    </button>
-
-
-                                                    {actionOptions.map(opt => {
-                                                        if (opt.action?.action_type === "assign") {
-                                                            return (
-                                                                <AssignComp opt={opt} row={row}
-                                                                            processRows={processRows}/>
-                                                            );
-                                                        }
-
-                                                        return (
-                                                            <button
-                                                                key={opt.label}
-                                                                className="btn btn-outline-light text-dark"
-                                                                onClick={() => handleBulkProcess([row], opt, true)}
-                                                            >
-                                                                {opt.label}
-                                                            </button>
-
-                                                        );
-                                                    })}
-                                                </div>
-                                            </td>
-
                                         </tr>
                                     );
                                 })}
                                 </tbody>
                             </table>
-                            {/*</div>*/}
+                            </div>
                         </div>
                         {/* Пагинация */}
                         <div

@@ -1,8 +1,10 @@
 /* ======= общий список файлов по GUID’ам контактов (всегда открываемый по желанию) ======= */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Swal from "sweetalert2";
 import { chatApi } from "./api";
+import { useSelector } from "react-redux";
+import ReactDOM from "react-dom";
 
 const DOWNLOAD_HOST_CC = "https://my.glagol.ai";
 
@@ -38,9 +40,39 @@ function buildContactDownloadUrl(chatBaseUrl: string, guid: string, filename: st
     return `${DOWNLOAD_HOST_CC}/get_cc_files/${encBase}/${encGuid}/${encFile}`;
 }
 
+/* ===== Превью через fs_server ===== */
+
+function readFilesApiBaseFallback(): string {
+    const el = document.getElementById("root") as HTMLElement | null;
+    let raw = (
+        el?.dataset?.fsServer ||
+        el?.dataset?.filesApiBase ||
+        el?.dataset?.chatApiBase ||
+        ""
+    ).trim();
+
+    if (!raw) return "";
+    if (raw.startsWith("//")) raw = `${window.location.protocol}${raw}`;
+    if (!/^https?:\/\//i.test(raw)) raw = `${window.location.protocol}//${raw}`;
+    return raw.replace(/\/+$/, "");
+}
+
+function trimRightSlashes(s: string) {
+    return s.replace(/\/+$/, "");
+}
+
+/** /api/v1/download/<guid>/<filename> — inline с корректным Content-Type */
+function buildPreviewUrl(filesApiBase: string, guid: string, filename: string) {
+    return `${trimRightSlashes(filesApiBase)}/api/v1/download/${encodeURIComponent(
+        guid
+    )}/${encodeURIComponent(filename)}`;
+}
+
+/* ===== Типы файлов и утилиты ===== */
+
 function fileEmojiByExt(name: string) {
     const ext = (name.split(".").pop() || "").toLowerCase();
-    if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext)) return "🖼️";
+    if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif"].includes(ext)) return "🖼️";
     if (["pdf"].includes(ext)) return "📄";
     if (["doc", "docx", "odt", "rtf"].includes(ext)) return "📝";
     if (["xls", "xlsx", "ods", "csv"].includes(ext)) return "📊";
@@ -50,6 +82,11 @@ function fileEmojiByExt(name: string) {
     if (["mp4", "mov", "avi", "mkv", "webm"].includes(ext)) return "🎞️";
     return "📎";
 }
+
+const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif"];
+const extOf = (n: string) => (n.split(".").pop() || "").toLowerCase();
+const isImage = (n: string) => IMAGE_EXTS.includes(extOf(n));
+const isPdf = (n: string) => extOf(n) === "pdf";
 
 /** GUID строго из строки контакта */
 function getContactGuid(c: any): string | null {
@@ -70,6 +107,151 @@ function normalizeStorage(storage: any): string[] {
         .filter((s: string) => !!s);
 }
 
+/** PDF превью без куков; фолбэк — старое скачивание */
+async function openPdfPreview(urlPreview: string, urlDownload: string) {
+    try {
+        const resp = await fetch(urlPreview, { credentials: "omit" });
+        const ct = (resp.headers.get("content-type") || "").toLowerCase();
+        if (!resp.ok || !ct.includes("application/pdf")) throw new Error(`Bad status ${resp.status}`);
+        const blob = await resp.blob();
+        const blobUrl = URL.createObjectURL(new Blob([blob], { type: "application/pdf" }));
+        window.open(blobUrl, "_blank", "noopener,noreferrer");
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    } catch {
+        window.open(urlDownload, "_blank", "noopener,noreferrer");
+    }
+}
+
+/* ===== Лайтбокс для картинок ===== */
+
+type LightboxItem = { url: string; title?: string };
+
+function Lightbox({
+                      items,
+                      index,
+                      onClose,
+                      onPrev,
+                      onNext,
+                  }: {
+    items: LightboxItem[];
+    index: number;
+    onClose: () => void;
+    onPrev: () => void;
+    onNext: () => void;
+}) {
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") onClose();
+            if (e.key === "ArrowLeft") onPrev();
+            if (e.key === "ArrowRight") onNext();
+        };
+        document.addEventListener("keydown", onKey);
+        document.body.style.overflow = "hidden";
+        return () => {
+            document.removeEventListener("keydown", onKey);
+            document.body.style.overflow = "";
+        };
+    }, [onClose, onPrev, onNext]);
+
+    if (!items.length) return null;
+    const item = items[index];
+
+    const node = (
+        <div
+            aria-modal
+            role="dialog"
+            style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.9)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 9999,
+            }}
+            onClick={onClose}
+        >
+            <img
+                src={item.url}
+                alt={item.title || ""}
+                style={{ maxWidth: "95vw", maxHeight: "95vh", objectFit: "contain" }}
+                onClick={(e) => e.stopPropagation()}
+                onError={() => {
+                    window.open(item.url, "_blank", "noopener,noreferrer");
+                    onClose();
+                }}
+            />
+            <button
+                aria-label="Close"
+                onClick={onClose}
+                style={{
+                    position: "fixed",
+                    top: 16,
+                    right: 16,
+                    border: "none",
+                    background: "rgba(255,255,255,0.15)",
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    cursor: "pointer",
+                    color: "#fff",
+                    fontSize: 14,
+                }}
+            >
+                ✕
+            </button>
+
+            {items.length > 1 && (
+                <>
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onPrev();
+                        }}
+                        style={{
+                            position: "fixed",
+                            left: 16,
+                            top: "50%",
+                            transform: "translateY(-50%)",
+                            border: "none",
+                            background: "rgba(255,255,255,0.15)",
+                            padding: "8px 10px",
+                            borderRadius: 8,
+                            cursor: "pointer",
+                            color: "#fff",
+                        }}
+                    >
+                        ←
+                    </button>
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onNext();
+                        }}
+                        style={{
+                            position: "fixed",
+                            right: 16,
+                            top: "50%",
+                            transform: "translateY(-50%)",
+                            border: "none",
+                            background: "rgba(255,255,255,0.15)",
+                            padding: "8px 10px",
+                            borderRadius: 8,
+                            cursor: "pointer",
+                            color: "#fff",
+                        }}
+                    >
+                        →
+                    </button>
+                </>
+            )}
+        </div>
+    );
+
+    return ReactDOM.createPortal(node, document.body);
+}
+
+/* ===== Основной компонент ===== */
+
 type FlatFile = { guid: string; fname: string };
 
 export function ContactFilesPanel({
@@ -89,6 +271,23 @@ export function ContactFilesPanel({
 
     // host[:port]/chat
     const SOCKET_HOST_CC = readSocketHostForDownloads();
+
+    // fs_server из Redux (покрываем типичные ветки)
+    const fsServerFromRedux = useSelector((state: any) =>
+        state?.common?.fs_server ?? state?.common?.fsServer ??
+        state?.app?.fs_server ?? state?.app?.fsServer ??
+        state?.config?.fs_server ?? state?.config?.fsServer ??
+        state?.settings?.fs_server ?? state?.settings?.fsServer
+    ) as string | undefined;
+
+    const filesApiBase = useMemo(() => {
+        const fromRedux = typeof fsServerFromRedux === "string" ? fsServerFromRedux.trim() : "";
+        const base = fromRedux || readFilesApiBaseFallback();
+        return base ? base.replace(/\/+$/, "") : "";
+    }, [fsServerFromRedux]);
+
+    // Лайтбокс
+    const [lb, setLb] = useState<{ items: LightboxItem[]; index: number } | null>(null);
 
     // пересобираем список файлов
     useEffect(() => {
@@ -112,6 +311,20 @@ export function ContactFilesPanel({
         }
         setFilesFlat(out);
     }, [contacts, serverFilesByGuid]);
+
+    // список картинок для лайтбокса
+    const imageItems = useMemo<LightboxItem[]>(
+        () =>
+            filesFlat
+                .filter((f) => isImage(f.fname))
+                .map((f) => {
+                    const preview = filesApiBase
+                        ? buildPreviewUrl(filesApiBase, f.guid, f.fname)
+                        : buildContactDownloadUrl(SOCKET_HOST_CC, f.guid, f.fname);
+                    return { url: preview, title: f.fname };
+                }),
+        [filesFlat, filesApiBase, SOCKET_HOST_CC]
+    );
 
     // плавная анимация высоты (если не alwaysOpen)
     useEffect(() => {
@@ -239,10 +452,18 @@ export function ContactFilesPanel({
                     }}
                 >
                     {filesFlat.map(({ guid, fname }) => {
-                        const href = buildContactDownloadUrl(SOCKET_HOST_CC, String(guid), fname);
+                        const hrefLegacy = buildContactDownloadUrl(SOCKET_HOST_CC, String(guid), fname);
+                        const urlPreview = filesApiBase
+                            ? buildPreviewUrl(filesApiBase, String(guid), fname)
+                            : hrefLegacy;
+
                         const emoji = fileEmojiByExt(fname);
                         const key = `${guid}::${fname}`;
                         const isBusy = busy.has(key);
+
+                        const img = isImage(fname);
+                        const pdf = isPdf(fname);
+                        const lbIndex = img ? imageItems.findIndex((i) => i.url === urlPreview) : -1;
 
                         return (
                             <div
@@ -260,33 +481,62 @@ export function ContactFilesPanel({
                                 <div style={{ fontSize: 22, lineHeight: 1 }}>{emoji}</div>
 
                                 <div style={{ minWidth: 0, flex: 1 }}>
-                                    <a
-                                        href={href}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        download={fname}
-                                        className="text-decoration-none"
-                                        style={{ color: "inherit" }}
+                                    <div
                                         title={fname}
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            // @ts-ignore
-                                            e.nativeEvent?.stopImmediatePropagation?.();
+                                        style={{
+                                            overflow: "hidden",
+                                            textOverflow: "ellipsis",
+                                            whiteSpace: "nowrap",
+                                            fontWeight: 600,
                                         }}
                                     >
-                                        <div
-                                            style={{
-                                                overflow: "hidden",
-                                                textOverflow: "ellipsis",
-                                                whiteSpace: "nowrap",
-                                                fontWeight: 600,
+                                        {fname}
+                                    </div>
+
+                                    <div className="text-muted" style={{ fontSize: 12, display: "flex", gap: 8, marginTop: 4 }}>
+                                        {img && (
+                                            <button
+                                                type="button"
+                                                className="btn btn-sm btn-outline-secondary"
+                                                onClick={() =>
+                                                    setLb({
+                                                        items: imageItems.length ? imageItems : [{ url: urlPreview, title: fname }],
+                                                        index: lbIndex >= 0 ? lbIndex : 0,
+                                                    })
+                                                }
+                                                title="Просмотр"
+                                            >
+                                                Просмотр
+                                            </button>
+                                        )}
+
+                                        {pdf && (
+                                            <button
+                                                type="button"
+                                                className="btn btn-sm btn-outline-secondary"
+                                                onClick={() => openPdfPreview(urlPreview, hrefLegacy)}
+                                                title="Открыть PDF"
+                                            >
+                                                Открыть
+                                            </button>
+                                        )}
+
+                                        <a
+                                            href={hrefLegacy}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="btn btn-sm btn-outline-light text-dark"
+                                            title="Скачать"
+                                            download={fname}
+                                            style={{ lineHeight: 1, padding: "0.2rem 0.45rem", border: "1px solid #ddd" }}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                // @ts-ignore
+                                                e.nativeEvent?.stopImmediatePropagation?.();
                                             }}
                                         >
-                                            {fname}
-                                        </div>
-                                    </a>
-                                    <div className="text-muted" style={{ fontSize: 12 }}>
-                                        Скачать
+                                            ⬇
+                                        </a>
                                     </div>
                                 </div>
 
@@ -315,6 +565,18 @@ export function ContactFilesPanel({
                     })}
                 </div>
             </div>
+
+            {lb && (
+                <Lightbox
+                    items={lb.items}
+                    index={lb.index}
+                    onClose={() => setLb(null)}
+                    onPrev={() =>
+                        setLb((v) => (v ? { ...v, index: (v.index - 1 + v.items.length) % v.items.length } : v))
+                    }
+                    onNext={() => setLb((v) => (v ? { ...v, index: (v.index + 1) % v.items.length } : v))}
+                />
+            )}
         </div>
     );
 }

@@ -1334,6 +1334,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     case 'operator_id':
                         value = sipLogin;
                         break;
+                    case 'user':
+                        value = worker;
+                        break;
                     case 'call_reason':
                         value = callReasons.find(r => String(r.id) === String(callReason))?.name || '';
                         break;
@@ -1376,7 +1379,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 }
             }
 
-            if (manual && kw.user == null) {
+            if (kw.user == null) {
                 kw.user = String(worker ?? '');
             }
 

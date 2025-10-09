@@ -78,7 +78,7 @@ function buildPreviewUrl(filesApiBase: string, guid: string, filename: string) {
 
 async function openPdfPreview(urlPreview: string, urlDownload: string) {
     try {
-        const resp = await fetch(urlPreview);
+        const resp = await fetch(urlPreview, { credentials: "omit" });
         const ct = (resp.headers.get("content-type") || "").toLowerCase();
         if (!resp.ok || !ct.includes("application/pdf")) {
             throw new Error(`Not a PDF or bad status: ${resp.status}`);
@@ -547,19 +547,11 @@ export default function LocalChat({
 
                                         // список картинок для лайтбокса
                                         const messageImageItems: LightboxItem[] = (m.attachments || [])
-                                            .filter((att) => {
-                                                if (att.file?.type) return att.file.type.startsWith("image/");
-                                                return isImageName(att.name);
-                                            })
-                                            .map((att) => {
-                                                const isLocal = !!att.file && !!att.url;
-                                                const url = isLocal
-                                                    ? att.url!
-                                                    : filesApiBase
-                                                        ? buildPreviewUrl(filesApiBase, guid, att.name)
-                                                        : buildDownloadUrl(SOCKET_HOST, guid, att.name);
-                                                return { url, title: att.name };
-                                            });
+                                            .filter((att) => (att.file?.type ? att.file.type.startsWith("image/") : isImageName(att.name)))
+                                            .map((att) => ({
+                                                url: (!!att.file && !!att.url) ? att.url! : buildDownloadUrl(SOCKET_HOST, guid, att.name),
+                                                title: att.name,
+                                            }));
 
                                         return (
                                             <div key={m.id}>
@@ -598,15 +590,9 @@ export default function LocalChat({
                                                                             const isLocal = !!a.file && !!a.url;
 
                                                                             // URL для ПРОСМОТРА (через fs_server) и для СТАРОГО СКАЧИВАНИЯ
-                                                                            const urlPreview = isLocal
-                                                                                ? a.url!
-                                                                                : filesApiBase
-                                                                                    ? buildPreviewUrl(filesApiBase, guid, a.name)
-                                                                                    : buildDownloadUrl(SOCKET_HOST, guid, a.name);
-
-                                                                            const urlDownload = isLocal
-                                                                                ? a.url!
-                                                                                : buildDownloadUrl(SOCKET_HOST, guid, a.name);
+                                                                            const baseUrl = isLocal ? a.url! : buildDownloadUrl(SOCKET_HOST, guid, a.name);
+                                                                            const urlPreview  = baseUrl;
+                                                                            const urlDownload = baseUrl;
 
                                                                             // тип
                                                                             const isImg = isLocal

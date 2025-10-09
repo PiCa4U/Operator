@@ -93,7 +93,9 @@ const GroupActionModal: React.FC<Props> = ({
     const { sipLogin = '', worker = '' } = store.getState().credentials;
     const [rawRows, setRawRows] = useState<RawRow[]>([]);
     const [loading, setLoading] = useState(false);
+    const idsUniq = useMemo(() => Array.from(new Set(ids || [])), [ids]);
 
+    console.log("ids123: ", ids)
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
     const [selectedFilters, setSelectedFilters] = useState<{
         group1: Set<string>,
@@ -335,29 +337,59 @@ const GroupActionModal: React.FC<Props> = ({
     };
 
 
+// ЗАМЕНИ вот этот useEffect (который делает axios.post к /api/v1/get_grouped_phones) на этот:
     useEffect(() => {
         if (!isOpen) return;
+
+        // если id нет — ничего не грузим
+        if (!idsUniq.length) {
+            setRawRows([]);
+            setSelectedIds(new Set());
+            setSelectedFilters({
+                group1: new Set(),
+                group2: new Set(),
+                group3: new Set(),
+                status: new Set(),
+            });
+            return;
+        }
+
         setLoading(true);
         (async () => {
             try {
                 type Nested = Record<string, Record<string, Record<string, RawRow[]>>>;
+
+                // собираем фильтры запроса: проект + ИДшники
+                const filterBy: Record<string, any> = {
+                    id: ['IN', idsUniq], // <-- ключ "id" соответствует RawRow.id
+                };
+                if (projectNames.length) {
+                    filterBy.project = ['IN', projectNames];
+                }
+
                 const response = await axios.post<Nested>('/api/v1/get_grouped_phones', {
                     glagol_parent: glagolParent,
                     group_by: preset?.group_by,
-                    filter_by: { project: ['IN', projectNames], },
                     group_table: preset?.group_table,
                     role,
+                    filter_by: filterBy,
                 });
+
                 const raw = response.data;
                 const allRows: RawRow[] = flattenRows(raw);
-                const filtered = allRows.filter(r => ids.includes(r.id));
-                setRawRows(filtered);
+
+                // уже отфильтровано на бэке — просто кладём
+                setRawRows(allRows);
+
+                // проставим чекбоксы
                 setSelectedIds(() => {
-                    if (phoneID && filtered.some(r => r.id === phoneID)) {
+                    if (phoneID && allRows.some(r => r.id === phoneID)) {
                         return new Set([phoneID]);
                     }
-                    return new Set(filtered.map(r => r.id));
+                    return new Set(allRows.map(r => r.id));
                 });
+
+                // сбросим локальные фильтры модалки
                 setSelectedFilters({
                     group1: new Set(),
                     group2: new Set(),
@@ -370,8 +402,8 @@ const GroupActionModal: React.FC<Props> = ({
                 setLoading(false);
             }
         })();
-    }, [isOpen, preset, role, ids, glagolParent]);
-
+        // добавил projectNames и idsUniq в зависимости
+    }, [isOpen, preset, role, glagolParent, projectNames, idsUniq, phoneID]);
 
     if (!isOpen) return null;
     if (loading) return <div className={stylesModal.modal}><div className={stylesModal.modalContent}>Загрузка...</div></div>;

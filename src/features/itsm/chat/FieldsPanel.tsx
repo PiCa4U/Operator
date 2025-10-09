@@ -314,18 +314,14 @@ export function ContactFilesPanel({
 
     // список картинок для лайтбокса
     const imageItems = useMemo<LightboxItem[]>(
-        () =>
-            filesFlat
-                .filter((f) => isImage(f.fname))
-                .map((f) => {
-                    const preview = filesApiBase
-                        ? buildPreviewUrl(filesApiBase, f.guid, f.fname)
-                        : buildContactDownloadUrl(SOCKET_HOST_CC, f.guid, f.fname);
-                    return { url: preview, title: f.fname };
-                }),
-        [filesFlat, filesApiBase, SOCKET_HOST_CC]
-    );
-
+           () => filesFlat
+         .filter((f) => isImage(f.fname))
+         .map((f) => ({
+               url: buildContactDownloadUrl(SOCKET_HOST_CC, f.guid, f.fname),
+               title: f.fname,
+             })),
+       [filesFlat, SOCKET_HOST_CC]
+     );
     // плавная анимация высоты (если не alwaysOpen)
     useEffect(() => {
         if (alwaysOpen) return;
@@ -453,9 +449,7 @@ export function ContactFilesPanel({
                 >
                     {filesFlat.map(({ guid, fname }) => {
                         const hrefLegacy = buildContactDownloadUrl(SOCKET_HOST_CC, String(guid), fname);
-                        const urlPreview = filesApiBase
-                            ? buildPreviewUrl(filesApiBase, String(guid), fname)
-                            : hrefLegacy;
+                        const urlPreview = buildContactDownloadUrl(SOCKET_HOST_CC, guid, fname);
 
                         const emoji = fileEmojiByExt(fname);
                         const key = `${guid}::${fname}`;

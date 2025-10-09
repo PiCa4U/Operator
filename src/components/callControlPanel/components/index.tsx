@@ -159,7 +159,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                     {/* пункт 4 — см. ниже про разделители строк */}
                                     {currentValue.split(/\r?\n/).map((line, idx) => (
                                         <div key={idx} style={{ padding: '6px 0' }}>
-                                            {idx > 0 && <div style={{ borderTop: '1px solid #e5e7eb', marginBottom: 6 }} />}
+                                            {idx > 0 && <div style={{ borderTop: '1px solid #9ca3af', marginBottom: 6 }} />}
                                             <div style={{ lineHeight: 1.35 }}>{linkifyParts(line || '\u00a0')}</div>
                                         </div>
                                     ))}

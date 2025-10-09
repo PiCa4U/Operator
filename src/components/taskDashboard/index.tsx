@@ -23,6 +23,17 @@ import {selectTableFilters, TableFilters, tasksTableActions} from "../../redux/t
 
 type Step = { type: string; code_filename?: string };
 
+const COL_W_DEFAULT = 240; // дефолт для всех данных
+const COL_W: Record<string, number> = {
+    '#select': 44,     // чекбокс
+    '#actions': 76,    // быстрые действия
+    '#messages': 150 ,  // колонка "Сообщения"
+    // при желании можно задать точечно по ключам из preset.structure:
+    // '1': 180,
+    // '2': 220,
+};
+const getColW = (key: string) => COL_W[key] ?? COL_W_DEFAULT;
+
 function extractActionSteps(act?: { [k: string]: any }): Step[] {
     const steps: Step[] = [];
     if (!act) return steps;
@@ -2195,47 +2206,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                             <span className="ml-1">Фильтры: по умолчанию</span>
                         </button>
 
-                        {/* Действие */}
-                        <div style={{flex: '0 0 250px'}}>
-                            <SearchableSelect
-                                value={selectedActionOption ? selectedActionOption.value : ''}
-                                onChange={(val: string) => {
-                                    const found = actionOptions.find(opt => opt.value === val) ?? null;
-                                    setSelectedActionOption(found);
-                                }}
-                                isSearchable={false}
-                                options={actionOptions.map(a => ({ id: a.value, name: a.label }))}
-                                placeholder="Выберите действие..."
-                            />
-                        </div>
-
-                        {/* AssignComp или кнопка */}
-                        {selectedActionOption?.action.action_type === "assign" ? (
-                            <div style={{flex: '0 0 auto', minWidth: 400, maxWidth: '100%', overflow: 'hidden'}}>
-                                <AssignComp opt={selectedActionOption} rows={selectedRows} processRows={processRows} />
-                            </div>
-                        ) : (
-                            <div style={{flex: '0 0 auto'}}>
-                                <button
-                                    onClick={() => {
-                                        const keys = Array.from(selectedRows);
-                                        const rows = processedRows.filter(r => keys.includes(r.id_list.join(',')));
-                                        handleBulkProcess(rows);
-                                    }}
-                                    className="btn btn-outline-light text text-dark mx-1 ml-2"
-                                >
-                                    Обработать
-                                </button>
-                            </div>
-                        )}
-                    </div>
-
-                </div>
-
-                {loading && <div>Загрузка данных...</div>}
-
-                {selectedPreset && !loading && (
-                    <div>
                         <div ref={exportMenuRef} style={{ position: 'relative', display: 'inline-block' }}>
                             <button
                                 type="button"
@@ -2301,6 +2271,47 @@ const PresetSelectorTable: React.FC<Props> = ({
                             )}
                         </div>
 
+                        {/* Действие */}
+                        <div style={{flex: '0 0 250px'}}>
+                            <SearchableSelect
+                                value={selectedActionOption ? selectedActionOption.value : ''}
+                                onChange={(val: string) => {
+                                    const found = actionOptions.find(opt => opt.value === val) ?? null;
+                                    setSelectedActionOption(found);
+                                }}
+                                isSearchable={false}
+                                options={actionOptions.map(a => ({ id: a.value, name: a.label }))}
+                                placeholder="Выберите действие..."
+                            />
+                        </div>
+
+                        {/* AssignComp или кнопка */}
+                        {selectedActionOption?.action.action_type === "assign" ? (
+                            <div style={{flex: '0 0 auto', minWidth: 400, maxWidth: '100%', overflow: 'hidden'}}>
+                                <AssignComp opt={selectedActionOption} rows={selectedRows} processRows={processRows} />
+                            </div>
+                        ) : (
+                            <div style={{flex: '0 0 auto'}}>
+                                <button
+                                    onClick={() => {
+                                        const keys = Array.from(selectedRows);
+                                        const rows = processedRows.filter(r => keys.includes(r.id_list.join(',')));
+                                        handleBulkProcess(rows);
+                                    }}
+                                    className="btn btn-outline-light text text-dark mx-1 ml-2"
+                                >
+                                    Обработать
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                </div>
+
+                {loading && <div>Загрузка данных...</div>}
+
+                {selectedPreset && !loading && (
+                    <div>
                         <div
                             className="d-flex justify-content-between align-items-center mb-2"
                             aria-live="polite"
@@ -2411,8 +2422,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 </div>
                             </div>
 
-
-                            {/* Основной скроллируемый контейнер: и по X, и по Y */}
                             <div
                                 ref={gridScrollRef}
                                 onScroll={() => {
@@ -2447,6 +2456,8 @@ const PresetSelectorTable: React.FC<Props> = ({
                                             zIndex: 15,
                                             background: '#fff',
                                             boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.08)',
+                                            width: getColW('#select'),
+                                            maxWidth: getColW('#select'),
                                         }}
                                     >
                                     <input
@@ -2476,6 +2487,50 @@ const PresetSelectorTable: React.FC<Props> = ({
                                     >
                                         Действия
                                     </th>
+                                    <th
+                                        className="border p-2"
+                                        title="Непрочитанные / Всего"
+                                        style={{
+                                            position: 'sticky',
+                                            top: 0,
+                                            zIndex: 15,
+                                            background: '#fff',
+                                            width: getColW('#messages'),
+                                            maxWidth: getColW('#messages'),
+                                            whiteSpace: 'nowrap',
+                                            boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.08)'
+                                        }}
+                                    >
+                                        <span>Сообщения</span>
+                                        {unreadOnly && (
+                                            <span
+                                                style={{
+                                                    display: 'inline-block',
+                                                    width: 6,
+                                                    height: 6,
+                                                    borderRadius: 3,
+                                                    background: '#1976d2',
+                                                    marginLeft: 6,
+                                                    verticalAlign: 'middle',
+                                                }}
+                                            />
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() => setUnreadOnly(v => !v)}
+                                            className="btn btn-sm btn-link"
+                                            aria-pressed={unreadOnly}
+                                            title={unreadOnly ? 'Показать все строки' : 'Только строки с непрочитанными'}
+                                            style={{
+                                                marginLeft: 6,
+                                                padding: 0,
+                                                verticalAlign: 'middle',
+                                                color: unreadOnly ? '#1976d2' : undefined,
+                                            }}
+                                        >
+                                            <span className="material-icons" style={{fontSize: 18}}>filter_list</span>
+                                        </button>
+                                    </th>
                                     {Object.entries(selectedPreset.preset.structure as Record<string, ColumnCfgWithSearch>)
                                         .sort(([a], [b]) => Number(a) - Number(b))
                                         .map(([colKey, cfg]) => {
@@ -2491,7 +2546,9 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                         top: 0,
                                                         zIndex: 15,
                                                         background: '#fff',
-                                                        whiteSpace: 'nowrap',
+                                                        width: getColW(colKey),          // <-- фикс
+                                                        maxWidth: getColW(colKey),
+                                                        whiteSpace: 'nowrap',            // заголовок пусть остаётся в одну строку
                                                         boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.08)'
                                                     }}
                                                     aria-sort={
@@ -2890,48 +2947,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                 </th>
                                             );
                                         })}
-                                    <th
-                                        className="border p-2"
-                                        title="Непрочитанные / Всего"
-                                        style={{
-                                            position: 'sticky',
-                                            top: 0,
-                                            zIndex: 15,
-                                            background: '#fff',
-                                            whiteSpace: 'nowrap',
-                                            boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.08)'
-                                        }}
-                                    >
-                                        <span>Сообщения</span>
-                                        {unreadOnly && (
-                                            <span
-                                                style={{
-                                                    display: 'inline-block',
-                                                    width: 6,
-                                                    height: 6,
-                                                    borderRadius: 3,
-                                                    background: '#1976d2',
-                                                    marginLeft: 6,
-                                                    verticalAlign: 'middle',
-                                                }}
-                                            />
-                                        )}
-                                        <button
-                                            type="button"
-                                            onClick={() => setUnreadOnly(v => !v)}
-                                            className="btn btn-sm btn-link"
-                                            aria-pressed={unreadOnly}
-                                            title={unreadOnly ? 'Показать все строки' : 'Только строки с непрочитанными'}
-                                            style={{
-                                                marginLeft: 6,
-                                                padding: 0,
-                                                verticalAlign: 'middle',
-                                                color: unreadOnly ? '#1976d2' : undefined,
-                                            }}
-                                        >
-                                            <span className="material-icons" style={{fontSize: 18}}>filter_list</span>
-                                        </button>
-                                    </th>
+
 
                                     {/*<th className="border p-2">Действия</th>*/}
                                 </tr>
@@ -3032,35 +3048,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                     </div>
                                                 )}
                                             </td>
-                                            {/* Данные по колонкам */}
-                                            {Object.keys(selectedPreset.preset.structure)
-                                                .sort((a, b) => Number(a) - Number(b))
-                                                .map(colKey => {
-                                                    // Попытка безопасно достать ячейку
-                                                    const maybeCell = row[colKey] as ColumnCell | undefined;
-                                                    const def = selectedPreset.preset.structure[colKey].default;
-
-                                                    // Если ячейка или её value отсутствует — рендерим default
-                                                    if (!maybeCell || !Array.isArray(maybeCell.value)) {
-                                                        return (
-                                                            <td key={colKey} className="border p-2 align-top">
-                                                                {def}
-                                                            </td>
-                                                        );
-                                                    }
-
-                                                    // Иначе — отобразим все элементы массива или default, если он пуст
-                                                    return (
-                                                        <td key={colKey} className="border p-2 align-top">
-                                                            {maybeCell.value.length > 0
-                                                                ? maybeCell.value.map((item, idx) => (
-                                                                    <div key={idx}>{item}</div>
-                                                                ))
-                                                                : def
-                                                            }
-                                                        </td>
-                                                    );
-                                                })}
                                             <td className="border p-2 align-top">
                                                 {(() => {
                                                     const guids = getGuidsForRow(row);
@@ -3092,6 +3079,36 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                     );
                                                 })()}
                                             </td>
+                                            {/* Данные по колонкам */}
+                                            {Object.keys(selectedPreset.preset.structure)
+                                                .sort((a, b) => Number(a) - Number(b))
+                                                .map(colKey => {
+                                                    // Попытка безопасно достать ячейку
+                                                    const maybeCell = row[colKey] as ColumnCell | undefined;
+                                                    const def = selectedPreset.preset.structure[colKey].default;
+
+                                                    // Если ячейка или её value отсутствует — рендерим default
+                                                    if (!maybeCell || !Array.isArray(maybeCell.value)) {
+                                                        return (
+                                                            <td key={colKey} className="border p-2 align-top" style={{width: 30}}>
+                                                                {def}
+                                                            </td>
+                                                        );
+                                                    }
+
+                                                    // Иначе — отобразим все элементы массива или default, если он пуст
+                                                    return (
+                                                        <td key={colKey} className="border p-2 align-top" style={{width: 30}}>
+                                                            {maybeCell.value.length > 0
+                                                                ? maybeCell.value.map((item, idx) => (
+                                                                    <div key={idx}>{item}</div>
+                                                                ))
+                                                                : def
+                                                            }
+                                                        </td>
+                                                    );
+                                                })}
+
                                         </tr>
                                     );
                                 })}

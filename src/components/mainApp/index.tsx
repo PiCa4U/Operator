@@ -51,6 +51,69 @@ function mapRow(r: RawChatMessage): UiMessage {
     };
 }
 
+// === makeCardUrl: собрать ссылку на текущую карточку ===
+// matchedPreset: объект твоего выбранного пресета (OptionType | null), у него есть .preset.group_by и .preset.group_table
+function makeCardUrl(openedPhones: any[], matchedPreset: OptionType | null) {
+    const u = new URL(window.location.href);
+    u.searchParams.set("card", "1");
+
+    // ids выбранных телефонов
+    const ids = (openedPhones ?? [])
+        .map((p: any) => p?.id)
+        .filter((id: any) => Number.isFinite(id));
+    if (ids.length) u.searchParams.set("ids", ids.join(","));
+
+    // Параметры группировки из пресета
+    const gb = matchedPreset?.preset?.group_by ?? [];
+    const gt = matchedPreset?.preset?.group_table ?? "";
+    if (Array.isArray(gb) && gb.length) u.searchParams.set("gb", gb.join(","));
+    if (gt) u.searchParams.set("gt", gt);
+
+    // (опционально) если есть guid — поможет сразу поднять чат
+    const firstGuid = (openedPhones ?? []).find((p: any) => p?.guid)?.guid;
+    if (firstGuid) u.searchParams.set("guid", String(firstGuid));
+
+    // (опционально) пометить, что это карточка из задачного режима
+    u.searchParams.set("tusk", "1");
+
+    return u.toString();
+}
+
+// === fetchGroupPhonesByIdsUsingPreset: забрать телефоны через get_grouped_phones по ids + gb/gt ===
+// Требуется, чтобы бэкенд поддерживал фильтр ids в get_grouped_phones
+async function fetchGroupPhonesByIdsUsingPreset(
+    ids: number[],
+    group_table: string,
+    group_by: string[]
+) {
+    const { glagolParent } = store.getState().credentials;
+
+    const params: any = {
+        glagol_parent: glagolParent,
+        page: 1,
+        limit: Math.max(ids.length, 50), // можно подстраховаться
+        group_table,
+        group_by: group_by.join(","),
+
+        // NEW: сервер должен уметь распознать этот фильтр
+        ids: ids.join(","),
+    };
+
+    const { data } = await axios.get("/api/v1/get_grouped_phones", { params });
+
+    const rows = Array.isArray(data?.data) ? data.data : [];
+
+    // Нужный минимум структуры под твою карточку
+    return rows.map((r: any, i: number) => ({
+        id: r?.id ?? r?.phone_id ?? i + 1,
+        phone: r?.phone ?? r?.contact_info?.phone ?? "",
+        project: r?.project ?? r?.contact_info?.project ?? r?.project_name ?? "",
+        contact_info: r?.contact_info ?? {},
+        guid: r?.guid ?? r?.contact_info?.guid ?? null,
+        storage: Array.isArray(r?.storage) ? r.storage : [],
+    }));
+}
+
 function sortMessages(a: UiMessage, b: UiMessage) {
     const ta = Date.parse(a.created_at);
     const tb = Date.parse(b.created_at);
@@ -127,7 +190,14 @@ function buildGroupByFilter(
     return filter;
 }
 
-const MainApp: React.FC = () => {
+export type MainAppProps = {
+    isOwner: boolean;
+};
+
+const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
+    const {enabled, incoming, clearIncoming, remoteAudioRef, localAudioRef, answerCall, hangUp } = useSip();
+    const dispatch = useDispatch();
+
     const [selectedCall, setSelectedCall] = useState<CallData | null>(null);
     const [showScriptPanel, setShowScriptPanel] = useState<boolean>(false);
     const [activeCall, setActiveCall] = useState<boolean>(false);
@@ -442,6 +512,73 @@ const MainApp: React.FC = () => {
         }
     });
 
+    // === hydrate openedPhones из URL при первом рендере ===
+    useEffect(() => {
+        const sp = new URLSearchParams(window.location.search);
+        if (sp.get("card") !== "1") return;
+
+        const idsCsv = sp.get("ids");
+        const gbCsv  = sp.get("gb");
+        const gt     = sp.get("gt");
+        const guid   = sp.get("guid");
+        const tusk   = sp.get("tusk") === "1";
+
+        // Показать панель задач/режим карточки, если нужно
+        setShowTasksDashboard(true);
+        // Если у тебя есть отдельный флаг tuskMode — включи:
+        // setTuskMode?.(tusk);
+
+        (async () => {
+            // 1) идеальный путь: ids + gb + gt → восстановим ровно ту же выборку
+            if (idsCsv && gbCsv && gt) {
+                const ids = idsCsv.split(",").map(n => +n).filter(Boolean);
+                const group_by = gbCsv.split(",").filter(Boolean);
+                try {
+                    const rows = await fetchGroupPhonesByIdsUsingPreset(ids, gt, group_by);
+                    setOpenedPhones(rows);
+
+                    // если есть guid в ответе или в ссылке — активируем чат
+                    const g = rows.find((r: any) => r.guid)?.guid || guid;
+                    if (g) setActiveGuid(String(g));
+                } catch (e) {
+                    console.warn("fetchGroupPhonesByIdsUsingPreset failed", e);
+                }
+                return;
+            }
+
+            // 2) запасной вариант: только guid → поднимем контакты для карточки/чата
+            if (guid) {
+                try {
+                    const { data } = await chatApi.get(`/api/v1/contacts/${encodeURIComponent(guid)}`);
+                    const contacts = Array.isArray(data?.data) ? data.data : [];
+                    const rows = contacts.map((c: any, i: number) => ({
+                        id: c.id ?? -(i + 1),
+                        phone: c?.phone ?? c?.contact_info?.phone ?? "",
+                        project: c?.project ?? c?.contact_info?.project ?? "",
+                        contact_info: c?.contact_info ?? {},
+                        guid: String(guid),
+                        storage: Array.isArray(c?.storage) ? c.storage : [],
+                    }));
+                    setOpenedPhones(rows);
+                    setActiveGuid(String(guid));
+                } catch (e) {
+                    console.warn("fetch by guid failed", e);
+                }
+                return;
+            }
+
+            // 3) если ничего нет — просто выходим (ничего не открываем)
+        })();
+    }, []);
+
+    useEffect(() => {
+        if (!isOwner || !enabled) {
+            // Старая вкладка перестала быть «звонковой» — гасим локальный UI и стор
+            dispatch(setActiveCalls([]));
+            setPostActive(false);
+        }
+    }, [isOwner, enabled, dispatch]);
+
     useEffect(() => {
         if (!connected || !messages.length) return;
 
@@ -614,12 +751,12 @@ const MainApp: React.FC = () => {
         window.location.href = "https://my.glagol.ai/login_work/";
     };
 
-    useEffect(() => {
-        socket.on('logout', handleLogout);
-        return () => {
-            socket.off('logout', handleLogout);
-        };
-    }, []);
+    // useEffect(() => {
+    //     socket.on('logout', handleLogout);
+    //     return () => {
+    //         socket.off('logout', handleLogout);
+    //     };
+    // }, []);
 
     useEffect(() => {
         const now = new Date().toISOString();
@@ -867,7 +1004,6 @@ const MainApp: React.FC = () => {
         } catch {}
     }, [fullWidthCard]);
 
-    const dispatch = useDispatch();
 
     useEffect(() => {
         // TODO fix check_express
@@ -943,6 +1079,7 @@ const MainApp: React.FC = () => {
                 })
             }
             // setOutboundCall(false);
+            if (!isOwner || !enabled) return;
             setPostActive(true);
         }
     }, [activeCall, activeCalls]);
@@ -1144,13 +1281,8 @@ const MainApp: React.FC = () => {
                 });
 
                 const projectIdData = response2.data;
-                console.log("OUT1121projectIdData:", projectIdData);
-
                 const allGroups = extractPhoneGroups(projectIdData);
-                console.log("OUT1121allGroups:", allGroups);
-
                 const flatPhones = allGroups.flat();
-                console.log("OUT1121flatPhones:", flatPhones);
 
                 if (!phoneID) return;
 
@@ -1165,10 +1297,8 @@ const MainApp: React.FC = () => {
                     const matchedGroupIDs = Array.from(
                         new Set(matchedGroups.flat().map(item => item.id))
                     );
-                    console.log("OUTmatchedGroup:", matchedGroupIDs);
 
                     const openedPhones = matchedGroups.flat();
-                    console.log("OUTopenedPhones:", openedPhones);
 
                     const groupIDs = allGroups.map(group => group.map(item => item.id));
 
@@ -1191,8 +1321,14 @@ const MainApp: React.FC = () => {
     }, [selectedCall, phoneID, presets, projectPool, worker, projectPoolForCall, role]);
 
     useEffect(() => {
+        // колбэки объявляем внутри эффекта, чтобы off() снял ровно их же
         const handleFsStatus = (msg: any) => {
+            // общая часть может обновлять состояние статуса
             dispatch(setFsStatus(msg));
+
+            // всё «послезвонковое» только у владельца
+            if (!isOwner || !enabled) return;
+
             if (msg.status === "Available (On Demand)" && msg.state === "Idle") {
                 setPostActive(true);
             } else if (msg.status === "Available (On Demand)" && msg.state !== "Idle") {
@@ -1201,25 +1337,35 @@ const MainApp: React.FC = () => {
         };
 
         const handleFsCalls = (msg: any) => {
+            if (!isOwner || !enabled) return;
             const callsArray: any[] = Object.values(msg);
             dispatch(setActiveCalls(callsArray));
         };
 
         const handleOtherUsers = (msg:any) => {
-            dispatch(setUserStatuses(msg))
+            dispatch(setUserStatuses(msg));
+        };
+
+        // если вкладка не владелец — гарантированно снимаем прошлые подписки и выходим
+        if (!isOwner || !enabled) {
+            socket.off('fs_status', handleFsStatus);
+            socket.off('fs_calls', handleFsCalls);
+            socket.off('other_users', handleOtherUsers);
+            return;
         }
 
+        // владелец — подписываемся
         socket.on('fs_status', handleFsStatus);
         socket.on('fs_calls', handleFsCalls);
-        socket.on("other_users", handleOtherUsers)
+        socket.on('other_users', handleOtherUsers);
 
+        // аккуратная отписка при любом изменении deps/размонтировании
         return () => {
             socket.off('fs_status', handleFsStatus);
             socket.off('fs_calls', handleFsCalls);
-            socket.off("other_users", handleOtherUsers)
-
+            socket.off('other_users', handleOtherUsers);
         };
-    }, [dispatch]);
+    }, [dispatch, isOwner, enabled]);
 
     useEffect(() => console.log("outActivePhone: ",outActivePhone),[outActivePhone])
     useEffect(() => {
@@ -1249,7 +1395,6 @@ const MainApp: React.FC = () => {
         return found ? found.glagol_name : projectName;
     }
 
-    const {enabled, incoming, clearIncoming, remoteAudioRef, localAudioRef, answerCall, hangUp } = useSip();
     const onAccept = () => {
         if (!incoming) return;
         answerCall().then(() => {
@@ -1499,47 +1644,47 @@ const MainApp: React.FC = () => {
                                 }}
                             >
                                 {(openedPhones.length > 0 || activeCall || postActive) && (
-                                    <CallControlPanel
-                                        call={selectedCall}
-                                        hasActiveCall={activeCall}
-                                        activeProject={scriptProject}
-                                        onClose={() => setSelectedCall(null)}
-                                        postActive={postActive}
-                                        setPostActive={setPostActive}
-                                        currentPage={currentPage}
-                                        outActivePhone={outActivePhone}
-                                        outActiveProjectName={outActiveProjectName}
-                                        assignedKey={assignedKey}
-                                        isLoading={isLoading}
-                                        setSelectedCall={setSelectedCall}
-                                        setIsLoading={setIsLoading}
-                                        specialKey={specialKey}
-                                        setModules={setModules}
-                                        modules={modules}
-                                        prefix={prefix}
-                                        outboundCall={outboundCall}
-                                        tuskMode={showTasksDashboard}
-                                        setTuskMode={setShowTasksDashboard}
-                                        fullWidthCard={fullWidthCard}
-                                        setFullWidthCard={setFullWidthCard}
-                                        openedPhones={openedPhones}
-                                        setOpenedPhones={setOpenedPhones}
-                                        monoModules={monoModules}
-                                        setMonoModules={setMonoModules}
-                                        setActiveProjectName={setActiveProjectName}
-                                        selectedPreset={selectedPreset}
-                                        postCallData={postCallData}
-                                        setPostCallData={setPostCallData}
-                                        role={role}
-                                        setOpenedGroup={setOpenedGroup}
-                                        setPhonesData={setPhonesData}
-                                        momoProjectRepo={momoProjectRepo}
-                                        startModulesRanRef={startModulesRanRef}
-                                        expressCall={expressCall}
-                                        phoneID={phoneID}
-                                        setPhoneID={setPhoneID}
-                                        checkBox={activeGuid}
-                                    />
+                                        <CallControlPanel
+                                            call={selectedCall}
+                                            hasActiveCall={activeCall}
+                                            activeProject={scriptProject}
+                                            onClose={() => setSelectedCall(null)}
+                                            postActive={postActive}
+                                            setPostActive={setPostActive}
+                                            currentPage={currentPage}
+                                            outActivePhone={outActivePhone}
+                                            outActiveProjectName={outActiveProjectName}
+                                            assignedKey={assignedKey}
+                                            isLoading={isLoading}
+                                            setSelectedCall={setSelectedCall}
+                                            setIsLoading={setIsLoading}
+                                            specialKey={specialKey}
+                                            setModules={setModules}
+                                            modules={modules}
+                                            prefix={prefix}
+                                            outboundCall={outboundCall}
+                                            tuskMode={showTasksDashboard}
+                                            setTuskMode={setShowTasksDashboard}
+                                            fullWidthCard={fullWidthCard}
+                                            setFullWidthCard={setFullWidthCard}
+                                            openedPhones={openedPhones}
+                                            setOpenedPhones={setOpenedPhones}
+                                            monoModules={monoModules}
+                                            setMonoModules={setMonoModules}
+                                            setActiveProjectName={setActiveProjectName}
+                                            selectedPreset={selectedPreset}
+                                            postCallData={postCallData}
+                                            setPostCallData={setPostCallData}
+                                            role={role}
+                                            setOpenedGroup={setOpenedGroup}
+                                            setPhonesData={setPhonesData}
+                                            momoProjectRepo={momoProjectRepo}
+                                            startModulesRanRef={startModulesRanRef}
+                                            expressCall={expressCall}
+                                            phoneID={phoneID}
+                                            setPhoneID={setPhoneID}
+                                            checkBox={activeGuid}
+                                        />
                                 )}
                             </div>
                         </div>

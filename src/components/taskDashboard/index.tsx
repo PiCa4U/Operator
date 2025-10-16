@@ -34,6 +34,29 @@ const COL_W: Record<string, number> = {
 };
 const getColW = (key: string) => COL_W[key] ?? COL_W_DEFAULT;
 
+// сформировать deep-link на карточку текущей строки
+function makeGroupCardUrl(row: ApiRow, selectedPreset: OptionType | null, phonesData: any[]) {
+    const u = new URL(window.location.href);
+    u.searchParams.set("card", "1");
+    u.searchParams.set("ids", (row.id_list || []).join(","));
+
+    // желательно: чтобы при открытии выбрался тот же пресет
+    const pid = selectedPreset?.preset?.id;
+    if (pid) u.searchParams.set("pid", String(pid));
+
+    // опционально: добавим guid первого контакта, если знаем — чтоб сразу поднялся чат
+    const byId = new Map<number, any>(phonesData.map(p => [p.id, p]));
+    for (const id of row.id_list || []) {
+        const p = byId.get(id);
+        const g =
+            (p?.contact_info?.guid && String(p.contact_info.guid)) ||
+            (p?.guid && String(p.guid)) || null;
+        if (g) { u.searchParams.set("guid", g); break; }
+    }
+
+    return u.toString();
+}
+
 function extractActionSteps(act?: { [k: string]: any }): Step[] {
     const steps: Step[] = [];
     if (!act) return steps;
@@ -350,6 +373,8 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     const [guidCounts, setGuidCounts] = useState<Record<string, { unread: number; total: number }>>({});
     const inflightGuidsRef = useRef<Set<string>>(new Set());
+
+    const urlHydratedRef = useRef(false);
 
     const resetAllFiltersToDefaults = useCallback(() => {
         if (!selectedPreset) return;
@@ -1124,6 +1149,61 @@ const PresetSelectorTable: React.FC<Props> = ({
         if (Array.isArray(raw)) return raw.map(String);
         return String(raw).split(",").map(s => s.trim()).filter(Boolean);
     }
+
+    const hydrateByIds = useCallback(async (ids: number[]) => {
+        if (!selectedPreset || !ids.length) return;
+        try {
+            const { preset } = selectedPreset;
+            const { data } = await axios.post<Record<string, any[]>>('/api/v1/get_grouped_phones', {
+                glagol_parent: glagolParent2,
+                group_by: ['project'],
+                group_table: preset.group_table,
+                // ВАЖНО: без appliedServerFilters / project IN — только id
+                filter_by: { id: ['IN', ids] },
+                role,
+            });
+            const flat = Object.values(data || {}).flat();
+            upsertFlatPhones(flat); // положит в кэш + phonesData
+        } catch (e) {
+            console.error('hydrateByIds error', e);
+        }
+    }, [selectedPreset?.preset?.group_table, role, upsertFlatPhones]);
+
+    useEffect(() => {
+        // Уже инициализировались — выходим
+        if (urlHydratedRef.current) return;
+
+        const sp = new URLSearchParams(window.location.search);
+        if (sp.get("card") !== "1") return;
+
+        // Разобрали ids из URL
+        const ids = (sp.get("ids") || "")
+            .split(",")
+            .map(s => parseInt(s, 10))
+            .filter(n => Number.isFinite(n));
+        if (!ids.length) return;
+
+        // Если в ссылке задан pid — сводим на нужный пресет
+        const pid = sp.get("pid");
+        if (pid && presets.length) {
+            const matched = presets.find(p => String(p.preset.id) === pid);
+            // Если пресет другой — сначала установим его и подождём следующий прогон эффекта
+            if (matched && (!selectedPreset || matched.preset.id !== selectedPreset.preset.id)) {
+                setSelectedPreset(matched);
+                return; // ждём, пока selectedPreset применится
+            }
+        }
+
+        // Если пресет ещё не готов (например, грузится из localStorage/сервера) — подождём
+        if (!selectedPreset) return;
+
+        // Теперь всё готово: открываем карточку и гидрируем данные
+        setOpenedGroup(ids);
+        void hydrateByIds(ids);
+
+        // Помечаем, что URL обработан, только когда реально гидрировали
+        urlHydratedRef.current = true;
+    }, [presets, selectedPreset, hydrateByIds]);
 
     /** Унифицируем список проектов у юзера (если есть) */
     function readUserProjects(u: any): string[] {
@@ -2975,11 +3055,32 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                     <button
                                                         className="btn btn-sm btn-outline-light text-dark"
                                                         title="Открыть"
-                                                        onClick={() => setOpenedGroup(row.id_list)}
-                                                    >
-                                                        <span className="material-icons" style={{fontSize: 16, lineHeight: 1}}>open_in_new</span>
-                                                    </button>
+                                                        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+                                                            const url = makeGroupCardUrl(row, selectedPreset, phonesData);
 
+                                                            // Ctrl (Windows/Linux) или ⌘ (macOS) — открыть в новой вкладке
+                                                            if (e.ctrlKey || e.metaKey) {
+                                                                window.open(url, '_blank', 'noopener,noreferrer');
+                                                                return;
+                                                            }
+
+                                                            // Обычный клик — открыть в этой же вкладке как и раньше
+                                                            setOpenedGroup(row.id_list);
+                                                            window.history.pushState({}, "", url);
+                                                        }}
+
+                                                        // (необязательно) колесом-средней кнопкой мыши тоже открывать в новой вкладке
+                                                        onMouseUp={(e: React.MouseEvent<HTMLButtonElement>) => {
+                                                            if (e.button === 1) {
+                                                                const url = makeGroupCardUrl(row, selectedPreset, phonesData);
+                                                                window.open(url, '_blank', 'noopener,noreferrer');
+                                                            }
+                                                        }}
+                                                    >
+                                                        <span className="material-icons" style={{ fontSize: 16, lineHeight: 1 }}>
+                                                            open_in_new
+                                                        </span>
+                                                    </button>
                                                     {/* Меню действий */}
                                                     <button
                                                         className="btn btn-sm btn-outline-light text-dark"

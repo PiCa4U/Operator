@@ -23,6 +23,11 @@ type AlertMsg = {
     type?: 'success' | 'error' | 'warning' | 'info';
 };
 
+function normalizeUrl(path?: string) {
+    // если нужен конкретный путь — можно передать его в path
+    const next = path ?? window.location.pathname;
+    window.history.replaceState(null, '', next);
+}
 
 // на случай бегущего счётчика — держим его в ref
 const runningModulesCountRef = { current: 0 } as React.MutableRefObject<number>;
@@ -852,7 +857,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
 // useEffect для openedPhones в tuskMode
     useEffect(() => {
-        if (openedPhones && tuskMode) {
+        if (openedPhones && openedPhones.length) {
             const projects = Array.from(new Set(openedPhones.map(p => p.project)));
             console.log("AGNAINDANSDN", projects);
 
@@ -2258,6 +2263,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             setTuskMode(false);
                             onClose();
                         }
+                        normalizeUrl();
                     }}
                     className="btn btn-outline-light text text-dark"
                     style={{
@@ -2739,6 +2745,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             setTuskMode(false);
                             onClose();
                         }
+                        normalizeUrl();
                         setSelectedCall(null)
                     }}
                     className="btn btn-outline-light text text-dark"

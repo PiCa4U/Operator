@@ -1,23 +1,35 @@
-// src/features/operators/components/OperatorsSelect.tsx
 import React, { useMemo, useRef, useLayoutEffect, useState } from "react";
 import Select, {
     StylesConfig,
     SingleValue,
+    MultiValue,
     GroupBase,
 } from "react-select";
 
 type Option = { value: string; label: string };
 
-type Props = {
+// ОДИН или МНОГО — совместимый API
+type PropsSingle = {
+    isMulti?: false;
     value: string | null;
-    options: string[];
     onChange: (val: string | null) => void;
+};
+type PropsMulti = {
+    isMulti: true;
+    value: string[];
+    onChange: (val: string[]) => void;
+};
+type Common = {
+    options: string[];
     placeholder?: string;
     isSearchable?: boolean;
     isClearable?: boolean;
 };
+type Props = Common & (PropsSingle | PropsMulti);
 
-const buildStyles = (menuWidth?: number): StylesConfig<Option, false, GroupBase<Option>> => ({
+const buildStyles = (
+    menuWidth?: number
+): StylesConfig<Option, boolean, GroupBase<Option>> => ({
     container: (base) => ({
         ...base,
         width: "100%",
@@ -30,7 +42,6 @@ const buildStyles = (menuWidth?: number): StylesConfig<Option, false, GroupBase<
         border: "1px solid #ced4da",
         backgroundColor: "#fff",
         borderRadius: "0.75rem",
-        height: "calc(1.5em + .75rem + 2px)",
         minHeight: "calc(1.5em + .75rem + 2px)",
         padding: 0,
         boxShadow: isFocused ? "0 0 0 .2rem rgba(65, 212, 146, .25)" : "none",
@@ -43,7 +54,7 @@ const buildStyles = (menuWidth?: number): StylesConfig<Option, false, GroupBase<
         flexWrap: "nowrap",
         alignItems: "center",
         padding: "0 .75rem",
-        height: "calc(1.5em + .75rem + 2px)",
+        minHeight: "calc(1.5em + .75rem + 2px)",
         overflow: "hidden",
         flex: 1,
         minWidth: 0,
@@ -85,10 +96,10 @@ const buildStyles = (menuWidth?: number): StylesConfig<Option, false, GroupBase<
         color: "#999",
         "&:hover": { color: "#333" },
     }),
-    // важно: ширина меню = ширина контейнера
+    // меню такой же ширины, как инпут
     menuPortal: (base) => ({
         ...base,
-        zIndex: 2000, // поверх bootstrap-модалки
+        zIndex: 2000,
         width: menuWidth ? `${menuWidth}px` : undefined,
     }),
     menu: (base) => ({
@@ -106,6 +117,7 @@ const buildStyles = (menuWidth?: number): StylesConfig<Option, false, GroupBase<
 });
 
 const OperatorsSelect: React.FC<Props> = ({
+                                              isMulti,
                                               value,
                                               options,
                                               onChange,
@@ -113,7 +125,7 @@ const OperatorsSelect: React.FC<Props> = ({
                                               isSearchable = true,
                                               isClearable = true,
                                           }) => {
-    // меряем ширину контейнера
+    // меряем ширину контейнера: меню будет ровно этой ширины
     const wrapRef = useRef<HTMLDivElement>(null);
     const [menuWidth, setMenuWidth] = useState<number | undefined>(undefined);
 
@@ -130,32 +142,42 @@ const OperatorsSelect: React.FC<Props> = ({
     }, []);
 
     const styles = useMemo(() => buildStyles(menuWidth), [menuWidth]);
-
-    const opts = useMemo<Option[]>(
-        () => options.map((d) => ({ value: d, label: d })),
-        [options]
-    );
-
-    const selected = useMemo<Option | null>(
-        () => (value ? { value, label: value } : null),
-        [value]
-    );
+    const opts = useMemo<Option[]>(() => options.map((d) => ({ value: d, label: d })), [options]);
 
     return (
         <div ref={wrapRef} style={{ width: "100%" }}>
-            <Select<Option, false>
-                value={selected}
-                options={opts}
-                isSearchable={isSearchable}
-                isClearable={isClearable}
-                onChange={(opt: SingleValue<Option>) => onChange(opt?.value ?? null)}
-                styles={styles}
-                placeholder={placeholder}
-                menuPlacement="auto"
-                menuPortalTarget={document.body}
-                menuPosition="fixed"              // корректная позиция в портале
-                menuShouldScrollIntoView={false}  // без «дёрганий»
-            />
+            {isMulti ? (
+                <Select<Option, true>
+                    value={(value as string[]).map((v) => ({ value: v, label: v }))}
+                    options={opts}
+                    isMulti
+                    isSearchable={isSearchable}
+                    isClearable={isClearable}
+                    onChange={(items: MultiValue<Option>) => onChange(items.map((o) => o.value))}
+                    styles={styles}
+                    placeholder={placeholder}
+                    menuPlacement="auto"
+                    menuPortalTarget={document.body}
+                    menuPosition="fixed"
+                    menuShouldScrollIntoView={false}
+                />
+            ) : (
+                <Select<Option, false>
+                    value={(value as string | null) ? { value: value as string, label: value as string } : null}
+                    options={opts}
+                    isSearchable={isSearchable}
+                    isClearable={isClearable}
+                    onChange={(opt: SingleValue<Option>) =>
+                        (onChange as PropsSingle["onChange"])(opt?.value ?? null)
+                    }
+                    styles={styles}
+                    placeholder={placeholder}
+                    menuPlacement="auto"
+                    menuPortalTarget={document.body}
+                    menuPosition="fixed"
+                    menuShouldScrollIntoView={false}
+                />
+            )}
         </div>
     );
 };

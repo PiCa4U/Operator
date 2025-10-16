@@ -1,4 +1,3 @@
-// src/types/agents.ts
 export type Role = "operator" | "manager";
 export type AgentPresence = string;
 
@@ -8,12 +7,27 @@ export interface Agent {
     name: string;
     role: Role;
     department?: string | null;
-    postobrabotka: boolean;     // робот/не робот
-    post_obrabotka:boolean
-    projects?: string[];        // tiers, может отсутствовать
-    status?: AgentPresence;     // если приходит из монитора
+    postobrabotka: boolean;
+    post_obrabotka: boolean;
+    projects?: string[];
+    status?: AgentPresence;
     online?: boolean;
-    glagol_service: string;// если бек присылает булевый онлайн
+    glagol_service: string;
+    talk?: {
+        phone?: string;
+        project?: string;
+        duration?: string;
+        [k: string]: unknown;
+    } | null;
+
+}
+
+
+export interface OperatorLogEntry {
+    status: string | null;
+    state: string | null;
+    reason: string | null;
+    datetime: string; // 'YYYY-MM-DD HH:mm:ss'
 }
 
 export interface CreateAgentPayload {
@@ -41,11 +55,11 @@ export interface TierMutationPayload {
 
 export type RobotFilter = "all" | "robot" | "human";
 export type OnlineFilter = "all" | "online" | "offline";
-
 export interface FiltersState {
     name: string;
     projects: string[];
     department: string | null;
+    departments: string[];
     robot: RobotFilter;
     online: OnlineFilter;
 }

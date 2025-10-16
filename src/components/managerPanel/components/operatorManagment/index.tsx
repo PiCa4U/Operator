@@ -1,62 +1,191 @@
-// src/features/operators/OperatorsTab.tsx
-import React, {useEffect, useMemo, useState} from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 import { useOperators } from "./hooks";
 import { Agent, Role } from "./types";
 import { OperatorModal } from "./components/operatorModal";
 import axios from "axios";
 import OperatorsSelect from "./components/select";
 import Swal from "sweetalert2";
-import {socket} from "../../../../socket";
-import {store} from "../../../../redux/store";
+import { socket } from "../../../../socket";
+import { store } from "../../../../redux/store";
+import { OperatorLogModal } from "./components/operatorLogModal";
+
+/* =================== типы и вспомогалки =================== */
+type Metrics = {
+    count?: number | string;
+    talk?: number | string;
+    wait?: number | string;
+    not_responding?: number | string;
+};
+
+type PerCategory = {
+    __total__?: Metrics;
+    [project: string]: Metrics | undefined;
+};
+
+type RespPerUser = {
+    outbound?: PerCategory;
+    inbound?: PerCategory;
+    express?: PerCategory;
+    missed?: PerCategory;
+    // блоки времени
+    online?: Record<string, string> & { total?: string };
+    break?: Record<string, string> & { total?: string };
+    study?: Record<string, string> & { total?: string };
+    lunch?: Record<string, string> & { total?: string };
+    db_compare?: Record<string, string> & { total?: string };
+    admin?: Record<string, string> & { total?: string };
+    logged_out?: Record<string, string> & { total?: string };
+    post_time?: Record<string, string> & { total?: string };
+};
+
+type StatesAndStatusesResp = {
+    status: "success" | "error";
+    result?: Record<string, RespPerUser>;
+    message?: string;
+};
+
+const n = (v: any): number => (typeof v === "number" ? v : Number(v) || 0);
+const secToHMS = (sec?: number | string) => {
+    const s = n(sec);
+    const hh = Math.floor(s / 3600);
+    const mm = Math.floor((s % 3600) / 60);
+    const ss = Math.floor(s % 60);
+    const pad = (x: number) => String(x).padStart(2, "0");
+    return `${pad(hh)}:${pad(mm)}:${pad(ss)}`;
+};
+const strHMS = (v?: string) => (typeof v === "string" && v.includes(":") ? v : "00:00:00");
+
+type Category = "outbound" | "inbound" | "express" | "missed";
+type Subcol = { key: keyof Metrics; title: string; fmt: (v: any) => string };
+
+const CAT_TITLES: Record<Category, string> = {
+    outbound: "Исходящие",
+    inbound: "Входящие",
+    express: "Экспресс",
+    missed: "Пропущенные",
+};
+
+const CAT_SUBCOLS: Record<Category, readonly Subcol[]> = {
+    outbound: [
+        { key: "count", title: "Всего", fmt: (v) => String(n(v)) },
+        { key: "talk", title: "В разговоре", fmt: (v) => secToHMS(v) },
+        { key: "wait", title: "Ожидание ответа", fmt: (v) => secToHMS(v) },
+        { key: "not_responding", title: "Время подъёма трубки", fmt: (v) => secToHMS(v) },
+    ],
+    inbound: [
+        { key: "count", title: "Всего", fmt: (v) => String(n(v)) },
+        { key: "talk", title: "В разговоре", fmt: (v) => secToHMS(v) },
+        { key: "not_responding", title: "Время подъёма трубки", fmt: (v) => secToHMS(v) },
+    ],
+    express: [
+        { key: "count", title: "Всего", fmt: (v) => String(n(v)) },
+        { key: "talk", title: "В разговоре", fmt: (v) => secToHMS(v) },
+        { key: "not_responding", title: "Время подъёма трубки", fmt: (v) => secToHMS(v) },
+    ],
+    missed: [
+        { key: "count", title: "Всего", fmt: (v) => String(n(v)) },
+        { key: "not_responding", title: "Время подъёма трубки", fmt: (v) => secToHMS(v) },
+    ],
+};
+
+// какие «времена» показываем в отчёте (строки HH:MM:SS из total)
+const TIME_KEYS = ["online", "post_time", "break", "logged_out"] as const;
+const TIME_TITLES: Record<(typeof TIME_KEYS)[number], string> = {
+    online: "Онлайн",
+    post_time: "Постобработка",
+    break: "Перерыв",
+    logged_out: "Оффлайн",
+};
+
+/* Сериализация users[]=... в query */
+const usersParamsSerializer = (
+    glagol_parent: string,
+    users: (string | number)[],
+    date_start: string,
+    date_end: string
+) => {
+    const usp = new URLSearchParams();
+    usp.set("glagol_parent", glagol_parent);
+    users.forEach((u) => usp.append("users", String(u)));
+    usp.set("date_start", date_start);
+    usp.set("date_end", date_end);
+    return usp.toString();
+};
+
+/* =================== Компонент =================== */
 
 export const OperatorsTab: React.FC = () => {
     const {
-        filters, setFilters,
-        query, filtered,
-        mutateDelete, mutateUpdate,departments, mutateAddTier, mutateRemoveTier,
+        filters,
+        setFilters,
+        query,
+        filtered,
+        mutateDelete,
+        mutateUpdate,
+        departments,
+        mutateAddTier,
+        mutateRemoveTier,
         mutateCreate,
     } = useOperators();
-    const { sessionKey } = store.getState().operator
-    const {
-        sipLogin   = '',
-        worker     = '',
-        glagolParent      = ''
-    } = store.getState().credentials;
 
+    const { sessionKey } = store.getState().operator;
+    const { worker = "", glagolParent = "" } = store.getState().credentials;
+
+    // ---- выбор операторов
     const [selected, setSelected] = useState<Record<Agent["login"], boolean>>({});
+    const selectedLogins = useMemo(() => Object.keys(selected).filter((l) => selected[l]), [selected]);
 
-    // ---- Пагинация ----
-    const PAGE_SIZE = 10; // показываем по 10
+    // --- Пагинация
+    const OPERATORS_ROWS_PER_PAGE_KEY = "operatorsRowsPerPage";
+    const DEFAULT_ROWS_PER_PAGE = 10;
+
+    const [rowsPerPage, setRowsPerPage] = useState<number>(() => {
+        const raw = localStorage.getItem(OPERATORS_ROWS_PER_PAGE_KEY);
+        const n = Number(raw);
+        return Number.isFinite(n) && n > 0 ? n : DEFAULT_ROWS_PER_PAGE;
+    });
+
     const [page, setPage] = useState(1);
+    const [pageInput, setPageInput] = useState("1");
+
+    useEffect(() => {
+        localStorage.setItem(OPERATORS_ROWS_PER_PAGE_KEY, String(rowsPerPage));
+        setPage(1);
+    }, [rowsPerPage]);
+
+    useEffect(() => setPageInput(String(page)), [page]);
 
     const total = filtered.length;
-    const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-
-    // если фильтры/данные изменились и текущая страница вышла за пределы — поджимаем
+    const pageCount = Math.max(1, Math.ceil(total / rowsPerPage));
     useEffect(() => {
         if (page > pageCount) setPage(pageCount);
     }, [page, pageCount]);
 
-    const startIdx = (page - 1) * PAGE_SIZE;
-    const endIdx = Math.min(total, startIdx + PAGE_SIZE);
+    const startIdx = (page - 1) * rowsPerPage;
+    const endIdx = Math.min(total, startIdx + rowsPerPage);
     const pageItems = useMemo(() => filtered.slice(startIdx, endIdx), [filtered, startIdx, endIdx]);
 
-    const allChecked = useMemo(
+    const allCheckedOnPage = useMemo(
         () => pageItems.length > 0 && pageItems.every((a) => selected[a.login]),
         [pageItems, selected]
     );
 
-    // modal state
+    // modal
     const [modalOpen, setModalOpen] = useState(false);
-    const [modalMode, setModalMode] = useState<"create"|"edit">("create");
+    const [modalMode, setModalMode] = useState<"create" | "edit">("create");
     const [editing, setEditing] = useState<Agent | null>(null);
 
     const glagol_parent = glagolParent;
     const [projMap, setProjMap] = useState<Record<string, string>>({});
+    const [logUserId, setLogUserId] = useState<string | null>(null);
+
+    const [reportCollapsed, setReportCollapsed] = useState(false);
 
     useEffect(() => {
         let mounted = true;
-        axios.get("/api/v1/projects", { params: { glagol_parent } })
+        axios
+            .get("/api/v1/projects", { params: { glagol_parent } })
             .then((resp) => {
                 const arr = Array.isArray(resp.data?.projects) ? resp.data.projects : [];
                 const map: Record<string, string> = {};
@@ -70,30 +199,27 @@ export const OperatorsTab: React.FC = () => {
             .catch((err) => {
                 console.error("Не удалось загрузить список проектов", err);
             });
-        return () => { mounted = false; };
-    }, []);
+        return () => {
+            mounted = false;
+        };
+    }, [glagol_parent]);
 
     const ROBOT_LABELS = ["Робот", "Оператор"] as const;
     const ONLINE_LABELS = ["Онлайн", "Оффлайн"] as const;
 
     const robotToLabel = (v: "all" | "robot" | "human"): string | null =>
         v === "robot" ? "Робот" : v === "human" ? "Оператор" : null;
-
     const labelToRobot = (label: string | null): "all" | "robot" | "human" =>
         label === "Робот" ? "robot" : label === "Оператор" ? "human" : "all";
-
     const onlineToLabel = (v: "all" | "online" | "offline"): string | null =>
         v === "online" ? "Онлайн" : v === "offline" ? "Оффлайн" : null;
-
     const labelToOnline = (label: string | null): "all" | "online" | "offline" =>
         label === "Онлайн" ? "online" : label === "Оффлайн" ? "offline" : "all";
-
-    // --- helpers for status/state ---
     const norm = (s?: string) => (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 
     const getStatusBadgeClass = (status?: boolean) => {
         if (!status) return "badge bg-danger";
-        if (status)  return "badge bg-success";
+        if (status) return "badge bg-success";
         return "badge bg-info";
     };
 
@@ -109,9 +235,8 @@ export const OperatorsTab: React.FC = () => {
 
         if (st.includes("queue call")) return { text: "В активном звонке", cls: "badge bg-warning text-dark" };
 
-        if (
-            st.includes("waiting") && s.includes("available")
-        ) return { text: "На линии", cls: "badge bg-success" };
+        if (st.includes("waiting") && s.includes("available"))
+            return { text: "На линии", cls: "badge bg-success" };
 
         if (st.includes("idle")) return { text: "В постобработке", cls: "badge bg-warning text-dark" };
 
@@ -130,101 +255,356 @@ export const OperatorsTab: React.FC = () => {
     };
 
     const roleName = (role: string) => {
-        if (role === "admin")   return "Админ";
+        if (role === "admin") return "Админ";
         if (role === "manager") return "Менеджер";
-        if (role === "operator")return "Оператор";
+        if (role === "operator") return "Оператор";
         return role;
     };
 
-    const handleDepartmentBlur = (login: string) =>
-        (e: React.FocusEvent<HTMLInputElement>) => {
-            const next = e.currentTarget.value.trim();
-            mutateUpdate.mutate({ login, department: next || undefined });
-        };
+    const handleDepartmentBlur = (login: string) => (e: React.FocusEvent<HTMLInputElement>) => {
+        const next = e.currentTarget.value.trim();
+        mutateUpdate.mutate({ login, department: next || undefined });
+    };
 
-    const handleRoleChange = (login: string) =>
-        (e: React.ChangeEvent<HTMLSelectElement>) => {
-            const role = e.currentTarget.value as Role;
-            mutateUpdate.mutate({ login, role });
-        };
+    const handleRoleChange = (login: string) => (e: React.ChangeEvent<HTMLSelectElement>) => {
+        const role = e.currentTarget.value as Role;
+        mutateUpdate.mutate({ login, role });
+    };
 
-    const goto = (p: number) => setPage(Math.min(pageCount, Math.max(1, p)));
+    const goToPage = (n: number) => setPage(Math.max(1, Math.min(pageCount, n || 1)));
+    const commitPageInput = () => {
+        const n = parseInt(pageInput, 10);
+        if (Number.isFinite(n)) goToPage(n);
+        else setPageInput(String(page));
+    };
 
     const handleStartFs = (login: string, reason?: string, idle_set?: boolean) => {
-        socket.emit('change_status_fs', {
+        socket.emit("change_status_fs", {
             sip_login: login,
             worker,
             session_key: sessionKey,
-            action: 'available',
+            action: "available",
             reason,
             idle_set,
-            page: 'online',
+            page: "online",
         });
-        socket.emit('change_state_fs', {
+        socket.emit("change_state_fs", {
             sip_login: login,
             worker,
             session_key: sessionKey,
-            action: 'available',
+            action: "available",
             state: "waiting",
             reason,
-            page: 'online',
+            page: "online",
         });
     };
 
     const handlePauseFs = async (status: string, login: string) => {
-        if (status === "On Break") {
-            socket.emit('change_status_fs', {
-                sip_login: login,
-                worker,
-                session_key: sessionKey,
-                action: 'available',
-                page: 'online',
-            });
-        } else {
+        if (status === "Available") {
             const { value: reason } = await Swal.fire({
-                title: 'Укажите причину перерыва',
-                input: 'select',
+                title: "Укажите причину перерыва",
+                input: "select",
                 inputOptions: {
-                    break: 'Перерыв',
-                    study: 'Обучение',
-                    admin: 'Административный',
-                    lunch: 'Обед',
+                    break: "Перерыв",
+                    study: "Обучение",
+                    admin: "Административный",
+                    lunch: "Обед",
                 },
-                inputPlaceholder: 'Выберите опцию',
+                inputPlaceholder: "Выберите опцию",
                 showCancelButton: true,
             });
             if (!reason) return;
-            socket.emit('change_status_fs', {
+            socket.emit("change_status_fs", {
                 sip_login: login,
                 worker,
                 session_key: sessionKey,
-                action: 'pause',
+                action: "pause",
                 reason,
-                page: 'online',
+                page: "online",
+            });
+        } else {
+            socket.emit("change_status_fs", {
+                sip_login: login,
+                worker,
+                session_key: sessionKey,
+                action: "available",
+                page: "online",
             });
         }
     };
 
     const handleLogoutFs = (login: string) => {
-        socket.emit('change_status_fs', {
+        socket.emit("change_status_fs", {
             sip_login: login,
             worker,
             session_key: sessionKey,
-            action: 'logout',
-            page: 'online',
+            action: "logout",
+            page: "online",
         });
     };
 
+    const getActiveCall = (a: any) => {
+        const t = a?.talk;
+        if (!t || typeof t !== "object") return null;
+        if (Object.keys(t).length === 0) return null;
+        const phone = (t as any).phone ?? (t as any).to ?? (t as any).number ?? "";
+        const projectCode = (t as any).project as string | undefined;
+        const projectName = projectCode ? (projMap[projectCode] ?? projectCode) : undefined;
+        const duration = (t as any).duration as string | undefined;
+        return { phone, projectName, duration };
+    };
+
+    const stickyTh: React.CSSProperties = {
+        position: "sticky",
+        top: 0,
+        zIndex: 2,
+        background: "#fff",
+        boxShadow: "inset 0 -1px 0 rgba(0,0,0,0.08)",
+    };
+
+    /* =================== Отчёт: состояние и запрос =================== */
+    const [dateStart, setDateStart] = useState<string>(() => {
+        const d = new Date();
+        d.setDate(d.getDate() - 30);
+        return d.toISOString().slice(0, 10);
+    });
+    const [dateEnd, setDateEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
+
+    type Row = {
+        __login: string;
+        __name: string;
+        // времена
+        time__online: string;
+        time__post_time: string;
+        time__break: string;
+        time__logged_out: string;
+        // динамические ключи метрик, напр. "outbound__total__count" или "inbound__akc24__talk"
+        [k: string]: any;
+    };
+
+    type ReportState = {
+        projects: Record<Category, string[]>; // порядок колонок по каждому типу
+        rows: Row[];
+    } | null;
+
+    const [report, setReport] = useState<ReportState>(null);
+    const [loadingReport, setLoadingReport] = useState(false);
+
+    const fetchReport = async () => {
+        if (!selectedLogins.length) {
+            Swal.fire({ icon: "info", title: "Выберите операторов", timer: 1500, showConfirmButton: false });
+            return;
+        }
+        setLoadingReport(true);
+        try {
+            const params = { glagol_parent, users: selectedLogins, date_start: dateStart, date_end: dateEnd };
+            const resp = await axios.get<StatesAndStatusesResp>("/api/v1/states_and_statuses", {
+                params,
+                paramsSerializer: () => usersParamsSerializer(glagol_parent, selectedLogins, dateStart, dateEnd),
+            });
+
+            if (resp.data?.status !== "success") throw new Error(resp.data?.message || "request failed");
+            const result = resp.data?.result || {};
+
+            // Множества проектов по каждой категории
+            const projSets: Record<Category, Set<string>> = {
+                outbound: new Set<string>(),
+                inbound: new Set<string>(),
+                express: new Set<string>(),
+                missed: new Set<string>(),
+            };
+
+            // наполняем множества проектами, встречающимися у выбранных
+            for (const login of Object.keys(result)) {
+                const u = result[login] || {};
+                (["outbound", "inbound", "express", "missed"] as Category[]).forEach((cat) => {
+                    const perCat = (u as any)[cat] || {};
+                    Object.keys(perCat).forEach((k) => {
+                        if (k && k !== "__total__") projSets[cat].add(k);
+                    });
+                });
+            }
+
+            // приводим к отсортированным массивам с отображением имён проектов
+            const projects: Record<Category, string[]> = {
+                outbound: Array.from(projSets.outbound).sort((a, b) => (projMap[a] || a).localeCompare(projMap[b] || b, "ru")),
+                inbound: Array.from(projSets.inbound).sort((a, b) => (projMap[a] || a).localeCompare(projMap[b] || b, "ru")),
+                express: Array.from(projSets.express).sort((a, b) => (projMap[a] || a).localeCompare(projMap[b] || b, "ru")),
+                missed: Array.from(projSets.missed).sort((a, b) => (projMap[a] || a).localeCompare(projMap[b] || b, "ru")),
+            };
+
+            // соберём строки
+            const byLogin: Record<string, RespPerUser> = result as any;
+            const rows: Row[] = selectedLogins.map((login) => {
+                const agent = filtered.find((x) => x.login === login);
+                const perUser = byLogin[login] || {};
+
+                const row: Row = {
+                    __login: login,
+                    __name: agent?.name || login,
+                    time__online: strHMS(perUser.online?.total),
+                    time__post_time: strHMS(perUser.post_time?.total),
+                    time__break: strHMS(perUser.break?.total),
+                    time__logged_out: strHMS(perUser.logged_out?.total),
+                };
+
+                (["outbound", "inbound", "express", "missed"] as Category[]).forEach((cat) => {
+                    const perCat = (perUser as any)[cat] || {};
+                    const total: Metrics = (perCat["__total__"] || {}) as Metrics;
+
+                    // total по категории
+                    for (const sc of CAT_SUBCOLS[cat]) {
+                        row[`${cat}__total__${sc.key}`] = total[sc.key] ?? 0;
+                    }
+
+                    // по проектам
+                    for (const p of projects[cat]) {
+                        const m = (perCat[p] || {}) as Metrics;
+                        for (const sc of CAT_SUBCOLS[cat]) {
+                            row[`${cat}__${p}__${sc.key}`] = m[sc.key] ?? 0;
+                        }
+                    }
+                });
+
+                return row;
+            });
+
+            setReport({ projects, rows });
+            setReportCollapsed(false);
+        } catch (e: any) {
+            console.error(e);
+            Swal.fire({ icon: "error", title: "Ошибка при формировании отчёта", text: String(e?.message || e) });
+        } finally {
+            setLoadingReport(false);
+        }
+    };
+
+    const exportXlsx = () => {
+        if (!report) return;
+        const catOrder: Category[] = ["outbound", "inbound", "express", "missed"];
+        const { projects, rows } = report;
+
+        // ===== Заголовки (3 строки) =====
+        // Row 0: "Оператор" | "Время" | Cat1 | Cat2 | ...
+        const timeCols = TIME_KEYS.length;
+        const topRow: any[] = ["Оператор"];
+
+        // Время (группа)
+        topRow.push("Время");
+        for (let i = 0; i < timeCols - 1; i++) topRow.push("");
+
+        // Категории
+        for (const cat of catOrder) {
+            const subcols = CAT_SUBCOLS[cat].length;
+            const groupCols = (1 + projects[cat].length) * subcols;
+            topRow.push(CAT_TITLES[cat]);
+            for (let i = 0; i < groupCols - 1; i++) topRow.push("");
+        }
+
+        // Row 1: пусто под оператором | список time-колонок | Итого (колспан subcols) | каждый проект (колспан subcols)
+        const secondRow: any[] = [""];
+        // time labels
+        for (const tk of TIME_KEYS) secondRow.push(TIME_TITLES[tk]);
+
+        for (const cat of catOrder) {
+            const subcols = CAT_SUBCOLS[cat].length;
+            // Итого
+            secondRow.push("Итого");
+            for (let i = 0; i < subcols - 1; i++) secondRow.push("");
+            // Проекты
+            for (const p of projects[cat]) {
+                secondRow.push(projMap[p] || p);
+                for (let i = 0; i < subcols - 1; i++) secondRow.push("");
+            }
+        }
+
+        // Row 2: пусто под оператором + пустые под временем | подкатегории (SUBCOLS) для total и каждого проекта
+        const thirdRow: any[] = [""];
+        for (let i = 0; i < timeCols; i++) thirdRow.push("");
+        for (const cat of catOrder) {
+            for (let i = 0; i < 1 + projects[cat].length; i++) {
+                for (const sc of CAT_SUBCOLS[cat]) thirdRow.push(sc.title);
+            }
+        }
+
+        // ===== Данные =====
+        const dataRows = rows.map((r) => {
+            const arr: any[] = [r.__name];
+
+            // time
+            arr.push(r.time__online, r.time__post_time, r.time__break, r.time__logged_out);
+
+            // categories
+            for (const cat of catOrder) {
+                const subcols = CAT_SUBCOLS[cat];
+                // total
+                for (const sc of subcols) arr.push(sc.fmt(r[`${cat}__total__${sc.key}`]));
+                // projects
+                for (const p of projects[cat]) {
+                    for (const sc of subcols) arr.push(sc.fmt(r[`${cat}__${p}__${sc.key}`]));
+                }
+            }
+
+            return arr;
+        });
+
+        const aoa = [topRow, secondRow, thirdRow, ...dataRows];
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+        // merges
+        const merges: XLSX.Range[] = [];
+        // "Оператор" вертикально на 3 строки
+        merges.push({ s: { r: 0, c: 0 }, e: { r: 2, c: 0 } });
+
+        // "Время"
+        merges.push({ s: { r: 0, c: 1 }, e: { r: 0, c: 1 + timeCols - 1 } });
+
+        // Категории (верхняя полоса)
+        let colStart = 1 + timeCols;
+        for (const cat of ["outbound", "inbound", "express", "missed"] as Category[]) {
+            const subcols = CAT_SUBCOLS[cat].length;
+            const groupCols = (1 + projects[cat].length) * subcols;
+            merges.push({ s: { r: 0, c: colStart }, e: { r: 0, c: colStart + groupCols - 1 } });
+            // Внутренние мёрджи "Итого" и "Проекты"
+            // Итого
+            merges.push({ s: { r: 1, c: colStart }, e: { r: 1, c: colStart + subcols - 1 } });
+            // Проекты
+            let pCol = colStart + subcols;
+            for (let i = 0; i < projects[cat].length; i++) {
+                merges.push({ s: { r: 1, c: pCol }, e: { r: 1, c: pCol + subcols - 1 } });
+                pCol += subcols;
+            }
+            colStart += groupCols;
+        }
+
+        (ws as any)["!merges"] = merges;
+
+        // ширины (примерно)
+        const cols = [{ wch: 22 }]; // Оператор
+        for (let i = 0; i < timeCols; i++) cols.push({ wch: 14 });
+        for (const cat of ["outbound", "inbound", "express", "missed"] as Category[]) {
+            const subcols = CAT_SUBCOLS[cat].length;
+            const groupCols = (1 + projects[cat].length) * subcols;
+            for (let i = 0; i < groupCols; i++) cols.push({ wch: 14 });
+        }
+        (ws as any)["!cols"] = cols as any;
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Отчёт");
+        XLSX.writeFile(wb, `operators-fullreport-${dateStart}_to_${dateEnd}.xlsx`);
+    };
+
+    /* =================== UI =================== */
+
     return (
         <div className="d-flex flex-column gap-3">
-
-            {/* Фильтры + кнопка создания */}
+            {/* Фильтры + формирование отчёта */}
             <div
                 style={{
-                    display: "flex",
+                    display: "grid",
+                    gridTemplateColumns: "repeat(5, minmax(180px, 1fr)) auto",
                     gap: "1rem",
-                    alignItems: "flex-end",
-                    flexWrap: "wrap",
+                    alignItems: "end",
                     marginBottom: 10,
                 }}
             >
@@ -243,12 +623,13 @@ export const OperatorsTab: React.FC = () => {
                 </div>
 
                 <div>
-                    <label className="form-label mb-1">Отдел</label>
+                    <label className="form-label mb-1">Отдел(ы)</label>
                     <OperatorsSelect
-                        value={filters.department}
+                        isMulti
+                        value={filters.departments}
                         options={departments}
-                        onChange={(val) => {
-                            setFilters((f) => ({ ...f, department: val }));
+                        onChange={(vals: any) => {
+                            setFilters((f) => ({ ...f, departments: vals, department: null }));
                             setPage(1);
                         }}
                         placeholder="Все отделы"
@@ -258,10 +639,9 @@ export const OperatorsTab: React.FC = () => {
                 <div>
                     <label className="form-label mb-1">Роботы</label>
                     <OperatorsSelect
-                        // value отображаем человекочитаемой меткой (или null = Все)
-                        value={robotToLabel(filters.robot)}
-                        options={[...ROBOT_LABELS]}          // ["Робот","Не робот"]
-                        onChange={(label) => {
+                        value={(() => (filters.robot === "robot" ? "Робот" : filters.robot === "human" ? "Оператор" : null))()}
+                        options={[...ROBOT_LABELS]}
+                        onChange={(label: any) => {
                             const v = labelToRobot(label);
                             setFilters((f) => ({ ...f, robot: v }));
                             setPage(1);
@@ -273,9 +653,9 @@ export const OperatorsTab: React.FC = () => {
                 <div>
                     <label className="form-label mb-1">Онлайн</label>
                     <OperatorsSelect
-                        value={onlineToLabel(filters.online)}
-                        options={[...ONLINE_LABELS]}        // ["Онлайн","Оффлайн"]
-                        onChange={(label) => {
+                        value={(() => (filters.online === "online" ? "Онлайн" : filters.online === "offline" ? "Оффлайн" : null))()}
+                        options={[...ONLINE_LABELS]}
+                        onChange={(label: any) => {
                             const v = labelToOnline(label);
                             setFilters((f) => ({ ...f, online: v }));
                             setPage(1);
@@ -284,227 +664,533 @@ export const OperatorsTab: React.FC = () => {
                     />
                 </div>
 
-                <div style={{ marginLeft: "auto" }}>
+                {/* Даты отчёта */}
+                <div>
+                    <label className="form-label mb-1">Начало отчёта</label>
+                    <input
+                        type="date"
+                        className="form-control"
+                        value={dateStart}
+                        onChange={(e) => setDateStart(e.currentTarget.value)}
+                    />
+                </div>
+                <div>
+                    <label className="form-label mb-1">Окончание отчёта</label>
+                    <input
+                        type="date"
+                        className="form-control"
+                        value={dateEnd}
+                        onChange={(e) => setDateEnd(e.currentTarget.value)}
+                    />
+                </div>
+
+                <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
                     <button className="btn btn-success" onClick={openCreate}>
                         Создать оператора
                     </button>
+                    <button
+                        className="btn btn-primary"
+                        onClick={fetchReport}
+                        disabled={loadingReport || selectedLogins.length === 0}
+                        title={selectedLogins.length ? "" : "Выберите операторов"}
+                    >
+                        {loadingReport ? "Формируем…" : `Сформировать отчёт (${selectedLogins.length})`}
+                    </button>
+
                 </div>
             </div>
 
-
-            {/* Таблица */}
-            <div className="table-responsive">
-                <table className="table table-sm align-middle">
-                    <thead>
-                    <tr>
-                        <th style={{ width: 32 }}>
-                            <input
-                                type="checkbox"
-                                checked={allChecked}
-                                onChange={(e) => {
-                                    const v = e.currentTarget.checked;
-                                    const next: Record<Agent["login"], boolean> = { ...selected };
-                                    pageItems.forEach((a) => { next[a.login] = v; }); // только текущая страница
-                                    setSelected(next);
-                                }}
-                            />
-                        </th>
-                        <th>Имя</th>
-                        <th>Sip Логин</th>
-                        <th>Роль</th>
-                        <th>Отдел</th>
-                        <th>Робот</th>
-                        <th>Проекты</th>
-                        <th>Статус</th>
-                        <th>Состояние</th>
-                        <th style={{ width: 360 }}>Действия</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    {query.isLoading && (
-                        <tr><td colSpan={10}>Загрузка…</td></tr>
-                    )}
-
-                    {!query.isLoading && pageItems.map((a) => (
-                        <tr key={a.login}>
-                            <td>
+            {/* Таблица операторов */}
+            <div style={{ height: "50vh", minHeight: 0 }}>
+                <div className="table-responsive" style={{ height: "100%", overflowY: "auto" }}>
+                    <table className="table table-sm align-middle">
+                        <thead>
+                        <tr>
+                            <th style={stickyTh}>
                                 <input
                                     type="checkbox"
-                                    checked={Boolean(selected[a.login])}
-                                    onChange={(e) => setSelected(prev => ({ ...prev, [a.login]: e.currentTarget.checked }))}
+                                    checked={allCheckedOnPage}
+                                    onChange={(e) => {
+                                        const isChecked = (e.target as HTMLInputElement).checked;
+                                        setSelected((prev) => {
+                                            const next = { ...prev };
+                                            if (isChecked) {
+                                                for (const a of pageItems) next[a.login] = true;
+                                            } else {
+                                                for (const a of pageItems) next[a.login] = false;
+                                            }
+                                            return next;
+                                        });
+                                    }}
+                                    aria-label="Выбрать всех на странице"
                                 />
-                            </td>
-                            <td>{a.name}</td>
-                            <td>{a.login}</td>
-                            <td>
-                                <span className="badge bg-light text-dark">{roleName(a.role)}</span>
-                            </td>
-                            <td>{a.department ?? "-"}</td>
-                            <td>
-                                <span className={`badge ${a.post_obrabotka ? "bg-info" : "bg-secondary"}`}>
-                                    {!a.post_obrabotka ? "Робот" : "Человек"}
-                                </span>
-                            </td>
-                            <td>
-                                {(() => {
-                                    const projects = Array.isArray(a.projects) ? a.projects.filter(Boolean) : [];
-                                    const display = projects.map((code) => projMap[code] ?? code);
-
-                                    const maxVisible = 3;
-                                    const visible = display.slice(0, maxVisible);
-                                    const hidden  = display.slice(maxVisible);
-
-                                    return (
-                                        <div
-                                            className="position-relative"
-                                            style={{
-                                                display: "grid",
-                                                gridTemplateColumns: "repeat(auto-fill, minmax(100px, auto))",
-                                                gap: "4px",
-                                            }}
-                                        >
-                                            {visible.map((name) => (
-                                                <span
-                                                    key={name}
-                                                    className="badge bg-light text-dark border"
-                                                    title={name}
-                                                    style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-                                                >
-                                                    {name}
-                                                </span>
-                                            ))}
-
-                                            {hidden.length > 0 && (
-                                                <span
-                                                    className="badge bg-light text-dark border"
-                                                    style={{ cursor: "pointer", whiteSpace: "nowrap" }}
-                                                    title={hidden.join(", ")}
-                                                >
-                                                    +{hidden.length} {hidden.length === 1 ? "проект" : hidden.length < 5 ? "проекта" : "проектов"}
-                                                </span>
-                                            )}
-                                        </div>
-                                    );
-                                })()}
-                            </td>
-
-                            <td>
-                                {(() => {
-                                    const cls = getStatusBadgeClass(a.fs_status);
-                                    return <span className={cls}>{a.fs_status ? "Авторизирован" : "Выключен"}</span>;
-                                })()}
-                            </td>
-
-                            <td>
-                                {(() => {
-                                    const { text, cls } = getTelephonyState(a);
-                                    return <span className={cls}>{text}</span>;
-                                })()}
-                            </td>
-
-                            <td>
-                                <div className="btn-group btn-group-sm">
-                                    {/* Редактировать всегда */}
-                                    <button
-                                        className="btn btn-outline-success"
-                                        onClick={() => openEdit(a)}
-                                    >
-                                        Редактировать
-                                    </button>
-
-                                    {/* На линию */}
-                                    {a.status === "Logged Out" && a.fs_status && (
-                                        <button className="btn btn-outline-success" onClick={() => handleStartFs(a.login)}>
-                                            На линию
-                                        </button>
-                                    )}
-
-                                    {/* Перерыв + Логаут */}
-                                    {(a.status === "Available" || a.status === "Available (On Demand)") && (
-                                        <>
-                                            <button className="btn btn-outline-warning" onClick={() => handlePauseFs("Available", a.login)}>
-                                                Перерыв
-                                            </button>
-                                            <button className="btn btn-outline-dark" onClick={() => handleLogoutFs(a.login)}>
-                                                Логаут
-                                            </button>
-                                        </>
-                                    )}
-
-                                    {/* Снять с перерыва */}
-                                    {a.status === "On Break" && (
-                                        <button className="btn btn-outline-warning" onClick={() => handlePauseFs("On Break", a.login)}>
-                                            Снять с перерыва
-                                        </button>
-                                    )}
-
-                                    {/* Удалить */}
-                                    <button
-                                        className="btn btn-outline-danger"
-                                        onClick={() => {
-                                            Swal.fire({
-                                                title: `Удалить "${a.name}" (${a.login})?`,
-                                                icon: "warning",
-                                                showCancelButton: true,
-                                                confirmButtonText: "Да, удалить",
-                                                cancelButtonText: "Отмена",
-                                                confirmButtonColor: "#d33",
-                                                cancelButtonColor: "#3085d6",
-                                                reverseButtons: true,
-                                            }).then((result) => {
-                                                if (result.isConfirmed) {
-                                                    mutateDelete.mutate(a.login);
-                                                    Swal.fire({
-                                                        title: "Удалено!",
-                                                        icon: "success",
-                                                        timer: 1500,
-                                                        showConfirmButton: false,
-                                                    });
-                                                }
-                                            });
-                                        }}
-                                    >
-                                        Удалить
-                                    </button>
-                                </div>
-                            </td>
-
+                            </th>
+                            <th style={stickyTh}>Имя</th>
+                            <th style={stickyTh}>Sip Логин</th>
+                            <th style={stickyTh}>Роль</th>
+                            <th style={stickyTh}>Отдел</th>
+                            <th style={stickyTh}>Робот</th>
+                            <th style={stickyTh}>Проекты</th>
+                            <th style={stickyTh}>Статус</th>
+                            <th style={stickyTh}>Состояние</th>
+                            <th style={{ width: 360, ...stickyTh }}>Действия</th>
                         </tr>
-                    ))}
+                        </thead>
+                        <tbody>
+                        {query.isLoading && (
+                            <tr>
+                                <td colSpan={10}>Загрузка…</td>
+                            </tr>
+                        )}
 
-                    {!query.isLoading && pageItems.length === 0 && (
-                        <tr><td colSpan={10}>Ничего не найдено</td></tr>
-                    )}
-                    </tbody>
-                </table>
+                        {!query.isLoading &&
+                            pageItems.map((a) => (
+                                <tr key={a.login}>
+                                    <td>
+                                        <input
+                                            type="checkbox"
+                                            checked={!!selected[a.login]}
+                                            onChange={(e) => {
+                                                const isChecked = (e.target as HTMLInputElement).checked;
+                                                setSelected((prev) => ({ ...prev, [a.login]: isChecked }));
+                                            }}
+                                            aria-label={`Выбрать ${a.name || a.login}`}
+                                        />
+                                    </td>
+
+                                    <td>{a.name}</td>
+                                    <td>{a.login}</td>
+                                    <td>
+                                        <span className="badge bg-light text-dark">{roleName(a.role)}</span>
+                                    </td>
+                                    <td>{a.department ?? "-"}</td>
+                                    <td>
+                      <span className={`badge ${a.post_obrabotka ? "bg-info" : "bg-secondary"}`}>
+                        {!a.post_obrabotka ? "Робот" : "Человек"}
+                      </span>
+                                    </td>
+                                    <td>
+                                        {(() => {
+                                            const projects = Array.isArray(a.projects) ? a.projects.filter(Boolean) : [];
+                                            const display = projects.map((code) => projMap[code] ?? code);
+                                            const maxVisible = 3;
+                                            const visible = display.slice(0, maxVisible);
+                                            const hidden = display.slice(maxVisible);
+                                            return (
+                                                <div
+                                                    className="position-relative"
+                                                    style={{
+                                                        display: "grid",
+                                                        gridTemplateColumns: "repeat(auto-fill, minmax(100px, auto))",
+                                                        gap: "4px",
+                                                    }}
+                                                >
+                                                    {visible.map((name) => (
+                                                        <span
+                                                            key={name}
+                                                            className="badge bg-light text-dark border"
+                                                            title={name}
+                                                            style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                                                        >
+                                {name}
+                              </span>
+                                                    ))}
+                                                    {hidden.length > 0 && (
+                                                        <span
+                                                            className="badge bg-light text-dark border"
+                                                            style={{ cursor: "pointer", whiteSpace: "nowrap" }}
+                                                            title={hidden.join(", ")}
+                                                        >
+                                +{hidden.length} {hidden.length === 1 ? "проект" : hidden.length < 5 ? "проекта" : "проектов"}
+                              </span>
+                                                    )}
+                                                </div>
+                                            );
+                                        })()}
+                                    </td>
+
+                                    <td>
+                                        {(() => {
+                                            const cls = getStatusBadgeClass(a.fs_status);
+                                            return <span className={cls}>{a.fs_status ? "Авторизирован" : "Выключен"}</span>;
+                                        })()}
+                                    </td>
+
+                                    <td>
+                                        {(() => {
+                                            const { text, cls } = getTelephonyState(a);
+                                            return <span className={cls}>{text}</span>;
+                                        })()}
+                                    </td>
+
+                                    <td>
+                                        <div className="btn-group btn-group-sm">
+                                            <button className="btn btn-outline-success" onClick={() => openEdit(a)}>
+                                                Редактировать
+                                            </button>
+
+                                            {a.status === "Logged Out" && a.fs_status && (
+                                                <button className="btn btn-outline-success" onClick={() => handleStartFs(a.login)}>
+                                                    На линию
+                                                </button>
+                                            )}
+
+                                            {(a.status === "Available" || a.status === "Available (On Demand)") && (
+                                                <>
+                                                    <button
+                                                        className="btn btn-outline-warning"
+                                                        onClick={() => handlePauseFs("Available", a.login)}
+                                                    >
+                                                        Перерыв
+                                                    </button>
+                                                    <button className="btn btn-outline-dark" onClick={() => handleLogoutFs(a.login)}>
+                                                        Логаут
+                                                    </button>
+                                                </>
+                                            )}
+
+                                            {a.status === "On Break" && (
+                                                <button
+                                                    className="btn btn-outline-warning"
+                                                    onClick={() => handlePauseFs("On Break", a.login)}
+                                                >
+                                                    Снять с перерыва
+                                                </button>
+                                            )}
+
+                                            <button className="btn btn-outline-dark" onClick={() => setLogUserId(a.login)}>
+                                                Логи
+                                            </button>
+
+                                            <button
+                                                className="btn btn-outline-danger"
+                                                onClick={() => {
+                                                    Swal.fire({
+                                                        title: `Удалить "${a.name}" (${a.login})?`,
+                                                        icon: "warning",
+                                                        showCancelButton: true,
+                                                        confirmButtonText: "Да, удалить",
+                                                        cancelButtonText: "Отмена",
+                                                        confirmButtonColor: "#d33",
+                                                        cancelButtonColor: "#3085d6",
+                                                        reverseButtons: true,
+                                                    }).then((result) => {
+                                                        if (result.isConfirmed) {
+                                                            mutateDelete.mutate(a.login);
+                                                            Swal.fire({
+                                                                title: "Удалено!",
+                                                                icon: "success",
+                                                                timer: 1500,
+                                                                showConfirmButton: false,
+                                                            });
+                                                        }
+                                                    });
+                                                }}
+                                            >
+                                                Удалить
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+
+                        {!query.isLoading && pageItems.length === 0 && (
+                            <tr>
+                                <td colSpan={10}>Ничего не найдено</td>
+                            </tr>
+                        )}
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             {/* Пагинация */}
-            <div className="d-flex align-items-center justify-content-between">
-                <small className="text-muted">
+            <div
+                className="mt-3"
+                style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: 12,
+                    padding: "8px 12px",
+                    background: "rgba(255,255,255,0.6)",
+                    backdropFilter: "blur(6px)",
+                    borderTop: "1px solid rgba(0,0,0,0.08)",
+                }}
+            >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 13, color: "#444", whiteSpace: "nowrap" }}>Показывать по</span>
+                    <select
+                        className="form-control"
+                        value={rowsPerPage}
+                        onChange={(e) => setRowsPerPage(Number(e.target.value))}
+                        style={{
+                            height: 36,
+                            borderRadius: 18,
+                            border: "1px solid rgba(0,0,0,0.12)",
+                            background: "#fff",
+                            padding: "0 12px",
+                            minWidth: 84,
+                        }}
+                        aria-label="Строк на странице"
+                    >
+                        {[10, 25, 50].map((n) => (
+                            <option key={n} value={n}>
+                                {n}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+
+                {(() => {
+                    const pillBtn: React.CSSProperties = {
+                        width: 36,
+                        height: 36,
+                        borderRadius: 18,
+                        border: "1px solid rgba(0,0,0,0.12)",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        background: "#fff",
+                        padding: 0,
+                        cursor: pageCount === 1 ? "not-allowed" : "pointer",
+                    };
+                    const inputSx: React.CSSProperties = {
+                        width: 72,
+                        height: 36,
+                        borderRadius: 18,
+                        textAlign: "center",
+                        border: "1px solid rgba(0,0,0,0.12)",
+                        background: "#fff",
+                        margin: "0 8px",
+                        padding: "0 10px",
+                    };
+
+                    return (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto", marginRight: "auto" }}>
+                            <button
+                                type="button"
+                                onClick={() => setPage(page <= 1 ? pageCount : page - 1)}
+                                disabled={pageCount === 1}
+                                style={pillBtn}
+                                title={page === 1 ? `Перейти на ${pageCount}` : `Стр. ${page - 1}`}
+                            >
+                                <span className="material-icons">keyboard_arrow_left</span>
+                            </button>
+
+                            <input
+                                type="number"
+                                min={1}
+                                max={pageCount}
+                                value={pageInput}
+                                onChange={(e) => setPageInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") commitPageInput();
+                                }}
+                                onBlur={commitPageInput}
+                                style={inputSx}
+                                aria-label="Номер страницы"
+                            />
+                            <span style={{ fontSize: 14, color: "#444" }}>из {pageCount}</span>
+
+                            <button
+                                type="button"
+                                onClick={() => setPage(page >= pageCount ? 1 : page + 1)}
+                                disabled={pageCount === 1}
+                                style={pillBtn}
+                                title={page === pageCount ? "Перейти на 1" : `Стр. ${page + 1}`}
+                            >
+                                <span className="material-icons">keyboard_arrow_right</span>
+                            </button>
+                        </div>
+                    );
+                })()}
+
+                <small className="text-muted" style={{ whiteSpace: "nowrap" }}>
                     {total > 0 ? `${startIdx + 1}–${endIdx} из ${total}` : "0 из 0"}
                 </small>
-
-                <ul className="pagination pagination-sm mb-0">
-                    <li className={`page-item ${page === 1 ? "disabled" : ""}`}>
-                        <button className="page-link" onClick={() => goto(1)} title="В начало">«</button>
-                    </li>
-                    <li className={`page-item ${page === 1 ? "disabled" : ""}`}>
-                        <button className="page-link" onClick={() => goto(page - 1)} title="Назад">‹</button>
-                    </li>
-                    <li className="page-item disabled">
-                        <span className="page-link">{page} / {pageCount}</span>
-                    </li>
-                    <li className={`page-item ${page === pageCount ? "disabled" : ""}`}>
-                        <button className="page-link" onClick={() => goto(page + 1)} title="Вперёд">›</button>
-                    </li>
-                    <li className={`page-item ${page === pageCount ? "disabled" : ""}`}>
-                        <button className="page-link" onClick={() => goto(pageCount)} title="В конец">»</button>
-                    </li>
-                </ul>
             </div>
 
-            {/* Модалка */}
+            {/* ====== Объединённый отчёт ====== */}
+            {report && (
+                <div style={{ marginTop: 12 }}>
+                    {/* Шапка отчёта с кнопками действий */}
+                    <div
+                        className="d-flex align-items-center justify-content-between gap-2 mb-2"
+                        style={{
+                            padding: "10px 12px",
+                            border: "1px solid rgba(0,0,0,0.08)",
+                            borderRadius: 8,
+                            background: "#fff",
+                        }}
+                    >
+                        <div className="d-flex flex-column">
+                            <strong>Отчёт: Все направления + Время</strong>
+                            <small className="text-muted">
+                                период {dateStart}–{dateEnd}, операторов: {report.rows.length}
+                            </small>
+                        </div>
+
+                        <div className="btn-group btn-group-sm" role="group" aria-label="Действия отчёта">
+                            <button
+                                type="button"
+                                className="btn btn-outline-secondary"
+                                onClick={exportXlsx}
+                                title="Скачать отчёт в XLSX"
+                                aria-label="Скачать отчёт в XLSX"
+                            >
+                                <span className="material-icons" style={{ fontSize: 16, verticalAlign: "-2px" }}>download</span>
+                                &nbsp;XLSX
+                            </button>
+
+                            <button
+                                type="button"
+                                className="btn btn-outline-secondary"
+                                onClick={() => setReportCollapsed(v => !v)}
+                                aria-expanded={!reportCollapsed}
+                                title={reportCollapsed ? "Развернуть таблицу" : "Свернуть таблицу"}
+                            >
+                                {reportCollapsed ? "Развернуть" : "Свернуть"}
+                            </button>
+
+                            <button
+                                type="button"
+                                className="btn btn-outline-danger"
+                                onClick={() => setReport(null)}
+                                title="Закрыть отчёт"
+                                aria-label="Закрыть отчёт"
+                            >
+                                <span className="material-icons" style={{ fontSize: 16, verticalAlign: "-2px" }}>close</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Тело отчёта (условно сворачиваемое) */}
+                    {!reportCollapsed && (
+                        <div className="table-responsive" style={{ overflowX: "auto" }}>
+                            <table className="table table-sm table-bordered">
+                                {/* ===== ШАПКА ===== */}
+                                <thead>
+                                {/* строка 1 */}
+                                <tr>
+                                    <th rowSpan={3} className="text-center align-middle" style={stickyTh}>
+                                        Оператор
+                                    </th>
+
+                                    {/* Время */}
+                                    <th colSpan={TIME_KEYS.length} className="text-center" style={stickyTh}>
+                                        Время
+                                    </th>
+
+                                    {/* Категории */}
+                                    {(["outbound", "inbound", "express", "missed"] as const).map((cat) => {
+                                        const span = (1 + report.projects[cat].length) * CAT_SUBCOLS[cat].length;
+                                        return (
+                                            <th key={cat} colSpan={span} className="text-center" style={stickyTh}>
+                                                {CAT_TITLES[cat]}
+                                            </th>
+                                        );
+                                    })}
+                                </tr>
+
+                                {/* строка 2 */}
+                                <tr>
+                                    {TIME_KEYS.map((tk) => (
+                                        <th key={tk} rowSpan={2} className="text-center align-middle" style={stickyTh}>
+                                            {TIME_TITLES[tk]}
+                                        </th>
+                                    ))}
+
+                                    {(["outbound", "inbound", "express", "missed"] as const).map((cat) => (
+                                        <React.Fragment key={`lvl2_${cat}`}>
+                                            <th colSpan={CAT_SUBCOLS[cat].length} className="text-center" style={stickyTh}>
+                                                Итого
+                                            </th>
+                                            {report.projects[cat].map((p) => (
+                                                <th
+                                                    key={`${cat}_${p}`}
+                                                    colSpan={CAT_SUBCOLS[cat].length}
+                                                    className="text-center"
+                                                    style={stickyTh}
+                                                >
+                                                    {projMap[p] || p}
+                                                </th>
+                                            ))}
+                                        </React.Fragment>
+                                    ))}
+                                </tr>
+
+                                {/* строка 3 */}
+                                <tr>
+                                    {(["outbound", "inbound", "express", "missed"] as const).map((cat) =>
+                                        [0, ...report.projects[cat]].flatMap((_) =>
+                                            CAT_SUBCOLS[cat].map((sc) => (
+                                                <th key={`${cat}_${_}_${sc.key}`} className="text-center" style={stickyTh}>
+                                                    {sc.title}
+                                                </th>
+                                            ))
+                                        )
+                                    )}
+                                </tr>
+                                </thead>
+
+                                {/* ===== ТЕЛО ===== */}
+                                <tbody>
+                                {report.rows.map((r) => (
+                                    <tr key={r.__login}>
+                                        <td>{r.__name}</td>
+
+                                        {/* Время */}
+                                        <td>{r.time__online}</td>
+                                        <td>{r.time__post_time}</td>
+                                        <td>{r.time__break}</td>
+                                        <td>{r.time__logged_out}</td>
+
+                                        {/* Категории */}
+                                        {(["outbound", "inbound", "express", "missed"] as const).flatMap((cat) => {
+                                            const sub = CAT_SUBCOLS[cat];
+                                            const cells: React.ReactNode[] = [];
+                                            // total
+                                            for (const sc of sub) cells.push(
+                                                <td key={`${r.__login}_${cat}_total_${sc.key}`}>{sc.fmt(r[`${cat}__total__${sc.key}`])}</td>
+                                            );
+                                            // projects
+                                            for (const p of report.projects[cat]) {
+                                                for (const sc of sub) {
+                                                    cells.push(
+                                                        <td key={`${r.__login}_${cat}_${p}_${sc.key}`}>{sc.fmt(r[`${cat}__${p}__${sc.key}`])}</td>
+                                                    );
+                                                }
+                                            }
+                                            return cells;
+                                        })}
+                                    </tr>
+                                ))}
+
+                                {report.rows.length === 0 && (
+                                    <tr>
+                                        <td
+                                            colSpan={
+                                                1 + // Оператор
+                                                TIME_KEYS.length +
+                                                (["outbound", "inbound", "express", "missed"] as const).reduce(
+                                                    (acc, cat) => acc + (1 + report.projects[cat].length) * CAT_SUBCOLS[cat].length,
+                                                    0
+                                                )
+                                            }
+                                        >
+                                            Нет данных
+                                        </td>
+                                    </tr>
+                                )}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+            )}
+            {/* Модалки */}
             <OperatorModal
                 open={modalOpen}
                 mode={modalMode}
@@ -516,7 +1202,6 @@ export const OperatorsTab: React.FC = () => {
                 onUpdate={(payload) => {
                     mutateUpdate.mutate(payload, { onSuccess: () => setModalOpen(false) });
                 }}
-
                 projectMap={projMap}
                 onAddProject={(login, project_name) => {
                     mutateAddTier.mutate({ login, project_name });
@@ -524,6 +1209,12 @@ export const OperatorsTab: React.FC = () => {
                 onRemoveProject={(login, project_name) => {
                     mutateRemoveTier.mutate({ login, project_name });
                 }}
+            />
+            <OperatorLogModal
+                open={!!logUserId}
+                userId={logUserId || ""}
+                loginForTitle={logUserId || undefined}
+                onClose={() => setLogUserId(null)}
             />
         </div>
     );

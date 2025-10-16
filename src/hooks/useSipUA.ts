@@ -1,8 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-    Invitation, Inviter, Registerer, RegistererState, Session,
-    SessionDescriptionHandlerModifier, SessionState, TransportState, URI,
-    UserAgent, UserAgentOptions
+    Invitation,
+    Inviter,
+    Registerer,
+    RegistererState,
+    Session,
+    SessionDescriptionHandlerModifier,
+    SessionState,
+    TransportState,
+    URI,
+    UserAgent,
+    UserAgentOptions
 } from 'sip.js';
 import type { TurnCredentials } from '../redux/operatorSlice';
 import { ToneManager } from '../telephony/ToneManager';
@@ -64,10 +72,8 @@ function extractSipHost(wsServer: string): string {
         const url = new URL(wsServer.startsWith('ws://') || wsServer.startsWith('wss://')
             ? wsServer
             : `wss://${wsServer}`);
-        // Если нужен порт в SIP-URI, вернём host (hostname:port), иначе можешь вернуть только hostname
         return url.port ? `${url.hostname}:${url.port}` : url.hostname;
     } catch {
-        // запасной вариант, если URL кривой
         return '24webrtc.ru';
     }
 }
@@ -79,7 +85,7 @@ const responseHasSDP = (res: any) => {
     return (ctype && /sdp/i.test(ctype)) || (typeof body === 'string' && body.includes('m=audio'));
 };
 
-// данные из контейнера
+// данные из контейнера (фолбэки)
 const container = document.getElementById('root');
 if (!container) throw new Error('Root container not found');
 const { sipLogin: rawSipLogin, worker: rawWorker } =
@@ -120,6 +126,9 @@ export function useSipUA(config: {
     const regListenerRef       = useRef<((st: RegistererState)=>void) | null>(null);
     const transportListenerRef = useRef<((st: TransportState)=>void) | null>(null);
 
+    // ⬇️ новый «кипер» регистрации: мягко дожимаем REGISTER, пока не зарегистрируемся
+    const regKeepaliveRef      = useRef<number | null>(null);
+
     const aliveRef             = useRef(true);
     useEffect(() => () => { aliveRef.current = false; }, []);
 
@@ -147,7 +156,6 @@ export function useSipUA(config: {
         });
         tonesRef.current = tm;
 
-        // приём поздних обновлений с хоста
         const unsub = subscribeExternalConfig((next) => {
             extCfgRef.current = {
                 assetsBase: next.assetsBase ?? extCfgRef.current.assetsBase,
@@ -187,7 +195,6 @@ export function useSipUA(config: {
         endToneUntilRef.current  = 0;
 
         (s.delegate ??= {}).onBye = () => {
-            // BYE приходит с сервера/удалённой стороны → играем "конец" здесь
             playEndToneOnce(1500);
         };
 
@@ -235,8 +242,27 @@ export function useSipUA(config: {
         });
     }
 
+    function startRegKeepalive() {
+        stopRegKeepalive();
+        regKeepaliveRef.current = window.setInterval(() => {
+            if (!enabled) return;
+            const reg = registererRef.current;
+            if (!reg) return;
+            if (reg.state !== RegistererState.Registered && reg.state !== RegistererState.Terminated) {
+                reg.register().catch(() => {});
+            }
+        }, 5000);
+    }
+    function stopRegKeepalive() {
+        if (regKeepaliveRef.current != null) {
+            clearInterval(regKeepaliveRef.current);
+            regKeepaliveRef.current = null;
+        }
+    }
+
     async function clearUA(reason: ClearReason = 'shutdown') {
         tonesRef.current?.stopAll();
+        stopRegKeepalive();
 
         if (pingTimerRef.current) { clearInterval(pingTimerRef.current); pingTimerRef.current = null; }
         if (registererRef.current && regListenerRef.current) {
@@ -250,19 +276,19 @@ export function useSipUA(config: {
             }
         } catch {}
 
-        // try { await unregisterAndWait(true); } catch {}
+        try { await unregisterAndWait(true); } catch {}
         try { await uaRef.current?.stop(); } catch {}
 
         if (reason === 'shutdown' && wasStartedRef.current && !sentDeleteRef.current && sessionKey) {
             sentDeleteRef.current = true;
-            socket.emit('fs_ha1', {
-                session_key: sessionKey,
-                method: 'DELETE',
-                sip_login: sipLogin,
-                worker,
-            });
+            socket.emit('fs_ha1', { session_key: sessionKey, method: 'DELETE', sip_login: sipLogin, worker });
             onCleared?.();
         }
+
+        // 🔽 критично: полностью очистить видимое состояние
+        setIncoming(null);
+        setStatus(null);
+        sessionRef.current = null;
 
         uaRef.current = null;
         registererRef.current = null;
@@ -274,7 +300,19 @@ export function useSipUA(config: {
         }
         safeSetSrcObject(localAudioRef,  null);
         safeSetSrcObject(remoteAudioRef, null);
+
+        endTonePlayedRef.current = false;
+        endToneUntilRef.current  = 0;
     }
+
+// рядом с «главным свитчем»
+    useEffect(() => {
+        if (!enabled) {
+            setIncoming(null);
+            setStatus(null);
+            sessionRef.current = null;
+        }
+    }, [enabled]);
 
     async function initUA(creds: TurnCredentials | null) {
         if (initInProgressRef.current) return;
@@ -338,13 +376,21 @@ export function useSipUA(config: {
             wasStartedRef.current = true;
             await registerer.register();
 
+            // включаем «кипер» до успешной регистрации
+            startRegKeepalive();
+
             regListenerRef.current = st => {
                 if (st === RegistererState.Registered) {
+                    // как только зарегались — отключаем «кипер»
+                    stopRegKeepalive();
                     setTimeout(() => {
                         if (registerer.state !== RegistererState.Terminated && enabled) {
                             registerer.register().catch(() => {});
                         }
                     }, 240_000);
+                } else if (st === RegistererState.Unregistered) {
+                    // если отвалились — снова включим «кипер»
+                    startRegKeepalive();
                 }
             };
             registerer.stateChange.addListener(regListenerRef.current);
@@ -378,11 +424,10 @@ export function useSipUA(config: {
     // главный свитч
     useEffect(() => {
         if (!enabled) { void clearUA('shutdown'); return; }
-        if (!userId || !wsServer || !turnCreds) return;
+        if (!userId || !wsServer || !turnCreds || !ha1) return;
         latestTurnCredsRef.current = turnCreds;
         if (!uaRef.current) void initUA(turnCreds);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [enabled, userId, wsServer]);
+    }, [enabled, userId, wsServer, turnCreds, ha1]);
 
     // обновление TURN
     useEffect(() => {
@@ -395,21 +440,27 @@ export function useSipUA(config: {
         void restartUAWith(turnCreds);
     }, [enabled, turnCreds]);
 
-    // обновление HA1
+    // обновление HA1 — теперь всегда мягко дожимаем REGISTER,
+    // пока не Terminated (раньше было только при Registered)
     useEffect(() => {
         if (!enabled) return;
-        const ua = uaRef.current, reg = registererRef.current;
-        if (ua && reg && reg.state !== RegistererState.Terminated) {
-            ua.configuration.authorizationHa1 = ha1;
-            reg.register().catch(() => {});
+        const ua  = uaRef.current;
+        const reg = registererRef.current;
+        if (!ua || !reg) return;
+
+        ua.configuration.authorizationHa1 = ha1;
+
+        if (reg.state !== RegistererState.Terminated) {
+            try { reg.register().catch(() => {}); } catch {}
         }
     }, [enabled, ha1]);
 
     const makeCall = async (target: string) => {
         const ua = uaRef.current; if (!ua || !enabled) return;
         const sipHost = extractSipHost(wsServer);
-        const uri = UserAgent.makeURI(`sip:${userId}@${sipHost}`) as URI;
-        const inviter = new Inviter(ua, uri);
+        // ⬇️ Звоним на target, а не на себя
+        const targetUri = UserAgent.makeURI(`sip:${target}@${sipHost}`) as URI;
+        const inviter = new Inviter(ua, targetUri);
 
         bind(inviter);
 

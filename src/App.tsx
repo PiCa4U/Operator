@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { RootState, store } from './redux/store';
-import { SipProvider } from './context/SipContext';
+import { SipProvider, useSip } from './context/SipContext';
 import MainApp from './components/mainApp';
 import { enableWebRTC, disableWebRTC } from './socket';
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -10,10 +10,11 @@ import { queryClient } from "./queryClient";
 import axios from "axios";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import ItsmGuidRoute from "./features/itsm/ItsmGuidRoute";
+import { webrtcOwner } from "./webrtcOwner";
 
 type PhoneMode = 'softphone' | 'webrtc';
 
-// 🔹 ВНЕ App: маленькая строка
+// 🔹 маленькая строка для инфо-поповера
 const Row: React.FC<{ label: string; value: string; mono?: boolean }> = ({ label, value, mono }) => (
     <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: 8, padding: '4px 0' }}>
         <div style={{ color: '#6c757d' }}>{label}:</div>
@@ -23,9 +24,20 @@ const Row: React.FC<{ label: string; value: string; mono?: boolean }> = ({ label
     </div>
 );
 
-// 🔹 ВНЕ App: корневая страница
+/** Мостик, который передаёт состояние «занят» во владелец-мультивкладочности */
+function OwnerBusyBridge() {
+    const { enabled, incoming, status } = useSip();
+    useEffect(() => {
+        const busy = enabled && (Boolean(incoming) || Boolean(status));
+        webrtcOwner.setBusy(busy);
+    }, [enabled, incoming, status]);
+    return null;
+}
+
+// 🔹 корневая страница
 type RootHomeProps = {
     ready: boolean;
+    isOwner: boolean;
     mode: PhoneMode;
     setMode: (m: PhoneMode) => void;
     infoOpen: boolean;
@@ -38,11 +50,11 @@ type RootHomeProps = {
     sipLogin: string;
     ha1: string;
     turnCreds: any;
-    webrtcUrl: string
+    webrtcUrl: string;
 };
 
 const RootHome: React.FC<RootHomeProps> = ({
-                                               ready, mode, setMode, infoOpen, setInfoOpen, infoRef,
+                                               ready, isOwner, mode, setMode, infoOpen, setInfoOpen, infoRef,
                                                name, glagol, phoneLogin, role, sipLogin, ha1, turnCreds, webrtcUrl
                                            }) => {
     const ModeSwitch = (
@@ -82,6 +94,18 @@ const RootHome: React.FC<RootHomeProps> = ({
             >
                 <div style={{ marginLeft: 24 }}>{ModeSwitch}</div>
 
+                {!isOwner && (
+                    <button
+                        className="btn btn-outline-danger"
+                        onClick={async () => {
+                            const ok = await webrtcOwner.claim();
+                            if (ok && mode !== 'webrtc') setMode('webrtc');
+                        }}
+                    >
+                        Сделать звонковой
+                    </button>
+                )}
+
                 {/* Бейдж оператора с поповером */}
                 <div
                     ref={infoRef}
@@ -102,7 +126,7 @@ const RootHome: React.FC<RootHomeProps> = ({
                         }}
                     >
                         <span style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {name}
+                          {name}
                         </span>
                         <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
                             <circle cx="12" cy="12" r="10" fill="currentColor" opacity=".12" />
@@ -125,7 +149,9 @@ const RootHome: React.FC<RootHomeProps> = ({
                             <Row label="Логин телефонии" value={phoneLogin} mono />
                             <Row label="Роль" value={role} />
                             <div style={{ height: 4 }} />
-                            <div style={{ fontSize: 11, color: "#98a2b3" }}>Наведи курсор или нажми ещё раз, чтобы скрыть.</div>
+                            <div style={{ fontSize: 11, color: "#98a2b3" }}>
+                                {isOwner ? "Вы — владелец WebRTC в этой вкладке." : "Эта вкладка без WebRTC (не владелец)."}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -133,13 +159,14 @@ const RootHome: React.FC<RootHomeProps> = ({
 
             {/* Телефония и основное приложение */}
             <SipProvider
-                enabled={mode === 'webrtc'}
+                enabled={mode === 'webrtc' && isOwner}
                 userId={sipLogin}
                 ha1={ha1}
                 wsServer={webrtcUrl}
                 turnCreds={turnCreds}
             >
-                <MainApp />
+                <OwnerBusyBridge />
+                <MainApp isOwner={isOwner}/>
             </SipProvider>
         </>
     );
@@ -154,10 +181,25 @@ export default function App() {
     } = store.getState().credentials;
     const { ha1, turnCreds } = useSelector((s: RootState) => s.operator);
     const [userInfo, setUserInfo] = useState<any>({});
+
     const [mode, setMode] = useState<PhoneMode>(() => {
         const saved = localStorage.getItem('phone_mode') as PhoneMode | null;
         return saved === 'softphone' || saved === 'webrtc' ? saved : 'webrtc';
     });
+
+    // === NEW: состояние «владельца» мультивкладочности
+    const [isOwner, setIsOwner] = useState<boolean>(false);
+
+    // Инициализируем координацию вкладок
+    useEffect(() => {
+        const ns = worker || sipLogin || 'default';
+        webrtcOwner.init(ns);
+        const unsub = webrtcOwner.subscribe((owner) => setIsOwner(owner));
+        return () => {
+            unsub();
+            if (webrtcOwner.isOwner()) webrtcOwner.release();
+        };
+    }, [worker, sipLogin]);
 
     const name = userInfo?.name ?? '—';
     const glagol = userInfo?.glagol_service ?? '—';
@@ -176,12 +218,22 @@ export default function App() {
         return () => document.removeEventListener('click', onDocClick);
     }, []);
 
+    // Сохраняем выбор режима (но WebRTC включаем только когда вкладка — владелец)
     useEffect(() => {
         localStorage.setItem('phone_mode', mode);
-        if (mode === 'webrtc') enableWebRTC();
-        else disableWebRTC();
-        return () => disableWebRTC();
     }, [mode]);
+
+    // === NEW: централизованно включаем/выключаем WebRTC-интервалы
+    useEffect(() => {
+        if (mode === 'webrtc' && isOwner) {
+            enableWebRTC();
+        } else {
+            disableWebRTC();
+        }
+    }, [mode, isOwner]);
+
+    // На размонтирование — точно выключим
+    useEffect(() => () => disableWebRTC(), []);
 
     useEffect(() => {
         const fetchAgents = async () => {
@@ -194,9 +246,15 @@ export default function App() {
             }
         };
         fetchAgents();
-    }, [sipLogin]);
+    }, [sipLogin, glagolParent]);
 
-    const ready = useMemo(() => (mode === 'softphone' ? true : Boolean(ha1 && turnCreds)), [mode, ha1, turnCreds]);
+    // === NEW: готовность UI
+    // - softphone: всегда готово
+    // - webrtc: если вкладка — владелец, ждём ha1/turnCreds; если не владелец — UI готов, но без UA
+    const ready = useMemo(() => {
+        if (mode === 'softphone') return true;
+        return isOwner ? Boolean(ha1 && turnCreds) : true;
+    }, [mode, isOwner, ha1, turnCreds]);
 
     return (
         <QueryClientProvider client={queryClient}>
@@ -208,6 +266,7 @@ export default function App() {
                         element={
                             <RootHome
                                 ready={ready}
+                                isOwner={isOwner}
                                 mode={mode}
                                 setMode={setMode}
                                 infoOpen={infoOpen}

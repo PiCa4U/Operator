@@ -1,11 +1,19 @@
-// src/features/operators/useOperators.ts
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient, UseQueryResult } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-    getAgents, createAgent, updateAgent, deleteAgent, addAgentToProject, removeAgentFromProject,
+    getAgents,
+    createAgent,
+    updateAgent,
+    deleteAgent,
+    addAgentToProject,
+    removeAgentFromProject,
 } from "../api";
 import {
-    Agent, CreateAgentPayload, UpdateAgentPayload, FiltersState, TierMutationPayload,
+    Agent,
+    CreateAgentPayload,
+    UpdateAgentPayload,
+    FiltersState,
+    TierMutationPayload,
 } from "../types";
 
 export function useOperators() {
@@ -14,9 +22,11 @@ export function useOperators() {
     const [filters, setFilters] = useState<FiltersState>({
         name: "",
         projects: [],
+        // поддерживаем и новый, и старый формат для плавной миграции
         department: null,
-        robot: "all",   // 'all' | 'robot' | 'human'
-        online: "all",  // 'all' | 'online' | 'offline'
+        departments: [],      // <— мультивыбор отделов
+        robot: "all",
+        online: "all",
     });
 
     const query = useQuery<Agent[], unknown>({
@@ -27,10 +37,10 @@ export function useOperators() {
         refetchOnWindowFocus: true,
         refetchOnReconnect: true,
         placeholderData: (prev) => prev,
-        // главное место: убираем soft-deleted
         select: (data) => (data ?? []).filter((a: any) => !a?.is_deleted),
     });
-    // ---- уникальные отделы из пришедших данных ----
+
+    // уникальные отделы
     const departments = useMemo<string[]>(() => {
         const items = query.data ?? [];
         const set = new Set<string>();
@@ -41,7 +51,6 @@ export function useOperators() {
         return Array.from(set).sort((a, b) => a.localeCompare(b, "ru", { sensitivity: "base" }));
     }, [query.data]);
 
-    // ---- helpers ----
     const norm = (s?: string) => (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 
     const isOnlineByFields = (a: any): boolean => {
@@ -54,7 +63,14 @@ export function useOperators() {
         if (s.includes("logged out") || s.includes("offline")) return false;
         if (s.includes("on break")) return true;
         if (s.includes("available")) return true;
-        if (st.includes("waiting") || st.includes("ring") || st.includes("call") || st.includes("busy") || st.includes("active") || st.includes("idle")) {
+        if (
+            st.includes("waiting") ||
+            st.includes("ring") ||
+            st.includes("call") ||
+            st.includes("busy") ||
+            st.includes("active") ||
+            st.includes("idle")
+        ) {
             return true;
         }
         return false;
@@ -64,17 +80,21 @@ export function useOperators() {
         const items = query.data ?? [];
 
         return items.filter((a: any) => {
-            // Поиск по ФИО/логину
             if (filters.name?.trim()) {
                 const q = filters.name.trim().toLowerCase();
                 const hay = `${a?.name ?? ""} ${a?.login ?? ""}`.toLowerCase();
                 if (!hay.includes(q)) return false;
             }
 
-            // Отдел
-            if (filters.department && a.department !== filters.department) return false;
+            // Отдел: приоритет — мульти, затем старый single
+            const dep = (a.department ?? "").toString();
+            if (filters.departments && filters.departments.length > 0) {
+                if (!dep || !filters.departments.includes(dep)) return false;
+            } else if (filters.department) {
+                if (dep !== filters.department) return false;
+            }
 
-            // Роботы / Не роботы: робот = post_obrabotka === false
+            // Робот / Человек
             if (filters.robot !== "all") {
                 const isRobot = !Boolean(a?.post_obrabotka);
                 const needRobot = filters.robot === "robot";
@@ -87,7 +107,7 @@ export function useOperators() {
                 if (isOnlineByFields(a) !== needOnline) return false;
             }
 
-            // Проекты
+            // Проекты: хотя бы один из выбранных
             if (filters.projects.length) {
                 const set = new Set(a?.projects ?? []);
                 const hasAny = filters.projects.some((p) => set.has(p));

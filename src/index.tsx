@@ -11,6 +11,8 @@ import { setFsStatus, setActiveCalls, setUserStatuses } from './redux/operatorSl
 import axios from 'axios';
 import 'react-datepicker/dist/react-datepicker.css';
 import "@chatscope/chat-ui-kit-styles/dist/default/styles.min.css";
+import { setSessionKey as setOpSessionKey } from './redux/operatorSlice';
+
 
 const container = document.getElementById('root');
 if (!container) throw new Error('Root container not found');
@@ -32,6 +34,7 @@ const {
 const sipLogin     = rawSipLogin     || '1000';
 const fsServer     = rawFsServer     || 'wwstest.glagol.ai';
 const worker       = rawWorker       || '4.fs@akc24.ru';
+const sessionKey   = rawSessionKey ||  '437d89ecf560562f073cdd2db2871663b130cb56cabc5830'
 const chatServer   = rawChatServer   || 'wwstest.glagol.ai/chat';
 const codeServer   = rawCodeServer   || 'wwstest.glagol.ai/code';
 const glagolParent = rawGlagolParent || 'fs.at.akc24.ru';
@@ -42,7 +45,7 @@ axios.defaults.baseURL = `https://${fsServer}`;
 
 // Сохраняем ВСЕ в Redux одним экшеном
 store.dispatch(setCredentials({
-    sessionKey: rawSessionKey || '',
+    sessionKey,
     sipLogin,
     fsServer,
     worker,
@@ -51,6 +54,8 @@ store.dispatch(setCredentials({
     glagolParent,
     webrtcUrl,
 }));
+
+store.dispatch(setOpSessionKey(sessionKey));
 
 // --- SSE (как у тебя; оставлено закомментированным) ---
 const sseUrl = `https://${fsServer}/api/v1/fs_data?sip_login=${encodeURIComponent(sipLogin)}`;

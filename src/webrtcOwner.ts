@@ -1,4 +1,5 @@
 // src/webrtcOwner.ts
+
 type OwnerState = {
     ownerId: string;
     since: number;
@@ -12,6 +13,16 @@ const HEARTBEAT_MS = 2500;
 const STALE_MS = 8000;
 const CH_PREFIX = 'glagol-webrtc-owner::bc::';
 const LS_PREFIX = 'glagol-webrtc-owner::ls::';
+
+// Небольшая случайная задержка, чтобы при освобождении владельца вкладки
+// "соревновались" и выбор был случайным (а не «побеждает самая быстрая машина»)
+const JITTER_MIN = 30;
+const JITTER_MAX = 250;
+
+function withJitter(fn: () => void, min = JITTER_MIN, max = JITTER_MAX) {
+    const d = Math.floor(min + Math.random() * (max - min));
+    return window.setTimeout(fn, d);
+}
 
 function makeUuid() {
     const g: any = globalThis as any;
@@ -45,21 +56,28 @@ export class WebRTCOwner {
     private watchTimer: number | null = null;
     private listeners = new Set<Listener>();
     private busy = false; // локальный флаг — владелец занят
+    private claimTimer: number | null = null; // защита от частых повторов tryClaimWithJitter
 
     init(namespace: string) {
         this.namespace = namespace || 'default';
         this.lsKey = `${LS_PREFIX}${this.namespace}`;
         try {
-            this.bc = 'BroadcastChannel' in window ? new BroadcastChannel(`${CH_PREFIX}${this.namespace}`) : null;
+            this.bc =
+                'BroadcastChannel' in window
+                    ? new BroadcastChannel(`${CH_PREFIX}${this.namespace}`)
+                    : null;
             this.bc && (this.bc.onmessage = (e) => this.onBC(e.data as BCMsg));
         } catch {
             this.bc = null;
         }
         this.startWatcher();
-        window.addEventListener('unload', () => { if (this.isOwner()) this.release(); });
+        window.addEventListener('unload', () => {
+            if (this.isOwner()) this.release();
+        });
     }
 
     // ===== публичный API
+
     isOwner(): boolean {
         const st = this.read();
         return !!st && st.ownerId === TAB_ID && Date.now() - st.lastSeen < STALE_MS;
@@ -75,8 +93,9 @@ export class WebRTCOwner {
     subscribe(fn: Listener) {
         this.listeners.add(fn);
         queueMicrotask(() => fn(this.isOwner(), this.getOwner()));
-        // раньше было: return () => this.listeners.delete(fn);
-        return () => { this.listeners.delete(fn); }; // ← теперь cleanup: () => void
+        return () => {
+            this.listeners.delete(fn);
+        };
     }
 
     /** Сообщить координатору, что владелец сейчас «занят» (идёт звонок/звонит и т.д.) */
@@ -98,7 +117,12 @@ export class WebRTCOwner {
 
         // никого нет — просто становимся владельцем
         if (stale) {
-            this.write({ ownerId: TAB_ID, since: Date.now(), lastSeen: Date.now(), busy: false });
+            this.write({
+                ownerId: TAB_ID,
+                since: Date.now(),
+                lastSeen: Date.now(),
+                busy: false,
+            });
             this.bcPost({ type: 'owner:claimed', payload: this.read()! });
             this.startHeartbeat();
             this.emit();
@@ -126,7 +150,7 @@ export class WebRTCOwner {
                 }
                 if (msg.type === 'owner:ok' && msg.to === TAB_ID && msg.reqId === reqId) {
                     // владелец освободил — пытаемся захватить
-                    setTimeout(() => done(this.claimNowIfFree()), 50);
+                    setTimeout(() => done(this.claimNowIfFree()), 700);
                 }
             };
 
@@ -149,7 +173,9 @@ export class WebRTCOwner {
     release() {
         const st = this.read();
         if (st && st.ownerId === TAB_ID) {
-            try { localStorage.removeItem(this.lsKey); } catch {}
+            try {
+                localStorage.removeItem(this.lsKey);
+            } catch {}
             this.stopHeartbeat();
             this.bcPost({ type: 'owner:released' });
             this.emit();
@@ -157,39 +183,70 @@ export class WebRTCOwner {
     }
 
     // ===== внутреннее
+
     private claimNowIfFree(): boolean {
         const cur = this.read();
         const stale = !cur || Date.now() - cur.lastSeen >= STALE_MS;
         if (!stale) return false;
-        this.write({ ownerId: TAB_ID, since: Date.now(), lastSeen: Date.now(), busy: false });
+        this.write({
+            ownerId: TAB_ID,
+            since: Date.now(),
+            lastSeen: Date.now(),
+            busy: false,
+        });
         this.bcPost({ type: 'owner:claimed', payload: this.read()! });
         this.startHeartbeat();
         this.emit();
         return true;
     }
 
+    private tryClaimWithJitter() {
+        if (this.claimTimer) {
+            clearTimeout(this.claimTimer);
+            this.claimTimer = null;
+        }
+        this.claimTimer = withJitter(() => {
+            this.claimTimer = null;
+            this.claimNowIfFree();
+        });
+    }
+
     private read(): OwnerState | null {
         try {
             const raw = localStorage.getItem(this.lsKey);
             return raw ? (JSON.parse(raw) as OwnerState) : null;
-        } catch { return null; }
+        } catch {
+            return null;
+        }
     }
+
     private write(s: OwnerState) {
-        try { localStorage.setItem(this.lsKey, JSON.stringify(s)); } catch {}
+        try {
+            localStorage.setItem(this.lsKey, JSON.stringify(s));
+        } catch {}
     }
 
     private startHeartbeat() {
         this.stopHeartbeat();
         this.hbTimer = window.setInterval(() => {
             const st = this.read();
-            if (!st || st.ownerId !== TAB_ID) { this.stopHeartbeat(); return; }
+            if (!st || st.ownerId !== TAB_ID) {
+                this.stopHeartbeat();
+                return;
+            }
             st.lastSeen = Date.now();
             st.busy = this.busy;
             this.write(st);
             this.bcPost({ type: 'owner:beat', payload: st });
         }, HEARTBEAT_MS);
     }
-    private stopHeartbeat() { if (this.hbTimer) { clearInterval(this.hbTimer); this.hbTimer = null; } }
+
+    private stopHeartbeat() {
+        if (this.hbTimer) {
+            clearInterval(this.hbTimer);
+            this.hbTimer = null;
+        }
+    }
 
     private startWatcher() {
         if (this.watchTimer) return;
@@ -197,21 +254,38 @@ export class WebRTCOwner {
             const st = this.read();
             const stale = st && Date.now() - st.lastSeen >= STALE_MS;
             if (!st || stale) {
-                // попробуем аккуратно занять (без подавления текущего владельца)
-                this.claimNowIfFree();
+                // Пытаемся аккуратно занять с небольшой случайной задержкой,
+                // чтобы выбор вкладки был случайным.
+                this.tryClaimWithJitter();
             }
         }, HEARTBEAT_MS);
 
-        window.addEventListener('storage', (e) => { if (e.key === this.lsKey) this.emit(); });
+        window.addEventListener('storage', (e) => {
+            if (e.key === this.lsKey) this.emit();
+        });
     }
 
-    private bcPost(msg: BCMsg) { try { this.bc?.postMessage(msg); } catch {} }
+    private bcPost(msg: BCMsg) {
+        try {
+            this.bc?.postMessage(msg);
+        } catch {}
+    }
 
     private onBC(msg: BCMsg) {
         if (!msg || typeof msg !== 'object') return;
-        if (msg.type === 'owner:claimed' || msg.type === 'owner:released' || msg.type === 'owner:beat') {
-            this.emit(); return;
+
+        if (msg.type === 'owner:claimed' || msg.type === 'owner:beat') {
+            this.emit();
+            return;
         }
+
+        if (msg.type === 'owner:released') {
+            // Кто-то освободил владение → пробуем занять с джиттером
+            this.emit();
+            this.tryClaimWithJitter();
+            return;
+        }
+
         if (msg.type === 'owner:request') {
             // пришёл запрос: если я владелец
             if (this.isOwner()) {

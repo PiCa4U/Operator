@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, {useEffect, useMemo, useRef, useState} from "react";
 import * as XLSX from "xlsx";
 import { useOperators } from "./hooks";
 import { Agent, Role } from "./types";
@@ -182,6 +182,29 @@ export const OperatorsTab: React.FC = () => {
 
     const [reportCollapsed, setReportCollapsed] = useState(false);
 
+    const pageBeforeSearchRef = useRef<number>(1);
+// чтобы отслеживать переходы "" -> "что-то" -> ""
+    const prevSearchRef = useRef<string>("");
+
+    useEffect(() => {
+        const cur = (filters.name ?? "").trim();
+        const prev = prevSearchRef.current;
+
+        // поиск включили: запоминаем текущую страницу
+        if (prev === "" && cur !== "") {
+            pageBeforeSearchRef.current = page;
+        }
+
+        // поиск выключили: возвращаемся на сохранённую страницу (с учётом новых границ)
+        if (prev !== "" && cur === "") {
+            const desired = pageBeforeSearchRef.current;
+            const target = Math.max(1, Math.min(pageCount, desired));
+            if (target !== page) setPage(target);
+        }
+
+        prevSearchRef.current = cur;
+    }, [filters.name, pageCount, page]);
+
     useEffect(() => {
         let mounted = true;
         axios
@@ -363,12 +386,9 @@ export const OperatorsTab: React.FC = () => {
     };
 
     /* =================== Отчёт: состояние и запрос =================== */
-    const [dateStart, setDateStart] = useState<string>(() => {
-        const d = new Date();
-        d.setDate(d.getDate() - 30);
-        return d.toISOString().slice(0, 10);
-    });
-    const [dateEnd, setDateEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const [dateStart, setDateStart] = useState<string>(todayISO);
+    const [dateEnd, setDateEnd]   = useState<string>(todayISO);
 
     type Row = {
         __login: string;
@@ -598,105 +618,119 @@ export const OperatorsTab: React.FC = () => {
 
     return (
         <div className="d-flex flex-column gap-3">
-            {/* Фильтры + формирование отчёта */}
-            <div
-                style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(5, minmax(180px, 1fr)) auto",
-                    gap: "1rem",
-                    alignItems: "end",
-                    marginBottom: 10,
-                }}
-            >
-                <div>
-                    <label className="form-label mb-1">Поиск</label>
-                    <input
-                        className="form-control"
-                        value={filters.name}
-                        onChange={(e) => {
-                            const v = e.currentTarget.value;
-                            setFilters((f) => ({ ...f, name: v }));
-                            setPage(1);
-                        }}
-                        placeholder="ФИО или логин"
-                    />
+            {/* Фильтры + формирование отчёта (две строки, фикс макс-ширины) */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 10 }}>
+                {/* === Ряд 1: обычные фильтры + создать (без растягивания) === */}
+                <div
+                    style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 12,
+                        alignItems: "end",
+                    }}
+                >
+                    <div style={{ flex: "1 1 280px", maxWidth: 360 }}>
+                        <label className="form-label mb-1">Поиск</label>
+                        <input
+                            className="form-control"
+                            value={filters.name}
+                            onChange={(e) => {
+                                const v = e.currentTarget.value;
+                                setFilters((f) => ({ ...f, name: v }));
+                            }}
+                            placeholder="ФИО или логин"
+                        />
+                    </div>
+
+                    <div style={{ flex: "1 1 320px", maxWidth: 360 }}>
+                        <label className="form-label mb-1">Отдел(ы)</label>
+                        <OperatorsSelect
+                            isMulti
+                            value={filters.departments}
+                            options={departments}
+                            onChange={(vals: any) => {
+                                setFilters((f) => ({ ...f, departments: vals, department: null }));
+                                setPage(1);
+                            }}
+                            placeholder="Все отделы"
+                        />
+                    </div>
+
+                    <div style={{ flex: "1 1 220px", maxWidth: 260 }}>
+                        <label className="form-label mb-1">Роботы</label>
+                        <OperatorsSelect
+                            value={(() => (filters.robot === "robot" ? "Робот" : filters.robot === "human" ? "Оператор" : null))()}
+                            options={["Робот", "Оператор"]}
+                            onChange={(label: any) => {
+                                const v = label === "Робот" ? "robot" : label === "Оператор" ? "human" : "all";
+                                setFilters((f) => ({ ...f, robot: v }));
+                                setPage(1);
+                            }}
+                            placeholder="Все"
+                        />
+                    </div>
+
+                    <div style={{ flex: "1 1 220px", maxWidth: 260 }}>
+                        <label className="form-label mb-1">Онлайн</label>
+                        <OperatorsSelect
+                            value={(() => (filters.online === "online" ? "Онлайн" : filters.online === "offline" ? "Оффлайн" : null))()}
+                            options={["Онлайн", "Оффлайн"]}
+                            onChange={(label: any) => {
+                                const v = label === "Онлайн" ? "online" : label === "Оффлайн" ? "offline" : "all";
+                                setFilters((f) => ({ ...f, online: v }));
+                                setPage(1);
+                            }}
+                            placeholder="Все"
+                        />
+                    </div>
+
+                    <div style={{ flex: "0 0 auto" }}>
+                        <button className="btn btn-success" onClick={openCreate}>
+                            Создать оператора
+                        </button>
+                    </div>
                 </div>
 
-                <div>
-                    <label className="form-label mb-1">Отдел(ы)</label>
-                    <OperatorsSelect
-                        isMulti
-                        value={filters.departments}
-                        options={departments}
-                        onChange={(vals: any) => {
-                            setFilters((f) => ({ ...f, departments: vals, department: null }));
-                            setPage(1);
-                        }}
-                        placeholder="Все отделы"
-                    />
-                </div>
+                {/* === Ряд 2: период + кнопка отчёта (слева) === */}
+                <div
+                    style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 8,
+                        alignItems: "end",
+                        justifyContent: "flex-start", // ← слева
+                    }}
+                >
+                    <div style={{ flex: "0 0 220px", maxWidth: 240 }}>
+                        <label className="form-label mb-1">Начало отчёта</label>
+                        <input
+                            type="date"
+                            className="form-control"
+                            value={dateStart}
+                            onChange={(e) => setDateStart(e.currentTarget.value)}
+                        />
+                    </div>
 
-                <div>
-                    <label className="form-label mb-1">Роботы</label>
-                    <OperatorsSelect
-                        value={(() => (filters.robot === "robot" ? "Робот" : filters.robot === "human" ? "Оператор" : null))()}
-                        options={[...ROBOT_LABELS]}
-                        onChange={(label: any) => {
-                            const v = labelToRobot(label);
-                            setFilters((f) => ({ ...f, robot: v }));
-                            setPage(1);
-                        }}
-                        placeholder="Все"
-                    />
-                </div>
+                    <div style={{ flex: "0 0 220px", maxWidth: 240 }}>
+                        <label className="form-label mb-1">Окончание отчёта</label>
+                        <input
+                            type="date"
+                            className="form-control"
+                            value={dateEnd}
+                            onChange={(e) => setDateEnd(e.currentTarget.value)}
+                        />
+                    </div>
 
-                <div>
-                    <label className="form-label mb-1">Онлайн</label>
-                    <OperatorsSelect
-                        value={(() => (filters.online === "online" ? "Онлайн" : filters.online === "offline" ? "Оффлайн" : null))()}
-                        options={[...ONLINE_LABELS]}
-                        onChange={(label: any) => {
-                            const v = labelToOnline(label);
-                            setFilters((f) => ({ ...f, online: v }));
-                            setPage(1);
-                        }}
-                        placeholder="Все"
-                    />
-                </div>
-
-                {/* Даты отчёта */}
-                <div>
-                    <label className="form-label mb-1">Начало отчёта</label>
-                    <input
-                        type="date"
-                        className="form-control"
-                        value={dateStart}
-                        onChange={(e) => setDateStart(e.currentTarget.value)}
-                    />
-                </div>
-                <div>
-                    <label className="form-label mb-1">Окончание отчёта</label>
-                    <input
-                        type="date"
-                        className="form-control"
-                        value={dateEnd}
-                        onChange={(e) => setDateEnd(e.currentTarget.value)}
-                    />
-                </div>
-
-                <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-                    <button className="btn btn-success" onClick={openCreate}>
-                        Создать оператора
-                    </button>
-                    <button
-                        className="btn btn-primary"
-                        onClick={fetchReport}
-                        disabled={loadingReport || selectedLogins.length === 0}
-                        title={selectedLogins.length ? "" : "Выберите операторов"}
-                    >
-                        {loadingReport ? "Формируем…" : `Сформировать отчёт (${selectedLogins.length})`}
-                    </button>
-
+                    <div style={{ flex: "0 0 auto" }}>
+                        <button
+                            className="btn btn-primary"
+                            onClick={fetchReport}
+                            disabled={loadingReport || selectedLogins.length === 0}
+                            title={selectedLogins.length ? "" : "Выберите операторов"}
+                        >
+                            {loadingReport ? "Формируем…" : `Сформировать отчёт (${selectedLogins.length})`}
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -733,6 +767,7 @@ export const OperatorsTab: React.FC = () => {
                             <th style={stickyTh}>Проекты</th>
                             <th style={stickyTh}>Статус</th>
                             <th style={stickyTh}>Состояние</th>
+                            <th style={stickyTh}>Вызов</th>
                             <th style={{ width: 360, ...stickyTh }}>Действия</th>
                         </tr>
                         </thead>
@@ -822,6 +857,49 @@ export const OperatorsTab: React.FC = () => {
                                             return <span className={cls}>{text}</span>;
                                         })()}
                                     </td>
+
+                                    {/* 👉 НОВАЯ ЯЧЕЙКА “Вызов” — 3 строки: телефон, проект, время */}
+                                    <td style={{ width: 240 }}>
+                                        {(() => {
+                                            const ac = getActiveCall(a);
+                                            if (!ac) return <span className="text-muted">—</span>;
+
+                                            const phone = ac.phone || "—";
+                                            const project = ac.projectName || "Без проекта";
+                                            const duration = ac.duration || "00:00:00";
+
+                                            return (
+                                                <div style={{ display: "grid", gap: 2, lineHeight: 1.2 }}>
+                                                    {/* Телефон */}
+                                                    <div className="d-flex align-items-center gap-1" style={{ minWidth: 0 }}>
+                                                        <span className="material-icons" style={{ fontSize: 16 }}>call</span>
+                                                        <strong className="text-truncate" title={phone} style={{ maxWidth: 180 }}>
+                                                            {phone}
+                                                        </strong>
+                                                    </div>
+
+                                                    {/* Проект */}
+                                                    <div
+                                                        className="text-muted small d-flex align-items-center gap-1"
+                                                        title={project}
+                                                        style={{ minWidth: 0 }}
+                                                    >
+                                                        <span className="material-icons" style={{ fontSize: 16 }}>work</span>
+                                                        <span className="text-truncate" style={{ maxWidth: 200 }}>
+                                                            Проект:&nbsp;{project}
+                                                        </span>
+                                                    </div>
+
+                                                    {/* Время */}
+                                                    <div className="d-flex align-items-center gap-1">
+                                                        <span className="material-icons" style={{ fontSize: 16 }}>schedule</span>
+                                                        <span className="badge bg-light text-dark">{duration}</span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
+                                    </td>
+
 
                                     <td>
                                         <div className="btn-group btn-group-sm">

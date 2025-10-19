@@ -418,27 +418,27 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         return clientTop || clientInUnwatched || 0;
     }
 
-    async function fetchUnreadForGuid(g: string, hasSipLogin: boolean, login: string) {
-        try {
-            const params = hasSipLogin ? { logins: login } : undefined;
-            const { data } = await chatApi.get(`/api/v1/chat/${encodeURIComponent(g)}/count`, { params });
-            return extractUnreadCount(data, hasSipLogin, login);
-        } catch {
-            return 0;
-        }
-    }
+    // async function fetchUnreadForGuid(g: string, hasSipLogin: boolean, login: string) {
+    //     try {
+    //         const params = hasSipLogin ? { logins: login } : undefined;
+    //         const { data } = await chatApi.get(`/api/v1/chat/${encodeURIComponent(g)}/count`, { params });
+    //         return extractUnreadCount(data, hasSipLogin, login);
+    //     } catch {
+    //         return 0;
+    //     }
+    // }
 
-    async function refreshUnreadCounts(guids: string[], hasSipLogin: boolean, login: string) {
-        if (!guids.length) return;
-        const entries = await Promise.all(
-            guids.map(async g => [g, await fetchUnreadForGuid(g, hasSipLogin, login)] as const)
-        );
-        setUnreadByGuid(prev => {
-            const next = { ...prev };
-            for (const [g, n] of entries) next[g] = n;
-            return next;
-        });
-    }
+    // async function refreshUnreadCounts(guids: string[], hasSipLogin: boolean, login: string) {
+    //     if (!guids.length) return;
+    //     const entries = await Promise.all(
+    //         guids.map(async g => [g, await fetchUnreadForGuid(g, hasSipLogin, login)] as const)
+    //     );
+    //     setUnreadByGuid(prev => {
+    //         const next = { ...prev };
+    //         for (const [g, n] of entries) next[g] = n;
+    //         return next;
+    //     });
+    // }
     const markReadMany = (arr: UiMessage[], ids: number[]) => {
         const setIds = new Set(ids.map(String));
         return arr.map(m => (setIds.has(m.id) ? { ...m, isRead: true } : m));
@@ -472,7 +472,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
         onIncoming: (msg: UiMessage) => {
             setLive((prev: UiMessage[]) => [...prev, msg]);
-            if (activeGuid) void refreshUnreadCounts([activeGuid], true, sipLogin);
+            // if (activeGuid) void refreshUnreadCounts([activeGuid], true, sipLogin);
         },
 
         onAck: ({ tempId, message_id }) => {
@@ -487,7 +487,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             setHistory(prev => markReadMany(prev, ids));
             setLive(prev => markReadMany(prev, ids));
             setOptimistic(prev => markReadMany(prev, ids));
-            if (activeGuid) void refreshUnreadCounts([activeGuid], true, sipLogin);
+            // if (activeGuid) void refreshUnreadCounts([activeGuid], true, sipLogin);
         },
 
         onUploaded: ({ tempId, filenames }) => {
@@ -751,12 +751,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         window.location.href = "https://my.glagol.ai/login_work/";
     };
 
-    // useEffect(() => {
-    //     socket.on('logout', handleLogout);
-    //     return () => {
-    //         socket.off('logout', handleLogout);
-    //     };
-    // }, []);
+    useEffect(() => {
+        socket.on('logout', handleLogout);
+        return () => {
+            socket.off('logout', handleLogout);
+        };
+    }, []);
 
     useEffect(() => {
         const now = new Date().toISOString();

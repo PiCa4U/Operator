@@ -70,14 +70,14 @@ const RootHome: React.FC<RootHomeProps> = ({
         </div>
     );
 
-    if (!ready) {
-        return (
-            <div style={{ padding: 16 }}>
-                {ModeSwitch}
-                <div>Подготовка WebRTC: ждём TURN/HA1…</div>
-            </div>
-        );
-    }
+    // if (!ready) {
+    //     return (
+    //         <div style={{ padding: 16 }}>
+    //             {ModeSwitch}
+    //             <div>Подготовка WebRTC: ждём TURN/HA1…</div>
+    //         </div>
+    //     );
+    // }
 
     return (
         <>

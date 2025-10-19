@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import Swal from 'sweetalert2';
 import { socket } from '../../socket';
 import { useSelector } from "react-redux";
@@ -133,10 +133,39 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     // Комментарий (если commentMode === 'true')
     const [comment, setComment] = useState('');
     const [selectedQuestion, setSelectedQuestion] = useState<ScriptQuestion | null>(null);
-// Функция, вызываемая при клике по кнопке вопроса:
+
+// ❌ это больше не нужно, можно удалить
+// const [openAnswers, setOpenAnswers] = useState<{ [id: string]: boolean }>({});
+// const toggleAnswer = (id: string) => { ... };
+
+// --- ref на контейнер с FAQ для "клика снаружи"
+    const faqRef = useRef<HTMLDivElement | null>(null);
+
+// --- клик по вопросу: теперь с тумблером
     const handleQuestionClick = (q: ScriptQuestion) => {
-        setSelectedQuestion(q);
+        setSelectedQuestion(prev => (prev?.id === q.id ? null : q));
     };
+
+// --- закрытие по клику вне FAQ
+    useEffect(() => {
+        const onDocClick = (e: MouseEvent) => {
+            if (!faqRef.current) return;
+            if (!faqRef.current.contains(e.target as Node)) {
+                setSelectedQuestion(null);
+            }
+        };
+        document.addEventListener('mousedown', onDocClick);
+        return () => document.removeEventListener('mousedown', onDocClick);
+    }, []);
+
+// --- закрытие по Esc
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setSelectedQuestion(null);
+        };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, []);
 
     // Из Redux — массив активных звонков
     const activeCalls: any[] = useSelector((state: RootState) => state.operator.activeCalls);
@@ -386,7 +415,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
                     />
                 </div>
 
-                <div className="mt-3">
+                <div className="mt-3" ref={faqRef}>
                     {filteredQuestions.length === 0 && (
                         <p className="text-muted">Нет вопросов по вашему запросу.</p>
                     )}

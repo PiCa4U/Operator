@@ -64,7 +64,7 @@ export function readExternalConfig(): AppExternalConfig {
         return undefined;
     })();
 
-    // 4) динамическая доставка после старта через событие (см. subscribeExternalConfig)
+    // 4) динамическая доставка после старта через событие
     const current: AppExternalConfig = {
         assetsBase: fromGlobal?.assetsBase ?? fromDataset?.assetsBase ?? fromQuery?.assetsBase,
         tones: {

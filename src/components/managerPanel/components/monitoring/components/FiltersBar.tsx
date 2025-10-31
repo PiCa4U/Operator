@@ -1,9 +1,11 @@
 import React from "react";
 import MultiSelect from "../../../../callControlPanel/components/multiselect";
 
+type ProjectOption = { id: string; name: string };
+
 type Props = {
-    allProjects: string[];
-    selectedProjects: string[];
+    projectOptions: ProjectOption[];       // <-- вместо allProjects:string[]
+    selectedProjects: string[];            // значения = id
     onChangeProjects: (v: string[]) => void;
 
     departmentOptions: string[];
@@ -18,7 +20,7 @@ type Props = {
 };
 
 export const FiltersBar: React.FC<Props> = ({
-                                                allProjects,
+                                                projectOptions,
                                                 selectedProjects,
                                                 onChangeProjects,
                                                 departmentOptions,
@@ -44,7 +46,7 @@ export const FiltersBar: React.FC<Props> = ({
                 <label className="form-label mb-1">Проекты</label>
                 <MultiSelect
                     placeholder="Выберите проекты"
-                    options={allProjects.map((p) => ({ id: p, name: p }))}
+                    options={projectOptions}       // показываем имена, значения — id
                     value={selectedProjects}
                     onChange={onChangeProjects}
                 />

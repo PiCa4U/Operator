@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useMemo, useRef, useCallback} from 'react';
+import React, {useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect} from 'react';
 import * as XLSX from 'xlsx';
 import SearchableSelect from '../callControlPanel/components/select/index';
 import styles from "./components/checkbox.module.css"
@@ -20,6 +20,31 @@ import {chatApi} from "../../features/itsm/chat/api";
 import {selectTableFilters, TableFilters, tasksTableActions} from "../../redux/tasksTableSlice";
 
 // --- Типы данных ---
+// ---- Session-scoped storage helpers ----
+const TABLE_SCOPE = 'tasksTable';
+
+function makeScope(presetId?: number) {
+    const { sipLogin = 'anon' } = store.getState().credentials || {};
+    return `ss:${TABLE_SCOPE}:u:${sipLogin}:pid:${presetId ?? 'none'}`;
+}
+
+function ssRead<T>(key: string, fallback: T): T {
+    try { const v = sessionStorage.getItem(key); return v ? JSON.parse(v) as T : fallback; } catch { return fallback; }
+}
+function ssWrite(key: string, val: any) {
+    try { sessionStorage.setItem(key, JSON.stringify(val)); } catch {}
+}
+function ssRemove(key: string) {
+    try { sessionStorage.removeItem(key); } catch {}
+}
+
+// ---- Local "last snapshot" helpers ----
+function lsRead<T>(key: string, fallback: T): T {
+    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) as T : fallback; } catch { return fallback; }
+}
+function lsWrite(key: string, val: any) {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+}
 
 type Step = { type: string; code_filename?: string };
 
@@ -252,9 +277,22 @@ function MethodLabel(m: FilterMethod) {
             return m;
     }
 }
+type TabStateSnapshot = {
+    rowsPerPage: number;
+    currentPage: number;
+    searchTerm: string;
+    unreadOnly: boolean;
+    sort: { key: string; direction: 'asc'|'desc' } | null;
+    selectedOperator: string | null;
+    selectedStatus: string | null;
+    appliedLocalFilters: Record<string, string>;
+    appliedServerFilters: Record<string, ServerAppliedByCol>;
+    dateRange: { start: string | null; end: string | null };
+};
 
 const STORAGE_KEY_BASE = 'tasksTableState';
 
+const getTzOffsetMinutes = () => -new Date().getTimezoneOffset();
 const PresetSelectorTable: React.FC<Props> = ({
                                                   openedGroup,
                                                   setOpenedGroup,
@@ -287,6 +325,22 @@ const PresetSelectorTable: React.FC<Props> = ({
     const {monitorUsers} = useSelector(
         (state: RootState) => state.operator.monitorData
     );
+    // Скоуп ключей зависит от выбранного пресета
+    const scope = useMemo(() => makeScope(selectedPreset?.preset?.id), [selectedPreset?.preset?.id]);
+    const lsKeyLast = useMemo(() => `${scope}:last`, [scope]);
+
+// Набор ключей для sessionStorage (текущее состояние вкладки)
+    const ssKey = useMemo(() => ({
+        rowsPerPage: `${scope}:rowsPerPage`,
+        searchTerm:  `${scope}:searchTerm`,
+        unreadOnly:  `${scope}:unreadOnly`,
+        sort:        `${scope}:sort`,
+        selectedOp:  `${scope}:selectedOperator`,
+        localFilters:`${scope}:localFilters`,
+        serverFilters:`${scope}:serverFilters`,   // текущие серверные фильтры вкладки
+        page:        `${scope}:page`,
+    }), [scope]);
+
     const {
         sipLogin = '',
         worker = '',
@@ -319,8 +373,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     const wasSearchingRef = useRef(false);
     const requestSeqRef = useRef(0);
     const [rowsPerPage, setRowsPerPage] = useState<number>(() => {
-        const raw = localStorage.getItem(ROWS_PER_PAGE_KEY);
-        const n = Number(raw);
+        const n = Number(ssRead(ssKey.rowsPerPage, DEFAULT_ROWS_PER_PAGE));
         return Number.isFinite(n) && n > 0 ? n : DEFAULT_ROWS_PER_PAGE;
     });
     const [flatPhones, setFlatPhones] = useState<any[]>([])
@@ -483,9 +536,80 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     useEffect(() => console.log("filterSide: ", filterSide), [filterSide])
     useEffect(() => {
-        localStorage.setItem(ROWS_PER_PAGE_KEY, String(rowsPerPage));
+        // раньше: localStorage.setItem(ROWS_PER_PAGE_KEY, String(rowsPerPage));
+        ssWrite(ssKey.rowsPerPage, rowsPerPage);
         setCurrentPage(1);
-    }, [rowsPerPage, setCurrentPage]);
+    }, [rowsPerPage, setCurrentPage, ssKey.rowsPerPage]);
+    useEffect(() => {
+        const snap: TabStateSnapshot = {
+            rowsPerPage,
+            currentPage,
+            searchTerm,
+            unreadOnly,
+            sort: sortConfig ?? null,
+            selectedOperator: selectedOperator ?? null,
+            selectedStatus: selectedStatus ?? null,
+            appliedLocalFilters,
+            appliedServerFilters,
+            dateRange: {
+                start: startDate ? toYmd(startDate) : null,
+                end:   endDate   ? toYmd(endDate)   : null,
+            },
+        };
+        lsWrite(lsKeyLast, snap);
+    }, [
+        rowsPerPage, currentPage, searchTerm, unreadOnly,
+        sortConfig, selectedOperator, selectedStatus,
+        appliedLocalFilters, appliedServerFilters,
+        startDate?.getTime(), endDate?.getTime(),
+        lsKeyLast
+    ]);
+    const hydratedFromLastRef = useRef(false);
+
+    useLayoutEffect(() => {
+        if (hydratedFromLastRef.current) return;
+        const presetId = selectedPreset?.preset?.id;
+        if (!presetId) return;
+
+        // Есть ли уже что-то в sessionStorage у этой вкладки?
+        const hasAnySS =
+            !!sessionStorage.getItem(ssKey.serverFilters) ||
+            !!sessionStorage.getItem(ssKey.localFilters)
+        if (hasAnySS) {
+            hydratedFromLastRef.current = true;
+            return;
+        }
+
+        // Пытаемся взять last-снимок из localStorage
+        const last = lsRead<TabStateSnapshot | null>(lsKeyLast, null);
+        if (last) {
+            // 1) Применяем в React-состояние
+            setAppliedServerFilters(last.appliedServerFilters || {});
+            setAppliedLocalFilters(last.appliedLocalFilters || {});
+            setSearchTerm(last.searchTerm ?? '');
+            setUnreadOnly(Boolean(last.unreadOnly));
+            setSortConfig(last.sort ?? null);
+            setRowsPerPage(last.rowsPerPage ?? DEFAULT_ROWS_PER_PAGE);
+            setSelectedOperator(last.selectedOperator ?? null);
+            setCurrentPage(last.currentPage ?? 1);
+            setSelectedStatus(last.selectedStatus ?? null);
+            setStartDate(last.dateRange?.start ? parseYmd(last.dateRange.start) : null);
+            setEndDate(last.dateRange?.end ? parseYmd(last.dateRange.end) : null);
+
+            // 2) И сразу фиксируем это как «текущее состояние вкладки» в sessionStorage,
+            // чтобы остальные эффекты уже видели заполненные значения:
+            ssWrite(ssKey.serverFilters, last.appliedServerFilters || {});
+            ssWrite(ssKey.localFilters,  last.appliedLocalFilters  || {});
+            ssWrite(ssKey.searchTerm,    last.searchTerm ?? '');
+            ssWrite(ssKey.unreadOnly,    Boolean(last.unreadOnly));
+            ssWrite(ssKey.sort,          last.sort ?? null);
+            ssWrite(ssKey.rowsPerPage,   last.rowsPerPage ?? DEFAULT_ROWS_PER_PAGE);
+            ssWrite(ssKey.selectedOp,    last.selectedOperator ?? null);
+            ssWrite(ssKey.page,          last.currentPage ?? 1);
+        }
+
+        hydratedFromLastRef.current = true;
+    }, [selectedPreset?.preset?.id, ssKey, lsKeyLast]);
 
     useEffect(() => {
         const presetId = selectedPreset?.preset?.id;
@@ -506,13 +630,20 @@ const PresetSelectorTable: React.FC<Props> = ({
         }
     }, [selectedPreset?.preset?.id]);
 
+// вместо чтения из localStorage в on-preset change:
     useEffect(() => {
         const presetId = selectedPreset?.preset?.id;
         if (!presetId) return;
-        try {
-            localStorage.setItem(LS_LOCAL_FILTERS_KEY(presetId), JSON.stringify(appliedLocalFilters));
-        } catch {}
-    }, [appliedLocalFilters, selectedPreset?.preset?.id]);
+        const parsed = ssRead<Record<string, string> | null>(ssKey.localFilters, null);
+        setAppliedLocalFilters(parsed && typeof parsed === 'object' ? parsed : {});
+    }, [selectedPreset?.preset?.id, ssKey.localFilters]);
+
+// вместо записи в LS:
+    useEffect(() => {
+        const presetId = selectedPreset?.preset?.id;
+        if (!presetId) return;
+        ssWrite(ssKey.localFilters, appliedLocalFilters);
+    }, [appliedLocalFilters, selectedPreset?.preset?.id, ssKey.localFilters]);
 
     useEffect(() => {
         setCurrentPage(1);
@@ -528,40 +659,71 @@ const PresetSelectorTable: React.FC<Props> = ({
     ]);
 // Поиск — один раз при монтировании
     useEffect(() => {
-        const v = localStorage.getItem(LS_SEARCH_TERM_KEY);
+        const v = ssRead<string | null>(ssKey.searchTerm, null);
         if (v !== null) setSearchTerm(v);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [ssKey.searchTerm]);
 
-// Только с непрочитанными — один раз при монтировании
     useEffect(() => {
-        const v = localStorage.getItem(LS_UNREAD_ONLY_KEY);
-        if (v !== null) setUnreadOnly(v === '1' || v === 'true');
+        ssWrite(ssKey.searchTerm, searchTerm ?? '');
+    }, [searchTerm, ssKey.searchTerm]);
+
+// было
+// useEffect(() => { const v = localStorage.getItem(LS_UNREAD_ONLY_KEY); if (v !== null) setUnreadOnly(v === '1' || v === 'true'); }, []);
+// useEffect(() => { localStorage.setItem(LS_UNREAD_ONLY_KEY, unreadOnly ? '1' : '0'); }, [unreadOnly]);
+
+    useEffect(() => {
+        const v = ssRead<boolean | null>(ssKey.unreadOnly, null);
+        if (v !== null) setUnreadOnly(Boolean(v));
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [ssKey.unreadOnly]);
+
+    useEffect(() => {
+        ssWrite(ssKey.unreadOnly, unreadOnly);
+    }, [unreadOnly, ssKey.unreadOnly]);
 
 // Сортировка — один раз при монтировании
+// было
+// useEffect(() => { const raw = localStorage.getItem(LS_SORT_KEY); ... setSortConfig(parsed) }, []);
+// useEffect(() => { if (sortConfig) localStorage.setItem(LS_SORT_KEY, JSON.stringify(sortConfig)); else localStorage.removeItem(LS_SORT_KEY); }, [sortConfig?.key, sortConfig?.direction]);
+
     useEffect(() => {
-        const raw = localStorage.getItem(LS_SORT_KEY);
-        if (!raw) return;
-        try {
-            const parsed = JSON.parse(raw) as { key: string; direction: 'asc' | 'desc' };
-            if (parsed && parsed.key && (parsed.direction === 'asc' || parsed.direction === 'desc')) {
-                setSortConfig(parsed);
-            }
-        } catch {}
+        const parsed = ssRead<{ key: string; direction: 'asc'|'desc' } | null>(ssKey.sort, null);
+        if (parsed && parsed.key && (parsed.direction === 'asc' || parsed.direction === 'desc')) setSortConfig(parsed);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [ssKey.sort]);
+
+    useEffect(() => {
+        if (sortConfig) ssWrite(ssKey.sort, sortConfig);
+        else ssRemove(ssKey.sort);
+    }, [sortConfig, ssKey.sort]);
 
 // Оператор — когда список операторов готов
+    // было
+// useEffect(() => { const saved = localStorage.getItem(LS_SELECTED_OPERATOR_KEY); ... }, [operatorOptions])
+
     useEffect(() => {
-        const saved = localStorage.getItem(LS_SELECTED_OPERATOR_KEY);
+        const saved = ssRead<string | null>(ssKey.selectedOp, null);
         if (!saved) return;
-        // валидируем, что такой оператор есть в опциях
-        if (operatorOptions.some(o => String(o.id) === saved)) {
-            setSelectedOperator(saved);
-        }
-    }, [operatorOptions, setSelectedOperator]);
+        if (operatorOptions.some(o => String(o.id) === saved)) setSelectedOperator(saved);
+    }, [operatorOptions, setSelectedOperator, ssKey.selectedOp]);
+
+    useEffect(() => {
+        if (selectedOperator) ssWrite(ssKey.selectedOp, selectedOperator);
+        else ssRemove(ssKey.selectedOp);
+    }, [selectedOperator, ssKey.selectedOp]);
+
+// восстановить страницу из ss
+    useEffect(() => {
+        const p = Number(ssRead<number | null>(ssKey.page, null));
+        if (Number.isFinite(p) && p >= 1) setCurrentPage(p);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [ssKey.page]);
+
+// сохранять при изменении
+    useEffect(() => {
+        ssWrite(ssKey.page, currentPage);
+    }, [currentPage, ssKey.page]);
 
     // Поиск
     useEffect(() => {
@@ -612,11 +774,16 @@ const PresetSelectorTable: React.FC<Props> = ({
         const presetId = selectedPreset?.preset?.id;
         if (!presetId) return;
 
+        // 1) Пытаемся взять ТЕКУЩЕЕ состояние вкладки из sessionStorage
+        const ssCur = ssRead<Record<string, ServerAppliedByCol> | null>(ssKey.serverFilters, null);
+        if (ssCur) { setAppliedServerFilters(ssCur); return; }
+
+        // 2) Иначе — дневной дефолт из localStorage (как раньше)
         const lsKey  = serverFiltersKey(presetId);
         const dayKey = serverFiltersDayKey(presetId);
         const today  = toYmd(new Date());
-
         let initialApplied: Record<string, ServerAppliedByCol> | null = null;
+
         const savedDay = localStorage.getItem(dayKey);
         const savedRaw = localStorage.getItem(lsKey);
         if (savedRaw && savedDay === today) {
@@ -625,12 +792,14 @@ const PresetSelectorTable: React.FC<Props> = ({
         if (!initialApplied) {
             const structure = (selectedPreset?.preset?.structure ?? {}) as Record<string, ColumnCfgWithSearch>;
             initialApplied = buildAppliedFromDefaults(structure);
-            localStorage.setItem(lsKey, JSON.stringify(initialApplied));
+            localStorage.setItem(lsKey, JSON.stringify(initialApplied)); // дефолт на сегодня
             localStorage.setItem(dayKey, today);
         }
-        console.log("initialApplied: ", initialApplied);
+
         setAppliedServerFilters(initialApplied ?? {});
-    }, [selectedPreset?.preset?.id]);
+        // и сразу складываем в SS, как «текущее» для вкладки
+        ssWrite(ssKey.serverFilters, initialApplied ?? {});
+    }, [selectedPreset?.preset?.id, ssKey.serverFilters]);
 
 // 2) Грузим данные, когда всё готово, включая server-фильтры
     useEffect(() => {
@@ -1100,7 +1269,8 @@ const PresetSelectorTable: React.FC<Props> = ({
                 group_table: preset.group_table,
                 filter_by: filterBy,
                 preset_id: preset.id,
-                role
+                role,
+                tz_offset: getTzOffsetMinutes(),
             });
 
             if (requestSeqRef.current !== mySeq) return;
@@ -2055,8 +2225,7 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         const presetId = selectedPreset?.preset?.id;
         if (presetId) {
-            localStorage.setItem(serverFiltersKey(presetId), JSON.stringify(nextServer));
-            localStorage.setItem(serverFiltersDayKey(presetId), toYmd(new Date()));
+            ssWrite(ssKey.serverFilters, nextServer);
         }
 
         setOpenFilterCol(null);
@@ -2097,8 +2266,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         setAppliedServerFilters(nextServer);
         const presetId = selectedPreset?.preset?.id;
         if (presetId) {
-            localStorage.setItem(serverFiltersKey(presetId), JSON.stringify(nextServer));
-            localStorage.setItem(serverFiltersDayKey(presetId), toYmd(new Date()));
+            ssWrite(ssKey.serverFilters, nextServer);
         }
 
         setOpenFilterCol(null);

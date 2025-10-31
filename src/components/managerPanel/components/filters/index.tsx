@@ -179,51 +179,45 @@ export const Filters = () => {
             if (!selectedReport) return;
 
             const glagol_parent = glagolParent;
+            const sysProjects: string[] = Array.isArray(selectedReport.project_names)
+                ? selectedReport.project_names
+                    .map((glagolName: string) => projectPool.find((p: any) => p.glagol_name === glagolName)?.project_name)
+                    .filter(Boolean)
+                : [];
 
-            const projects = selectedReport.project_names.map((projname: any) => (
-                projectPool.find(proj => proj.glagol_name === projname).project_name
-            ))
-            console.log("projects: ", projects)
             const callId = selectedReport.id;
 
             try {
-                // Параллельные запросы
-                const [projectFieldsRes, relatedCallsRes] = await Promise.all([
-                    axios.get("/api/v1/project_fields", {
-                        params: {
-                            glagol_parent,
-                            projects,
-                        },
+                // если проектов нет — просто не запрашиваем определения полей
+                const projectFieldsPromise = sysProjects.length
+                    ? axios.get("/api/v1/project_fields", {
+                        params: { glagol_parent, projects: sysProjects },
                         paramsSerializer: (params) => {
                             const searchParams = new URLSearchParams();
                             searchParams.append("glagol_parent", params.glagol_parent);
-                            params.projects.forEach((p: string) => {
-                                searchParams.append("projects", p);
-                            });
+                            params.projects.forEach((p: string) => searchParams.append("projects", p));
                             return searchParams.toString();
-                        }
-                    }),
-                    axios.get(`/api/v1/communications/list/${callId}`),
+                        },
+                    })
+                    : Promise.resolve({ data: null });
+
+                const relatedCallsPromise = axios.get(`/api/v1/communications/list/${callId}`);
+
+                const [projectFieldsRes, relatedCallsRes] = await Promise.all([
+                    projectFieldsPromise,
+                    relatedCallsPromise,
                 ]);
 
-                const { reasons, results, base_fields, group_instructions } = projectFieldsRes.data;
-                setFieldsData(projectFieldsRes.data)
-                const relatedCalls = relatedCallsRes.data.communications;
-                setReports(relatedCalls)
-                // console.log("📥 reasons:", reasons);
-                // console.log("📥 results:", results);
-                // console.log("📥 base_fields:", base_fields);
-                // console.log("📥 group_instructions:", group_instructions);
-                // console.log("📞 relatedCalls:", relatedCalls);
-
-                // Тут можно всё сохранить в состояние
+                setFieldsData(projectFieldsRes.data || null);
+                setReports(relatedCallsRes.data?.communications || []);
             } catch (err) {
-                setSelectedReport(null)
+                setSelectedReport(null);
                 console.error("Ошибка при загрузке данных по selectedReport:", err);
             }
         };
 
         fetchData();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedReport]);
 
     function buildFilterJson(filters: FilterItem[]) {

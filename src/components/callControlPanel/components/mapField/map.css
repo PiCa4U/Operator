@@ -1,0 +1,36 @@
+/* === Leaflet hotfix: убить глобальные стили сайта, ломающие тайлы === */
+.leaflet-container { overflow: hidden; }
+.leaflet-container .leaflet-marker-pane img,
+.leaflet-container .leaflet-shadow-pane img,
+.leaflet-container .leaflet-tile-pane img,
+.leaflet-container img.leaflet-image-layer,
+.leaflet-container .leaflet-tile {
+    max-width: none !important;
+    max-height: none !important;
+    width: auto !important;
+    height: auto !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-sizing: content-box !important;
+}
+
+/* тайл должен быть ровно 256×256, иначе «мозаика» разъезжается */
+.leaflet-tile {
+    width: 256px !important;
+    height: 256px !important;
+    position: absolute !important;
+    left: 0; top: 0;
+}
+
+/* иногда host-css сбивает абсолюты у слоёв */
+.leaflet-pane,
+.leaflet-tile-container,
+.leaflet-marker-icon,
+.leaflet-marker-shadow,
+.leaflet-pane > svg,
+.leaflet-pane > canvas,
+.leaflet-zoom-box,
+.leaflet-image-layer,
+.leaflet-layer {
+    position: absolute !important; left: 0; top: 0;
+}

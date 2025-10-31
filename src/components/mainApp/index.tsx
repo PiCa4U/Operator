@@ -1,7 +1,7 @@
 import React, {useState, useMemo, useEffect, useRef} from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import HeaderPanel, {Project} from '../headerPanel';
-import CallControlPanel, {ActiveCall, CallData} from '../callControlPanel';
+import CallControlPanel, {ActiveCall, CallData, normalizeUrl} from '../callControlPanel';
 import CallsDashboard from '../callsDashboard';
 import ScriptPanel from '../scriptPanel';
 import { socket } from "../../socket";
@@ -1136,6 +1136,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         const handleCheckExpress = (check: any) => {
             console.log("check_express response:", check);
             if (check.express && check.assigned_key) {
+                normalizeUrl()
+                setOpenedPhones?.([]);
+                setOpenedGroup?.([]);
+                setPhonesData?.([]);
+                startModulesRanRef.current = false;
+
                 setShowTasksDashboard(true)
                 setAssignedKey(check.assigned_key);
                 setExpressCall(check.express)
@@ -1485,6 +1491,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 // phoneID={phoneID}
                 outActivePhoneData={outActivePhoneData}
                 setOutActivePhoneData={setOutActivePhoneData}
+                startModulesRanRef={startModulesRanRef}
             />
 
             {managerPanel ? (

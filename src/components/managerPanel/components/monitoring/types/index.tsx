@@ -1,7 +1,9 @@
 export type UserTalk = {
     phone?: string;
     project?: string;
-    duration?: string; // "HH:MM:SS"
+    duration?: string;
+    uuid?: string;
+    b_uuid?: string;
     [k: string]: any;
 };
 

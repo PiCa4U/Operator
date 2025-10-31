@@ -4,6 +4,30 @@ import SearchableSelect from './select';
 import DatePicker, {registerLocale, setDefaultLocale} from 'react-datepicker';
 import "../../callsDashboard/picker.css"
 import {ru} from "date-fns/locale";
+import MapField, {MapFieldMapping} from "./mapField";
+
+// сверху рядом с компонентом
+type MapDefaults = Partial<{
+    lat:string|number; lon:string|number; q:string;
+    country:string; state:string; city:string; city_district:string;
+    road:string; house_number:string; postcode:string;
+}>;
+function parseMapConfig(raw: unknown): { mapping: MapFieldMapping; defaults: MapDefaults } {
+    let mapping: MapFieldMapping = {};
+    let defaults: MapDefaults = {};
+    if (typeof raw === "string" && raw.trim()) {
+        try {
+            const p = JSON.parse(raw);
+            if (p && typeof p === "object" && ("mapping" in p || "defaults" in p)) {
+                if (p.mapping && typeof p.mapping === "object") mapping = p.mapping as MapFieldMapping;
+                if (p.defaults && typeof p.defaults === "object") defaults = p.defaults as MapDefaults;
+            } else if (p && typeof p === "object") {
+                defaults = p as MapDefaults;       // простой объект дефолтов
+            }
+        } catch {}
+    }
+    return { mapping, defaults };
+}
 
 
 interface EditableFieldsProps {
@@ -112,7 +136,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             ...(compact ? { flex: '1 1 calc(50% - 12px)', minWidth: 0 } : {}),
                            }}
                      >
-                        <label
+                        {param.field_type !== 'map' && <label
                             style={{
                                 whiteSpace: 'nowrap',
                                 fontWeight: 400,
@@ -121,8 +145,8 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             }}
                         >
                             {param.field_name}
-                            {param.must_have && <span style={{ color: 'red' }}> *</span>}:
-                        </label>
+                            {param.must_have && <span style={{color: 'red'}}> *</span>}:
+                        </label>}
                         {param.field_type === 'regular' && (
                             param.editable ? (
                                 <input type="text" {...commonProps} />
@@ -144,6 +168,76 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         {param.field_type === 'number'  && <input type="number" {...commonProps} />}
                         {param.field_type === 'date'    && <input type="date" className="form-control" value={toIsoDate(currentValue)} onChange={e => handleChange(param.field_id, e.target.value)} />}
                         {param.field_type === 'time'    && <input type="time" {...commonProps} />}
+
+                        {param.field_type === 'map' && (() => {
+                            const storeFieldId = param.field_id;
+                            const { mapping, defaults } = parseMapConfig(param.field_vals);
+
+                            const isDefaultsOnly = !mapping || Object.keys(mapping).length === 0;
+                            const virtualMapping: MapFieldMapping = {
+                                lat: "__lat__", lon: "__lon__", q: "__q__",
+                                country: "__country__", state: "__state__", city: "__city__",
+                                city_district: "__city_district__", road: "__road__",
+                                house_number: "__house_number__", postcode: "__postcode__",
+                            };
+                            const mappingForChild: MapFieldMapping = isDefaultsOnly ? virtualMapping : mapping;
+
+                            let savedObj: Record<string, string> = {};
+                            if (isDefaultsOnly) {
+                                const raw = (fieldValues[storeFieldId] || "").trim();
+                                if ((raw.startsWith("{") && raw.endsWith("}")) || (raw.startsWith("[") && raw.endsWith("]"))) {
+                                    try { savedObj = JSON.parse(raw) || {}; } catch {}
+                                }
+                            }
+
+                            const initial: Record<string, string> = {};
+                            Object.entries(mappingForChild).forEach(([key, fid]) => {
+                                if (!fid) return;
+                                const fromForm = fieldValues[fid];                   // явные поля (если mapping задан)
+                                const fromSaved = isDefaultsOnly ? String(savedObj[key] ?? "") : ""; // из JSON
+                                const fromDef  = (defaults as any)?.[key];
+                                initial[fid] = (fromForm ?? fromSaved ?? fromDef ?? "") as string;
+                            });
+
+                            const keyByFid: Record<string, string> = Object.fromEntries(
+                                Object.entries(mappingForChild).map(([k, fid]) => [String(fid), k])
+                            );
+
+                            return (
+                                <div style={{ width:"100%" }}>
+                                    <label style={{ fontWeight:400, marginBottom:6, display:"inline-block" }}>
+                                        {param.field_name}{param.must_have && <span style={{color:'red'}}> *</span>}:
+                                    </label>
+
+                                    <MapField
+                                        mapping={mappingForChild}
+                                        initialValues={initial}
+                                        readOnly={!param.editable}
+                                        compact={compact}
+                                        onPatch={(patch) => {
+                                            if (isDefaultsOnly) {
+                                                // собираем JSON {lat,lon,q,...} и сохраняем ЕГО в текущее поле карты
+                                                const result: Record<string,string> = {};
+                                                for (const [fid, v] of Object.entries(patch)) {
+                                                    const k = keyByFid[fid];
+                                                    if (k) result[k] = String(v ?? "");
+                                                }
+                                                const json = JSON.stringify(result);
+
+                                                const nextAll = { ...fieldValues, [storeFieldId]: json };
+                                                setFieldValues(nextAll);
+                                                onChange?.(nextAll);                     // <-- ВСЕ значения, не патч
+                                            } else {
+                                                // режим явного mapping — разносим по целевым полям
+                                                const nextAll = { ...fieldValues, ...patch };
+                                                setFieldValues(nextAll);
+                                                onChange?.(nextAll);                     // <-- ВСЕ значения, не патч
+                                            }
+                                        }}
+                                    />
+                                </div>
+                            );
+                        })()}
 
                         {param.field_type === 'textarea' && (
                             param.editable ? (

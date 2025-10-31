@@ -11,6 +11,7 @@ import axios from "axios";
 import {SignalsToaster} from "../../features/signals/SignalsToaster";
 import {NotificationsPanel} from "../../features/signals/NotificationsPanel";
 import {SignalsBell} from "../../features/signals/SignalsBell";
+import {normalizeUrl} from "../callControlPanel";
 
 // === helpers ===
 function getByPath(obj: any, path: string) {
@@ -123,6 +124,7 @@ interface HeaderPanelProps {
     // phoneID: number | null
     outActivePhoneData?: any
     setOutActivePhoneData?: (outActivePhoneData: any) => void
+    startModulesRanRef: React.MutableRefObject<boolean>
 }
 
 
@@ -160,12 +162,16 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      // setPhoneID,
                                                      // phoneID,
                                                      outActivePhoneData,
-                                                     setOutActivePhoneData
+                                                     setOutActivePhoneData,
+                                                     startModulesRanRef
                                                  }) => {
     const {
         sipLogin   = '',
         worker     = '',
     } = store.getState().credentials;
+
+    const fallbackModulesRanRef = React.useRef(false);
+    const modulesRanRef = startModulesRanRef ?? fallbackModulesRanRef;
 
     const isManager = role === "manager";          // твоя логика роли
     const [notifOpen, setNotifOpen] = useState(false);
@@ -561,8 +567,12 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     useEffect(() => {
         const handleGetPhoneToCall = (msg: any) => {
-            console.log("msghandleGetPhoneToCall:", msg);
             if (!msg.length) return;
+            normalizeUrl()
+            setOpenedPhones?.([]);
+            setOpenedGroup?.([]);
+            setPhonesData?.([]);
+            modulesRanRef.current = false;
             const phoneID = msg[0].id
             const phone = msg[0].phone;
             const project_name = msg[0].project;
@@ -737,7 +747,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     fsStatus.state === "Waiting" &&
                     (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
                 ) {
-                    console.log("OOOOHHHH")
                     socket.emit('outbound_call_get', {
                         assign: true,
                         batch: 1,

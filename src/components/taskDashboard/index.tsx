@@ -427,6 +427,46 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [guidCounts, setGuidCounts] = useState<Record<string, { unread: number; total: number }>>({});
     const inflightGuidsRef = useRef<Set<string>>(new Set());
 
+    const [loadError, setLoadError] = useState<string | null>(null);
+
+
+    const bytesToMB = (n: number) => (n / (1024 * 1024)).toFixed(1);
+
+    function pickNiceErrorMessage(err: any): string {
+        // Достаём строку сообщения из всего, что может прилететь
+        let raw = "";
+        if (typeof err?.response?.data === "string") raw = err.response.data;
+        else if (typeof err?.response?.data?.message === "string") raw = err.response.data.message;
+        else if (typeof err?.response?.data?.detail === "string") raw = err.response.data.detail;
+        else if (typeof err?.message === "string") raw = err.message;
+        else raw = String(err ?? "");
+
+        const text = (raw || "").toString();
+
+        // 1) gRPC oversize: "Sent message larger than max (27129499 vs. 26214400)"
+        const oversize = text.match(/Sent message larger than max \((\d+)\s*vs\.\s*(\d+)\)/i);
+        if (oversize) {
+            const sent = Number(oversize[1]);
+            const max  = Number(oversize[2]);
+            return `Ответ слишком большой (${bytesToMB(sent)} МБ > лимита ${bytesToMB(max)} МБ). `
+                + `Сузьте фильтры: диапазон дат, проекты, статусы или уменьшите выборку.`;
+        }
+
+        // 2) RESOURCE_EXHAUSTED без чисел — та же рекомендация
+        if (/StatusCode\.?RESOURCE_EXHAUSTED/i.test(text)) {
+            return `Сервер отклонил запрос из-за объёма данных (RESOURCE_EXHAUSTED). `
+                + `Сузьте фильтры: диапазон дат, проекты, статусы или уменьшите выборку.`;
+        }
+
+        // 3) Таймауты/задержки
+        if (/deadline exceeded|timeout/i.test(text)) {
+            return `Сервер не ответил вовремя. Сузьте фильтры (диапазон дат/проект/статус) и повторите.`;
+        }
+
+        // 4) Фолбэк: всегда с подсказкой
+        return `Не удалось загрузить данные. Сузьте фильтры (диапазон дат, проекты, статусы) и попробуйте снова.`;
+    }
+
     const urlHydratedRef = useRef(false);
 
     const resetAllFiltersToDefaults = useCallback(() => {
@@ -1281,9 +1321,18 @@ const PresetSelectorTable: React.FC<Props> = ({
             if (response1.data.length < 11) setCurrentPage(1);
             setSortConfig(null);
             setSelectedRows(new Set());
-        } catch (err) {
+        } catch (err: any) {
             if (requestSeqRef.current === mySeq) {
-                console.error('Ошибка загрузки данных:', err);
+                const nice = pickNiceErrorMessage(err);
+
+                setTableData([]);
+                resetPhonesCache();
+                setSelectedRows(new Set());
+                setCurrentPage(1);
+                setLoadError(nice);
+                Swal.fire("Ошибка загрузки", nice, "error");
+
+                console.error("Ошибка загрузки данных:", err);
             }
         } finally {
             if (requestSeqRef.current === mySeq) setLoading(false);

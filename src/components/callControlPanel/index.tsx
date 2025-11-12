@@ -2359,7 +2359,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         setOpenedPhones?.([]);
                         setOpenedGroup?.([]);
                         setPhonesData?.([]);
-                        startModulesRanRef.current = false;
                         if (setActiveProjectName) {
                             setActiveProjectName("")
                         }

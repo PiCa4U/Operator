@@ -1068,7 +1068,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
         if (activeCalls.length > 0 && !activeCall && (first?.application || first?.b_callstate === "ACTIVE")) {
             setActiveCall(true);
-            startModulesRanRef.current = true
         } else if (!activeCalls.length && activeCall) {
             setActiveCall(false);
             if (openedPhones) {

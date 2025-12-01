@@ -35,6 +35,32 @@ function normalizeToArray(val: any): any[] {
     return [val];
 }
 
+function makeCardUrl(openedPhones: any[], matchedPreset: OptionType | null) {
+    const u = new URL(window.location.href);
+    u.searchParams.set("card", "1");
+
+    // ids выбранных телефонов
+    const ids = (openedPhones ?? [])
+        .map((p: any) => p?.id)
+        .filter((id: any) => Number.isFinite(id));
+    if (ids.length) u.searchParams.set("ids", ids.join(","));
+
+    // Параметры группировки из пресета
+    const gb = matchedPreset?.preset?.group_by ?? [];
+    const gt = matchedPreset?.preset?.group_table ?? "";
+    if (Array.isArray(gb) && gb.length) u.searchParams.set("gb", gb.join(","));
+    if (gt) u.searchParams.set("gt", gt);
+
+    // (опционально) если есть guid — поможет сразу поднять чат
+    const firstGuid = (openedPhones ?? []).find((p: any) => p?.guid)?.guid;
+    if (firstGuid) u.searchParams.set("guid", String(firstGuid));
+
+    // (опционально) пометить, что это карточка из задачного режима
+    u.searchParams.set("tusk", "1");
+
+    return u.toString();
+}
+
 function buildGroupByFilter(
     groupBy: unknown,
     contact: Record<string, any>
@@ -552,6 +578,10 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     setPhonesData(flatPhones);
                     setOpenedGroup(matchedGroupIDs);
                     setOpenedPhones(openedPhones);
+
+                    const url = makeCardUrl(openedPhones, matchedPreset);
+                    window.history.replaceState({}, "", url);
+
                 } else {
                     console.log("Номер не найден → tuskMode OFF");
                     setShowTasksDashboard(false);
@@ -567,7 +597,14 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     useEffect(() => {
         const handleGetPhoneToCall = (msg: any) => {
-            if (!msg.length) return;
+            if (!msg || !msg.length) {
+                Swal.fire({
+                    icon: 'info',
+                    title: 'Контакты для работы не найдены',
+                    text: 'В пуле нет подходящих контактов для обзвона.',
+                });
+                return;
+            }
             normalizeUrl()
             setOpenedPhones?.([]);
             setOpenedGroup?.([]);
@@ -640,28 +677,32 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                         }
                     });
                 } else if (startType === 'auto') {
-                    Swal.fire({
-                        title: `Исходящий вызов - ${allProjects[project_name]?.glagol_name || project_name}`,
-                        text: `На номер ${phone}`,
-                        showConfirmButton: false,
-                        icon: "warning",
-                        timer: 3000,
-                        timerProgressBar: true,
-                    }).then(() => {
-                        outProjectClickToCall(phone, project_name, msg[0].special_key);
-                        if (projectPoolForCall.length > 0) {
-                            socket.emit('outbound_call_update', {
-                                worker,
-                                session_key: sessionKey,
-                                assigned_key: msg[0].assigned_key,
-                                log_status: 'taken',
-                                phone_status: 'taken',
-                                special_key: msg[0].special_key,
-                            });
-                        }
-                    });
-                }
+                    if (msg[0].auto_start) {
+                        Swal.fire({
+                            title: `Исходящий вызов - ${allProjects[project_name]?.glagol_name || project_name}`,
+                            text: `На номер ${phone}`,
+                            showConfirmButton: false,
+                            icon: "warning",
+                            timer: 3000,
+                            timerProgressBar: true,
+                        }).then(() => {
+                            if (msg[0].auto_start) {
+                                outProjectClickToCall(phone, project_name, msg[0].special_key);
+                            }
 
+                            if (projectPoolForCall.length > 0 && msg[0].auto_start) {
+                                socket.emit('outbound_call_update', {
+                                    worker,
+                                    session_key: sessionKey,
+                                    assigned_key: msg[0].assigned_key,
+                                    log_status: 'taken',
+                                    phone_status: 'taken',
+                                    special_key: msg[0].special_key,
+                                });
+                            }
+                        });
+                    }
+                }
 
                 socket.off("check_express", handleCheckExpress);
             };
@@ -737,6 +778,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         };
     }, [allProjects, assignedKey, specialKey, outActiveProjectName, projectPoolForCall, sessionKey, sipLogin, worker]);
 
+    const getTzOffsetMinutes = () => -new Date().getTimezoneOffset();
     useEffect(() => {
         if (autocallEnabled) {
             const interval = setInterval(() => {
@@ -756,10 +798,11 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                         sip_login: sipLogin,
                         session_key: sessionKey,
                         projects_pool: projectPoolForCall,
-                        start_type: "auto"
+                        start_type: "auto",
+                        tz_offset: getTzOffsetMinutes(),
                     });
                 }
-            }, 10000);
+            }, 30000);
             return () => clearInterval(interval);
         }
     }, [autocallEnabled, hasActiveCall, outPreparation, sipLogin, sessionKey, worker, projectPoolForCall, fsStatus.state, fsStatus.status]);

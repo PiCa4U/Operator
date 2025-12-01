@@ -30,6 +30,30 @@ export interface OperatorLogEntry {
     datetime: string; // 'YYYY-MM-DD HH:mm:ss'
 }
 
+/* ========= Activity log ========= */
+
+export interface ActivityInterval {
+    from: string;
+    to: string;
+    window_active: number[];
+    scroll_active: number[];
+    input_active: number[];
+    score: number[];
+}
+
+export interface ActivityUrlSession {
+    url: string;
+    activity_intervals: ActivityInterval[];
+}
+
+export interface ActivityItem {
+    activity_labels: string[];
+    url_session: Record<string, ActivityUrlSession>;
+}
+
+/** login -> массив блоков активности */
+export type ActivityLogPerUser = Record<string, ActivityItem[]>;
+
 export interface CreateAgentPayload {
     name: string;
     password?: string;

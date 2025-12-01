@@ -329,6 +329,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     const scope = useMemo(() => makeScope(selectedPreset?.preset?.id), [selectedPreset?.preset?.id]);
     const lsKeyLast = useMemo(() => `${scope}:last`, [scope]);
 
+
 // Набор ключей для sessionStorage (текущее состояние вкладки)
     const ssKey = useMemo(() => ({
         rowsPerPage: `${scope}:rowsPerPage`,
@@ -347,6 +348,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         glagolParent = ''
     } = store.getState().credentials;
     const phonesCacheRef = useRef<Map<number, any>>(new Map());
+    const inflightPhonesRef = useRef<Set<number>>(new Set());
 
     const [presets, setPresets] = useState<OptionType[]>([]);
     const [selectedActionOption, setSelectedActionOption] = useState<ActionOption | null>(null);
@@ -466,6 +468,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         // 4) Фолбэк: всегда с подсказкой
         return `Не удалось загрузить данные. Сузьте фильтры (диапазон дат, проекты, статусы) и попробуйте снова.`;
     }
+
 
     const urlHydratedRef = useRef(false);
 
@@ -669,6 +672,54 @@ const PresetSelectorTable: React.FC<Props> = ({
             setAppliedLocalFilters({});
         }
     }, [selectedPreset?.preset?.id]);
+
+    const fetchFlatByIds = useCallback(
+        async (ids: number[], withBaseFilter: boolean) => {
+            if (!selectedPreset || !ids.length) return;
+
+            const need: number[] = [];
+            const cache = phonesCacheRef.current;
+            const inFlight = inflightPhonesRef.current;
+
+            // отбрасываем то, что уже есть в кэше или уже запрошено
+            ids.forEach(id => {
+                if (cache.has(id)) return;
+                if (inFlight.has(id)) return;
+                need.push(id);
+            });
+
+            if (!need.length) return;
+
+            need.forEach(id => inFlight.add(id));
+
+            try {
+                const { preset } = selectedPreset;
+
+                const filterFlat = withBaseFilter
+                    ? { ...buildBaseFilter(), id: ['IN', need] }
+                    : { id: ['IN', need] };
+
+                const { data } = await axios.post<Record<string, any[]>>(
+                    '/api/v1/get_grouped_phones',
+                    {
+                        glagol_parent: glagolParent2,
+                        group_by: ['project'],
+                        group_table: preset.group_table,
+                        filter_by: filterFlat,
+                        role,
+                    }
+                );
+
+                const flat = Object.values(data || {}).flat();
+                upsertFlatPhones(flat);
+            } catch (e) {
+                console.error('fetchFlatByIds error', e);
+            } finally {
+                need.forEach(id => inFlight.delete(id));
+            }
+        },
+        [selectedPreset?.preset?.group_table, role, buildBaseFilter, upsertFlatPhones]
+    );
 
 // вместо чтения из localStorage в on-preset change:
     useEffect(() => {
@@ -1369,24 +1420,12 @@ const PresetSelectorTable: React.FC<Props> = ({
         return String(raw).split(",").map(s => s.trim()).filter(Boolean);
     }
 
-    const hydrateByIds = useCallback(async (ids: number[]) => {
-        if (!selectedPreset || !ids.length) return;
-        try {
-            const { preset } = selectedPreset;
-            const { data } = await axios.post<Record<string, any[]>>('/api/v1/get_grouped_phones', {
-                glagol_parent: glagolParent2,
-                group_by: ['project'],
-                group_table: preset.group_table,
-                // ВАЖНО: без appliedServerFilters / project IN — только id
-                filter_by: { id: ['IN', ids] },
-                role,
-            });
-            const flat = Object.values(data || {}).flat();
-            upsertFlatPhones(flat); // положит в кэш + phonesData
-        } catch (e) {
-            console.error('hydrateByIds error', e);
-        }
-    }, [selectedPreset?.preset?.group_table, role, upsertFlatPhones]);
+    const hydrateByIds = useCallback(
+        async (ids: number[]) => {
+            await fetchFlatByIds(ids, false);
+        },
+        [fetchFlatByIds]
+    );
 
     useEffect(() => {
         // Уже инициализировались — выходим
@@ -1841,35 +1880,12 @@ const PresetSelectorTable: React.FC<Props> = ({
     useEffect(() => {
         if (!selectedPreset || !paginatedRows.length) return;
 
-        // Берём все id из видимых групп на странице
         const idsOnPage = Array.from(
             new Set(paginatedRows.flatMap(r => r.id_list))
         );
 
-        // Что уже есть в кэше — не запрашиваем
-        const missing = idsOnPage.filter(id => !phonesCacheRef.current.has(id));
-        if (!missing.length) return;
-
-        const { preset } = selectedPreset;
-
-        // ВАЖНО: если PK на бэке не "id", поменяй ключ здесь
-        const filterFlat = { ...buildBaseFilter(), id: ['IN', missing] };
-
-        axios.post<Record<string, any[]>>('/api/v1/get_grouped_phones', {
-            glagol_parent: glagolParent2,
-            group_by: ['project'],
-            group_table: preset.group_table,
-            filter_by: filterFlat,
-            role
-        })
-            .then(res => {
-                const flat = Object.values(res.data || {}).flat();
-                upsertFlatPhones(flat);
-            })
-            .catch(err => {
-                console.error('Ошибка подкачки flat по id:', err);
-            });
-    }, [paginatedRows, selectedPreset?.preset?.id, role, buildBaseFilter]);
+        void fetchFlatByIds(idsOnPage, true);
+    }, [paginatedRows, selectedPreset?.preset?.id, role, fetchFlatByIds]);
 
 
     useEffect(() => {
@@ -1879,28 +1895,8 @@ const PresetSelectorTable: React.FC<Props> = ({
             .flatMap(key => key.split(',').map(n => Number(n)))
             .filter(Boolean);
 
-        const uniqMissing = Array.from(
-            new Set(wantedIds.filter(id => !phonesCacheRef.current.has(id)))
-        );
-
-        if (!uniqMissing.length) return;
-
-        const { preset } = selectedPreset;
-        const filterFlat = { ...buildBaseFilter(), id: ['IN', uniqMissing] };
-
-        axios.post<Record<string, any[]>>('/api/v1/get_grouped_phones', {
-            glagol_parent: glagolParent2,
-            group_by: ['project'],
-            group_table: preset.group_table,
-            filter_by: filterFlat,
-            role
-        })
-            .then(res => {
-                const flat = Object.values(res.data || {}).flat();
-                upsertFlatPhones(flat);
-            })
-            .catch(err => console.error('Ошибка подкачки flat по выбранным id:', err));
-    }, [selectedRows, selectedPreset?.preset?.id, role, buildBaseFilter]);
+        void fetchFlatByIds(wantedIds, true);
+    }, [selectedRows, selectedPreset?.preset?.id, role, fetchFlatByIds]);
 
     const totalRowsCount = processedRows.length;
     const showingFrom = totalRowsCount ? (currentPage - 1) * rowsPerPage + 1 : 0;
@@ -2432,16 +2428,44 @@ const PresetSelectorTable: React.FC<Props> = ({
     };
 
     const hasRows = paginatedRows.length > 0;
-
+    const getTzOffsetMinutes = () => -new Date().getTimezoneOffset();
     const statusLabels: Record<string, string> = {
         to_call: "Необработано",
         add: "Доп. контакт",
         schedule: "Отложенный",
         finished: "Завершен"
     };
-    useEffect(() => {
-        console.log("selectedRows: ", selectedRows)
-    }, [selectedRows])
+
+    const chip: React.CSSProperties = {
+        padding: '6px 10px',
+        borderRadius: 10,
+        background: '#111827',
+        color: '#fff',
+        border: '1px solid rgba(255,255,255,.12)',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+    };
+
+    const nextTask = useCallback(() => {
+        socket.emit('outbound_call_get', {
+            assign: true,
+            batch: 1,
+            // break: true,
+            worker,
+            interface: "glagol",
+            sip_login: sipLogin,
+            session_key: sessionKey,
+            projects_pool: projectNames,
+            start_type: "auto",
+            tz_offset: getTzOffsetMinutes(),
+        });
+    }, [worker, sipLogin, sessionKey, projectNames]);
+
+    // useEffect(() => {
+    //     console.log("selectedRows: ", selectedRows)
+    // }, [selectedRows])
     return (
         <div>
             {renderExpressCards()}
@@ -2601,6 +2625,63 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 </button>
                             </div>
                         )}
+                        {/*<div style={{flex: '0 0 250px'}}>*/}
+                        {/*    <button*/}
+                        {/*        onClick={() => {*/}
+                        {/*            socket.emit('outbound_call_get', {*/}
+                        {/*                assign: true,*/}
+                        {/*                batch: 1,*/}
+                        {/*                // break: true,*/}
+                        {/*                worker,*/}
+                        {/*                interface: "glagol",*/}
+                        {/*                sip_login: sipLogin,*/}
+                        {/*                session_key: sessionKey,*/}
+                        {/*                projects_pool: projectNames,*/}
+                        {/*                start_type: "auto",*/}
+                        {/*                tz_offset: getTzOffsetMinutes(),*/}
+                        {/*            });*/}
+
+                        {/*        }}*/}
+                        {/*        className="btn btn-outline-success"*/}
+                        {/*    >*/}
+                        {/*        Начать задачу*/}
+                        {/*    </button>*/}
+                        {/*</div>*/}
+
+                        <button
+                            style={{
+                                ...chip,
+                                background: '#fff',
+                                color: '#2563eb',
+                                border: '1px solid #2563eb',
+                                height: 'calc(1.5em + .75rem + 2px)'
+                            }}
+                            onClick={() => {
+                                socket.emit('outbound_call_get', {
+                                    assign: true,
+                                    batch: 1,
+                                    // break: true,
+                                    worker,
+                                    interface: "glagol",
+                                    sip_login: sipLogin,
+                                    session_key: sessionKey,
+                                    projects_pool: projectNames,
+                                    start_type: "auto",
+                                    tz_offset: getTzOffsetMinutes(),
+                                });
+
+                            }}
+                            title="Получить следующую задачу"
+                        >
+                            <span
+                                className="material-icons"
+                                style={{ fontSize: 20, verticalAlign: 'middle', marginRight: 4 }}
+                            >
+                                skip_next
+                            </span>
+                            <span>Следующая задача</span>
+                        </button>
+
                     </div>
 
                 </div>
@@ -3557,6 +3638,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 );
                             })()}
                         </div>
+
                     </div>
                 )}
 
@@ -3577,6 +3659,33 @@ const PresetSelectorTable: React.FC<Props> = ({
                     onAfterAction={loadGroupedPhones}
                 />
             </div>
+            <button
+                type="button"
+                onClick={nextTask}
+                title="Следующая задача"
+                style={{
+                    position: 'fixed',
+                    right: 12,
+                    bottom: 12,
+                    width: 56,
+                    height: 56,
+                    borderRadius: '50%',
+                    border: 'none',
+                    background: '#2563eb',
+                    color: '#ffffff',
+                    boxShadow: '0 8px 20px rgba(0,0,0,0.25)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 999,
+                    cursor: 'pointer',
+                }}
+            >
+    <span className="material-icons" style={{ fontSize: 28, lineHeight: 1 }}>
+        skip_next
+    </span>
+            </button>
+
         </div>
     );
 };

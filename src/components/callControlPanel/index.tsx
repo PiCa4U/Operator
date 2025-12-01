@@ -15,6 +15,7 @@ import stylesButton from './index.module.css';
 import axios from "axios";
 import { ContactFilesPanel } from '../../features/itsm/chat/FieldsPanel';
 import { chatApi } from '../../features/itsm/chat/api';
+import {makeId} from "../../utils";
 
 // --- ALERT helpers ---
 type AlertMsg = {
@@ -454,6 +455,171 @@ const isVisibleForRole = (visible: any, role?: string): boolean => {
     return arr.includes(r);
 };
 
+type ActivityLabel = string; // если у тебя там объект — заменишь тип
+
+function useActivityPing(params: {
+    enabled: boolean;              // включать только когда мы реально "в карточке"
+    glagolParent: string;
+    userName: string;
+    activityLabels: ActivityLabel[];
+}) {
+    const { enabled, glagolParent, userName, activityLabels } = params;
+
+    const labelsRef = React.useRef<ActivityLabel[]>(activityLabels);
+    React.useEffect(() => {
+        labelsRef.current = activityLabels;
+    }, [activityLabels]);
+
+    const urlRef = React.useRef<string>("");
+    const urlSessionRef = React.useRef<string>("");
+
+    React.useEffect(() => {
+        if (!enabled) return;
+
+        if (!urlRef.current) {
+            urlRef.current = window.location.pathname + window.location.search;
+        }
+
+        if (!urlSessionRef.current) {
+            // можно оставить только crypto.randomUUID, если браузеры все новые
+            if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+                urlSessionRef.current = crypto.randomUUID();
+            } else if (typeof makeId === "function") {
+                urlSessionRef.current = makeId(32);
+            } else {
+                urlSessionRef.current = String(Date.now());
+            }
+        }
+
+        let isWindowActive =
+            document.visibilityState === "visible" && document.hasFocus();
+
+        let lastScrollTs = 0;
+        let lastInputTs  = 0;
+
+        let windowActiveMs = 0;
+        let scrollActiveMs = 0;
+        let inputActiveMs  = 0;
+
+        const INTERVAL_MS        = 30_000; // длина интервала (30 сек, как в примере)
+        const TICK_MS            = 1_000;  // шаг таймера
+        const ACTIVE_TTL_SCROLL  = 2_000;  // считаем скролл "активным" 2 сек после события
+        const ACTIVE_TTL_INPUT   = 2_000;  // и ввод тоже
+
+        let intervalStart = Date.now();
+        let lastTick      = Date.now();
+
+        const handleVisibility = () => {
+            isWindowActive =
+                document.visibilityState === "visible" && document.hasFocus();
+        };
+        const handleFocus = () => {
+            isWindowActive = true;
+        };
+        const handleBlur = () => {
+            isWindowActive = false;
+        };
+        const handleScroll = () => {
+            lastScrollTs = Date.now();
+        };
+        const handleInput = () => {
+            lastInputTs = Date.now();
+        };
+
+        document.addEventListener("visibilitychange", handleVisibility);
+        window.addEventListener("focus", handleFocus);
+        window.addEventListener("blur", handleBlur);
+        window.addEventListener("scroll", handleScroll, { passive: true });
+        document.addEventListener("keydown", handleInput);
+        document.addEventListener("mousedown", handleInput);
+        document.addEventListener("touchstart", handleInput, { passive: true });
+        document.addEventListener("input", handleInput as any);
+
+        const sendPing = (endTs: number) => {
+            // ❗ требования: не слать интервалы с window_active = 0
+            if (windowActiveMs <= 0) {
+                windowActiveMs = scrollActiveMs = inputActiveMs = 0;
+                intervalStart = endTs;
+                return;
+            }
+
+            const payload = {
+                glagol_parent: glagolParent,
+                user_name: userName,
+                url: urlRef.current,
+                url_session: urlSessionRef.current,
+                interval_start: new Date(intervalStart).toISOString(),
+                interval_end:   new Date(endTs).toISOString(),
+                window_active:  Math.round(windowActiveMs),
+                scroll_active:  Math.round(scrollActiveMs),
+                input_active:   Math.round(inputActiveMs),
+                activity_labels: labelsRef.current ?? [],
+            };
+
+            // Если бэк повешен под /api/v1, просто поменяй путь на "/api/v1/activity/ping"
+            axios.post("/api/v1/activity/ping", payload)
+                .catch(err => {
+                    console.warn("activity/ping failed", err);
+                });
+
+            // сбрасываем счётчики на следующий интервал
+            windowActiveMs = scrollActiveMs = inputActiveMs = 0;
+            intervalStart = endTs;
+        };
+
+        const timerId = window.setInterval(() => {
+            const now   = Date.now();
+            const delta = now - lastTick;
+            lastTick    = now;
+
+            const scrollActive = now - lastScrollTs < ACTIVE_TTL_SCROLL;
+            const inputActive  = now - lastInputTs  < ACTIVE_TTL_INPUT;
+
+            if (isWindowActive) {
+                windowActiveMs += delta;
+                if (scrollActive) scrollActiveMs += delta;
+                if (inputActive)  inputActiveMs  += delta;
+            }
+
+            if (now - intervalStart >= INTERVAL_MS) {
+                sendPing(now);
+            }
+        }, TICK_MS);
+
+        return () => {
+            const endTs = Date.now();
+
+            window.clearInterval(timerId);
+
+            document.removeEventListener("visibilitychange", handleVisibility);
+            window.removeEventListener("focus", handleFocus);
+            window.removeEventListener("blur", handleBlur);
+            window.removeEventListener("scroll", handleScroll);
+            document.removeEventListener("keydown", handleInput);
+            document.removeEventListener("mousedown", handleInput);
+            document.removeEventListener("touchstart", handleInput);
+            document.removeEventListener("input", handleInput as any);
+
+            // при размонтировании дольём остаток интервала
+            if (enabled) {
+                const delta = endTs - lastTick;
+                const scrollActive = endTs - lastScrollTs < ACTIVE_TTL_SCROLL;
+                const inputActive  = endTs - lastInputTs  < ACTIVE_TTL_INPUT;
+
+                if (isWindowActive) {
+                    windowActiveMs += delta;
+                    if (scrollActive) scrollActiveMs += delta;
+                    if (inputActive)  inputActiveMs  += delta;
+                }
+
+                if (windowActiveMs > 0) {
+                    sendPing(endTs);
+                }
+            }
+        };
+    }, [enabled, glagolParent, userName]);
+}
+
 const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                specialKey,
                                                                isLoading,
@@ -497,15 +663,18 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                isClient,
                                                                checkBox= null
                                                            }) => {
-    // Из cookies
-    const { sessionKey } = store.getState().operator
-    useEffect(() => console.log("monoModulesCallControlPanel: ", monoModules),[monoModules])
-    console.log("startModulesRanRef: ", startModulesRanRef)
     const {
         sipLogin   = '',
         worker     = '',
         glagolParent = '',
     } = store.getState().credentials;
+
+    const { sessionKey } = store.getState().operator
+    useEffect(() => console.log("monoModulesCallControlPanel: ", monoModules),[monoModules])
+    const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
+    const projectPool = useSelector(selectFullProjectPool) || [];
+    console.log("projectPool: ", projectPool)
+
     const activeCalls: ActiveCall[] = useSelector((state: RootState) => state.operator.activeCalls);
 
     const [manualNumber, setManualNumber] = useState('');
@@ -831,6 +1000,69 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     useEffect(() => setActiveProjectName?.(groupProjects[0]),[groupProjects, setActiveProjectName])
     const [selectedProjects, setSelectedProjects] = useState<string[]>(groupProjects);
 
+
+    const activityLabels = useMemo(() => {
+        // какие поля вообще хотим использовать (обычно ["group_factor_1", "group_factor_2"])
+        const keys = new Set<string>();
+
+        projectPool.forEach((p: any) => {
+            if (!selectedProjects.includes(p.project_name)) return;
+
+            const arr = Array.isArray(p.activity_labels) ? p.activity_labels : [];
+            arr.forEach((lbl: any) => {
+                const s = String(lbl || '').trim();
+                if (s) keys.add(s);
+            });
+        });
+
+        const firstContact = openedPhones && openedPhones.length ? openedPhones[0] : null;
+        const values = new Set<string>();
+
+        // если нет контактов — просто ничего не шлём
+        if (!firstContact) {
+            return [];
+        }
+
+        keys.forEach((rawKey) => {
+            const key = String(rawKey).trim();
+            if (!key) return;
+
+            let value: any = (firstContact as any)[key];
+
+            // пробуем ещё и в contact_info
+            if (
+                (value === undefined || value === null || value === '') &&
+                firstContact.contact_info &&
+                Object.prototype.hasOwnProperty.call(firstContact.contact_info, key)
+            ) {
+                value = firstContact.contact_info[key];
+            }
+
+            // если значение есть — кладём в labels только его
+            const str = String(value ?? '').trim();
+            if (str) {
+                values.add(str);
+            }
+        });
+
+        return Array.from(values);
+    }, [projectPool, selectedProjects, openedPhones]);
+
+    // считаем, что "мы в карточке", когда:
+    //  - есть активный звонок, или
+    //  - идёт постобработка, или
+    //  - открыт tuskMode с openedPhones
+    const activityEnabled =
+        Boolean(hasActiveCall || postActive || (tuskMode && openedPhones && openedPhones.length));
+
+    useActivityPing({
+        enabled: activityEnabled,
+        glagolParent,
+        // тут как раз "1000" — чаще всего это sipLogin
+        userName: sipLogin || worker,
+        activityLabels: activityLabels,
+    });
+
     // у поля есть таб для конкретного проекта?
     function fieldHasTabForProject(f: MergedField, proj: string): boolean {
         const tk = f.tabsByProject?.[proj];
@@ -946,9 +1178,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const sanitize = (v: any) =>
         typeof v === 'string' && v.includes('|_|_|') ? '' : v;
 
-    const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
-    const projectPool = useSelector(selectFullProjectPool) || [];
-    console.log("projectPool: ", projectPool)
     const projectPoolForCall = useMemo(() => {
         return projectPool.filter(project => (project.out_active && project.active)).map(project => project.project_name);
     }, [projectPool]);
@@ -2159,6 +2388,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const callFromCard = (project_name: string, phone: string, phoneId?: number) => {
         manualCallRef.current = true;
+        startModulesRanRef.current = true
 
         if (phoneId) {
             if (setPhoneID) {
@@ -2359,6 +2589,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         setOpenedPhones?.([]);
                         setOpenedGroup?.([]);
                         setPhonesData?.([]);
+                        startModulesRanRef.current = false;
                         if (setActiveProjectName) {
                             setActiveProjectName("")
                         }
@@ -2802,6 +3033,31 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return null;
     };
 
+    const getTzOffsetMinutes = () => -new Date().getTimezoneOffset();
+    const handleNextTask = () => {
+        if (!projectPoolForCall || projectPoolForCall.length === 0) {
+            Swal.fire({
+                icon: 'warning',
+                title: 'Нет проектов для обзвона',
+                text: 'В пуле нет активных исходящих проектов.',
+            });
+            return;
+        }
+
+        socket.emit('outbound_call_get', {
+            assign: true,
+            batch: 1,
+            // break: true,
+            worker,
+            interface: "glagol",
+            sip_login: sipLogin,
+            session_key: sessionKey,
+            projects_pool: projectPoolForCall,
+            start_type: "auto",
+            tz_offset: getTzOffsetMinutes(),
+        });
+    };
+
     const renderActionDock = () => {
         // показываем док, если вообще есть что нажимать
         const manualCommon = commonModules.filter(m => m.start_modes?.includes('manual'));
@@ -2952,6 +3208,29 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 {postActive ? 'Сохранить и вернуться' : 'Сохранить'}
                             </button>
                         )}
+                        <button
+                            style={{
+                                ...chip,
+                                background: '#fff',
+                                color: '#2563eb',
+                                border: '1px solid #2563eb',
+                            }}
+                            onClick={() => {
+                                handleNextTask();
+                                delayedClose();
+                            }}
+                            title="Получить следующую задачу"
+                            // если хочешь, можно блокировать при активном звонке:
+                            // disabled={hasActiveCall}
+                        >
+                            <span
+                                className="material-icons"
+                                style={{ fontSize: 16, verticalAlign: 'middle', marginRight: 4 }}
+                            >
+                                skip_next
+                            </span>
+                            <span>Следующая задача</span>
+                        </button>
                     </div>
 
                     {/* Интеграции (общие) */}

@@ -9,6 +9,7 @@ import Swal from "sweetalert2";
 import { socket } from "../../../../socket";
 import { store } from "../../../../redux/store";
 import { OperatorLogModal } from "./components/operatorLogModal";
+import { OperatorActivityModal } from "./components/operatorActivityModal";
 
 /* =================== типы и вспомогалки =================== */
 type Metrics = {
@@ -37,6 +38,8 @@ type RespPerUser = {
     admin?: Record<string, string> & { total?: string };
     logged_out?: Record<string, string> & { total?: string };
     post_time?: Record<string, string> & { total?: string };
+
+    ui_activity?: string;
 };
 
 type StatesAndStatusesResp = {
@@ -90,12 +93,13 @@ const CAT_SUBCOLS: Record<Category, readonly Subcol[]> = {
 };
 
 // какие «времена» показываем в отчёте (строки HH:MM:SS из total)
-const TIME_KEYS = ["online", "post_time", "break", "logged_out"] as const;
+const TIME_KEYS = ["online", "post_time", "break", "logged_out", "ui_activity"] as const;
 const TIME_TITLES: Record<(typeof TIME_KEYS)[number], string> = {
     online: "Онлайн",
     post_time: "Постобработка",
     break: "Перерыв",
     logged_out: "Оффлайн",
+    ui_activity: "Активность в UI",
 };
 
 /* Сериализация users[]=... в query */
@@ -179,6 +183,14 @@ export const OperatorsTab: React.FC = () => {
     const glagol_parent = glagolParent;
     const [projMap, setProjMap] = useState<Record<string, string>>({});
     const [logUserId, setLogUserId] = useState<string | null>(null);
+    const [activityUserId, setActivityUserId] = useState<string | null>(null);
+
+    const activityUserTitle = useMemo(() => {
+        if (!activityUserId) return "";
+        const found = filtered.find((a) => a.login === activityUserId);
+        return found?.name || activityUserId;
+    }, [filtered, activityUserId]);
+
 
     const [reportCollapsed, setReportCollapsed] = useState(false);
 
@@ -398,6 +410,7 @@ export const OperatorsTab: React.FC = () => {
         time__post_time: string;
         time__break: string;
         time__logged_out: string;
+        time__ui_activity: string;
         // динамические ключи метрик, напр. "outbound__total__count" или "inbound__akc24__talk"
         [k: string]: any;
     };
@@ -466,6 +479,7 @@ export const OperatorsTab: React.FC = () => {
                     time__post_time: strHMS(perUser.post_time?.total),
                     time__break: strHMS(perUser.break?.total),
                     time__logged_out: strHMS(perUser.logged_out?.total),
+                    time__ui_activity: strHMS(perUser.ui_activity),
                 };
 
                 (["outbound", "inbound", "express", "missed"] as Category[]).forEach((cat) => {
@@ -552,7 +566,9 @@ export const OperatorsTab: React.FC = () => {
             const arr: any[] = [r.__name];
 
             // time
-            arr.push(r.time__online, r.time__post_time, r.time__break, r.time__logged_out);
+            for (const tk of TIME_KEYS) {
+                arr.push((r as any)[`time__${tk}`]);
+            }
 
             // categories
             for (const cat of catOrder) {
@@ -936,6 +952,13 @@ export const OperatorsTab: React.FC = () => {
                                                 </button>
                                             )}
 
+                                            <button
+                                                className="btn btn-outline-info"
+                                                onClick={() => setActivityUserId(a.login)}
+                                            >
+                                                Активность
+                                            </button>
+
                                             <button className="btn btn-outline-dark" onClick={() => setLogUserId(a.login)}>
                                                 Логи
                                             </button>
@@ -1220,10 +1243,9 @@ export const OperatorsTab: React.FC = () => {
                                         <td>{r.__name}</td>
 
                                         {/* Время */}
-                                        <td>{r.time__online}</td>
-                                        <td>{r.time__post_time}</td>
-                                        <td>{r.time__break}</td>
-                                        <td>{r.time__logged_out}</td>
+                                        {TIME_KEYS.map((tk) => (
+                                            <td key={`${r.__login}_time_${tk}`}>{(r as any)[`time__${tk}`]}</td>
+                                        ))}
 
                                         {/* Категории */}
                                         {(["outbound", "inbound", "express", "missed"] as const).flatMap((cat) => {
@@ -1293,6 +1315,12 @@ export const OperatorsTab: React.FC = () => {
                 userId={logUserId || ""}
                 loginForTitle={logUserId || undefined}
                 onClose={() => setLogUserId(null)}
+            />
+            <OperatorActivityModal
+                open={!!activityUserId}
+                userId={activityUserId || ""}
+                loginForTitle={activityUserTitle || undefined}
+                onClose={() => setActivityUserId(null)}
             />
         </div>
     );

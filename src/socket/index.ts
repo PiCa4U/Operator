@@ -116,6 +116,24 @@ const emitStatus = () => {
     socket.emit('get_fs_status_once', { worker, sip_login: sipLogin, session_key: sessionKey });
 };
 
+function emitReconnectEvent() {
+    const { sessionKey } = getOp();
+    const { worker } = getCreds();
+
+    if (!sessionKey || !worker) {
+        if (process.env.NODE_ENV !== 'production') {
+            console.log('[socket] skip reconnect: no sessionKey or worker');
+        }
+        return;
+    }
+
+    // 👇 имя евента тут то, что бек ждёт: "reconnect" / "fs_reconnect" / и т.п.
+    socket.emit('reconnect', {
+        session_key: sessionKey,
+        worker,
+    });
+}
+
 function startStatusInterval() {
     if (statusIntervalId) return;
     emitStatus();
@@ -189,6 +207,7 @@ export function disableWebRTC() {
 /** ---- Общие подписки ---- */
 socket.on('connect', () => {
     console.log('Socket connected:', socket.id);
+    emitReconnectEvent();
     if (getOp().sessionKey) {
         startStatusInterval();
         if (webrtcEnabled) {

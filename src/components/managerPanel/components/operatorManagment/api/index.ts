@@ -4,7 +4,7 @@ import {
     CreateAgentPayload,
     UpdateAgentPayload,
     TierMutationPayload,
-    Role, OperatorLogEntry,
+    Role, OperatorLogEntry, ActivityLogPerUser,
 } from "../types";
 import { store } from "../../../../../redux/store";
 
@@ -38,6 +38,52 @@ type ApiUsersResponse = {
     status: "success";
     users: Record<string, ApiUser>;
 };
+
+type ActivityLogApiResponse = {
+    status?: "success" | "error";
+    result?: ActivityLogPerUser;
+    message?: string;
+};
+
+export async function getActivityLog(params: {
+    users: string | number | Array<string | number>;
+    from_dt: string;  // 'YYYY-MM-DD HH:mm:ss' или ISO
+    to_dt: string;
+    glagol_parent?: string;
+}): Promise<ActivityLogPerUser> {
+    const glagol_parent = params.glagol_parent ?? getGlagolParent();
+    const { users, from_dt, to_dt } = params;
+
+    const resp: AxiosResponse<ActivityLogApiResponse | ActivityLogPerUser> = await axios.get(
+        "/api/v1/activity/log",
+        {
+            params: { glagol_parent, users, from_dt, to_dt },
+            paramsSerializer: () => {
+                const usp = new URLSearchParams();
+                usp.set("glagol_parent", glagol_parent);
+                (Array.isArray(users) ? users : [users]).forEach((u) =>
+                    usp.append("users", String(u))
+                );
+                usp.set("from_dt", from_dt);
+                usp.set("to_dt", to_dt);
+                return usp.toString();
+            },
+        }
+    );
+
+    const data: any = resp.data ?? {};
+
+    // Вариант 1: { status, result }
+    if ("status" in data || "result" in data) {
+        if (data.status && data.status !== "success") {
+            throw new Error(data.message || "activity request failed");
+        }
+        return (data.result ?? {}) as ActivityLogPerUser;
+    }
+
+    // Вариант 2: сразу login -> ActivityItem[]
+    return data as ActivityLogPerUser;
+}
 
 export async function getAgents(): Promise<Agent[]> {
     const glagol_parent = getGlagolParent();

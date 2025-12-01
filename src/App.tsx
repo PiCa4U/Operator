@@ -51,13 +51,141 @@ type RootHomeProps = {
     ha1: string;
     turnCreds: any;
     webrtcUrl: string;
+    micState: MicPermState;
+    hasMic: boolean | null;
+    onRequestMic: () => void;
+    micError?: string | null;
+};
+// === NEW: типы/хуки проверки доступа к микрофону
+type MicPermState = 'granted' | 'denied' | 'prompt' | 'unsupported' | 'unknown';
+
+function useAudioInputPresence() {
+    const [hasMic, setHasMic] = React.useState<boolean | null>(null);
+    React.useEffect(() => {
+        let cancelled = false;
+        async function probe() {
+            if (!navigator.mediaDevices?.enumerateDevices) { setHasMic(null); return; }
+            try {
+                const list = await navigator.mediaDevices.enumerateDevices();
+                if (!cancelled) setHasMic(list.some(d => d.kind === 'audioinput'));
+            } catch {
+                if (!cancelled) setHasMic(null);
+            }
+        }
+        probe();
+        const handler = () => void probe();
+        navigator.mediaDevices?.addEventListener?.('devicechange', handler);
+        return () => navigator.mediaDevices?.removeEventListener?.('devicechange', handler);
+    }, []);
+    return hasMic;
+}
+
+function useMicPermission(mode: PhoneMode, isOwner: boolean) {
+    const [state, setState] = React.useState<MicPermState>('unknown');
+    const [error, setError] = React.useState<string | null>(null);
+    const triedRef = React.useRef(false);
+
+    // Следим за Permissions API (если доступен)
+    React.useEffect(() => {
+        let mounted = true;
+        let perm: PermissionStatus | null = null;
+        (async () => {
+            try {
+                const q = (navigator as any).permissions?.query
+                    ? await (navigator as any).permissions.query({ name: 'microphone' as PermissionName })
+                    : null;
+                if (!mounted) return;
+                if (q) {
+                    perm = q;
+                    setState(q.state as MicPermState);
+                    q.onchange = () => setState(q.state as MicPermState);
+                } else {
+                    setState('unsupported');
+                }
+            } catch {
+                setState('unsupported');
+            }
+        })();
+        return () => {
+            mounted = false;
+            if (perm) perm.onchange = null as any;
+        };
+    }, []);
+
+    const request = React.useCallback(async () => {
+        setError(null);
+        try {
+            await navigator.mediaDevices.getUserMedia({ audio: true });
+            setState('granted');
+        } catch (e: any) {
+            const name = e?.name || '';
+            if (name === 'NotAllowedError' || name === 'SecurityError') setState('denied');
+            else if (name === 'NotFoundError') setError('Микрофон не найден');
+            else setError('Не удалось получить доступ к микрофону');
+        }
+    }, []);
+
+    // Автозапрос один раз при выборе WebRTC во вкладке-владельце
+    React.useEffect(() => {
+        const canGUM =
+            'mediaDevices' in navigator &&
+            'getUserMedia' in (navigator.mediaDevices as any);
+
+        if (mode === 'webrtc' && isOwner && !triedRef.current &&
+            (state === 'prompt' || state === 'unsupported' || state === 'unknown')) {
+            triedRef.current = true;
+            if (canGUM) request();
+            else setState('unsupported');
+        }
+    }, [mode, isOwner, state, request]);
+
+    return { state, request, error };
+}
+
+// === NEW: баннер «доступ к микрофону»
+const MicPermissionBanner: React.FC<{
+    show: boolean;
+    micState: MicPermState;
+    hasMic: boolean | null;
+    error?: string | null;
+    onRequest: () => void;
+}> = ({ show, micState, hasMic, error, onRequest }) => {
+    const [hidden, setHidden] = React.useState(false);
+    if (!show || hidden) return null;
+
+    const main =
+        micState === 'denied'
+            ? 'Доступ к микрофону запрещён. WebRTC не будет работать.'
+            : 'Нужен доступ к микрофону для работы WebRTC.';
+
+    return (
+        <div style={{
+            background:'#fff8e1', borderBottom:'1px solid #ffe08a',
+            padding:'8px 16px', display:'flex', alignItems:'center', gap:12
+        }}>
+            <div style={{fontSize:18, lineHeight:1, marginRight:4}}>⚠️</div>
+            <div style={{flex:1}}>
+                <div style={{fontWeight:700}}>WebRTC не активирован</div>
+                <div style={{fontSize:13}}>
+                    {main} {hasMic === false ? 'Микрофон не найден. ' : ''}
+                    <span style={{color:'#6c757d'}}>
+            Откройте разрешения сайта (значок в адресной строке) и разрешите «Микрофон»,
+            затем нажмите «Проверить снова».
+          </span>
+                    {error ? <div style={{color:'#b42318', marginTop:4}}>{error}</div> : null}
+                </div>
+            </div>
+            <button className="btn btn-sm btn-outline-secondary" onClick={onRequest}>Проверить снова</button>
+            <button className="btn btn-sm btn-link" onClick={() => setHidden(true)}>Скрыть</button>
+        </div>
+    );
 };
 
 const RootHome: React.FC<RootHomeProps> = ({
                                                ready, isOwner, mode, setMode, infoOpen, setInfoOpen, infoRef,
-                                               name, glagol, phoneLogin, role, sipLogin, ha1, turnCreds, webrtcUrl
-                                           }) => {
-    const ModeSwitch = (
+                                               name, glagol, phoneLogin, role, sipLogin, ha1, turnCreds, webrtcUrl,
+                                               micState, hasMic, onRequestMic, micError
+                                           }) => {    const ModeSwitch = (
         <div style={{ display: 'flex', gap: 8, padding: 8 }}>
             <button
                 className={mode === 'webrtc' ? 'btn btn-success' : 'btn btn-outline-success'}
@@ -93,7 +221,14 @@ const RootHome: React.FC<RootHomeProps> = ({
                 }}
             >
                 <div style={{ marginLeft: 24 }}>{ModeSwitch}</div>
-
+                {/* === NEW: Баннер до шапки === */}
+                <MicPermissionBanner
+                    show={mode === 'webrtc' && isOwner && micState !== 'granted'}
+                    micState={micState}
+                    hasMic={hasMic}
+                    error={micError}
+                    onRequest={onRequestMic}
+                />
                 {!isOwner && (
                     <button
                         className="btn btn-outline-danger"
@@ -247,14 +382,15 @@ export default function App() {
         };
         fetchAgents();
     }, [sipLogin, glagolParent]);
+    // === NEW: проверка доступа к микрофону
+    const hasMic = useAudioInputPresence();
+    const { state: micState, request: requestMic, error: micError } = useMicPermission(mode, isOwner);
 
-    // === NEW: готовность UI
-    // - softphone: всегда готово
-    // - webrtc: если вкладка — владелец, ждём ha1/turnCreds; если не владелец — UI готов, но без UA
+    // === NEW (опционально): учитываем микрофон в "готовности" WebRTC
     const ready = useMemo(() => {
         if (mode === 'softphone') return true;
-        return isOwner ? Boolean(ha1 && turnCreds) : true;
-    }, [mode, isOwner, ha1, turnCreds]);
+        return isOwner ? Boolean(ha1 && turnCreds && micState === 'granted') : true;
+    }, [mode, isOwner, ha1, turnCreds, micState]);
 
     return (
         <QueryClientProvider client={queryClient}>
@@ -280,6 +416,12 @@ export default function App() {
                                 ha1={ha1!}
                                 turnCreds={turnCreds!}
                                 webrtcUrl={webrtcUrl}
+
+                                // === NEW
+                                micState={micState}
+                                hasMic={hasMic}
+                                onRequestMic={requestMic}
+                                micError={micError}
                             />
                         }
                     />

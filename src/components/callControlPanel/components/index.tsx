@@ -438,53 +438,85 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
 
                         {param.field_type === 'href' && (() => {
                             const rawField = fieldValues[param.field_id] || "";
-                            const trimmed = rawField.trim();
+                            const trimmedField = rawField.trim();
+
                             let links: Array<{ text: string; url: string }> = [];
 
-                            if (baseLinksRef.current.length) {
-                                links = baseLinksRef.current
+                            // аккуратный парсер ссылок
+                            const parseLinks = (raw: unknown): Array<{ text: string; url: string }> => {
+                                if (!raw) return [];
 
-                            }
-                            if (
-                                (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-                                (trimmed.startsWith("[") && trimmed.endsWith("]"))
-                            ) {
-                                try {
-                                    const parsed = JSON.parse(trimmed);
-                                    if (Array.isArray(parsed)) {
-                                        links = parsed;
-                                        baseLinksRef.current = links
-                                        onChange({[param.field_id]: ""})
-                                    }
-
-                                } catch {
-
+                                // уже готовый массив объектов
+                                if (Array.isArray(raw)) {
+                                    return raw.filter(
+                                        (l): l is { text: string; url: string } =>
+                                            l &&
+                                            typeof l === "object" &&
+                                            typeof (l as any).text === "string" &&
+                                            typeof (l as any).url === "string"
+                                    );
                                 }
+
+                                // строка с JSON или двойной JSON
+                                if (typeof raw === "string") {
+                                    let s = raw.trim();
+                                    if (!s) return [];
+
+                                    // если это не похоже на JSON — вообще не трогаем
+                                    if (!["{", "[", '"'].includes(s[0])) return [];
+
+                                    try {
+                                        // случай "\"[]\"" — сначала снимаем внешние кавычки
+                                        if (s.startsWith('"') && s.endsWith('"')) {
+                                            s = JSON.parse(s); // "\"[]\"" -> "[]", "\"{}\"" -> "{}"
+                                        }
+
+                                        const parsed = JSON.parse(s);
+                                        return parseLinks(parsed); // рекурсивно прогоняем ещё раз
+                                    } catch {
+                                        return [];
+                                    }
+                                }
+
+                                // объект типа { links: [...] }
+                                if (typeof raw === "object") {
+                                    const obj = raw as any;
+                                    if (Array.isArray(obj.links)) {
+                                        return parseLinks(obj.links);
+                                    }
+                                }
+
+                                return [];
+                            };
+
+                            // 1) сначала пробуем взять из значения поля (то, что лежит в БД)
+                            if (trimmedField) {
+                                links = parseLinks(trimmedField);
                             }
+
+                            // 2) если там пусто — пробуем дефолты из field_vals
+                            if (!links.length && param.field_vals) {
+                                links = parseLinks(param.field_vals);
+                            }
+
+                            // 3) кешируем (если тебе это реально нужно)
+                            baseLinksRef.current = links;
 
                             if (!links.length) {
-                                if (Array.isArray(param.field_vals)) {
-                                    links = param.field_vals as any;
-                                } else if (typeof param.field_vals === "string") {
-                                    try {
-                                        const parsed = JSON.parse(param.field_vals);
-                                        if (Array.isArray(parsed)) links = parsed;
-                                        onChange({[param.field_id]: ""})
-                                    } catch {
-                                        links = [];
-                                    }
-                                }
+                                // ничего просто не рисуем, но и не триггерим onChange
+                                return null;
                             }
 
                             return (
-
-                                        <div style={{
-                                                 display: "flex",
-                                                 flexDirection: "column",
-                                                 gap: "4px",
-                                                 flex: 1,
-                                                 minWidth: 0,
-                                               }}>
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        gap: "4px",
+                                        flex: 1,
+                                        minWidth: 0,
+                                    }}
+                                >
                                     {links.map((link, i) => (
                                         <a
                                             key={i}
@@ -493,12 +525,12 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                             rel="noopener noreferrer"
                                             className="form-control"
                                             style={{
-                                                display: 'block',
-                                                width: '100%',
-                                                height:'100%',
-                                                whiteSpace: 'normal',
-                                                overflowWrap: 'anywhere',
-                                                wordBreak: 'break-word',
+                                                display: "block",
+                                                width: "100%",
+                                                height: "100%",
+                                                whiteSpace: "normal",
+                                                overflowWrap: "anywhere",
+                                                wordBreak: "break-word",
                                             }}
                                         >
                                             {link.text}
@@ -507,7 +539,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                 </div>
                             );
                         })()}
-
 
                         {param.field_type === 'dates_available' && (() => {
                             // 1) default из param.field_vals (строка JSON или CSV)

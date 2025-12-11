@@ -16,6 +16,7 @@ import axios from "axios";
 import { ContactFilesPanel } from '../../features/itsm/chat/FieldsPanel';
 import { chatApi } from '../../features/itsm/chat/api';
 import {makeId} from "../../utils";
+import {OperatorScreenSharePanel} from "../../screenShare/OperatorScreenSharePanel";
 
 // --- ALERT helpers ---
 type AlertMsg = {
@@ -2267,7 +2268,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 socket.emit('outbound_call_update', {
                     'worker': worker,
                     'session_key':sessionKey,
-                    'assigned_key': assignedKey,
+                    ...(assignedKey ? { assigned_key: assignedKey } : {}),
                     'base_fields':baseFieldValues,
                     'log_status':'saved',
                     'phone_status': resultText,
@@ -4290,6 +4291,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 handleGroupSave={handleGroupSave}
                 phoneID={phoneID}
             />
+            {/*<OperatorScreenSharePanel />*/}
             {renderActionDock()}
         </div>
     );

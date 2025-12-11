@@ -255,7 +255,19 @@ export const OperatorActivityModal: React.FC<Props> = ({
     const items = query.data ?? [];
     const sections = useMemo(() => flattenActivity(items), [items]);
 
+    const [labelFilter, setLabelFilter] = useState<string>("");
+
+    const filteredSections = useMemo(() => {
+        const q = labelFilter.trim().toLowerCase();
+        if (!q) return sections;
+
+        return sections.filter((s) =>
+            s.labels.some((l) => l.toLowerCase().includes(q))
+        );
+    }, [sections, labelFilter]);
+
     const [selectedId, setSelectedId] = useState<string | null>(null);
+
 
     const handleOpenCard = () => {
         if (!selectedSection) return;
@@ -286,17 +298,17 @@ export const OperatorActivityModal: React.FC<Props> = ({
         }
     };
     useEffect(() => {
-        if (!sections.length) {
+        if (!filteredSections.length) {
             setSelectedId(null);
             return;
         }
-        if (!selectedId || !sections.find((s) => s.id === selectedId)) {
-            setSelectedId(sections[0].id);
+        if (!selectedId || !filteredSections.find((s) => s.id === selectedId)) {
+            setSelectedId(filteredSections[0].id);
         }
-    }, [sections, selectedId]);
+    }, [filteredSections, selectedId]);
 
-    const selectedSection = sections.find((s) => s.id === selectedId) || null;
-
+    const selectedSection =
+        filteredSections.find((s) => s.id === selectedId) || null;
     if (!open) return null;
 
     return (
@@ -412,6 +424,7 @@ export const OperatorActivityModal: React.FC<Props> = ({
                             </div>
                         )}
 
+                        {/* если вообще нет секций (бэк ничего не вернул) */}
                         {!query.isLoading &&
                             !query.isError &&
                             sections.length === 0 && (
@@ -420,7 +433,36 @@ export const OperatorActivityModal: React.FC<Props> = ({
                                 </div>
                             )}
 
+                        {/* поиск по меткам — только если есть данные */}
                         {sections.length > 0 && (
+                            <div className="mb-2">
+                                <input
+                                    type="text"
+                                    className="form-control form-control-sm"
+                                    placeholder="Фильтр по меткам…"
+                                    value={labelFilter}
+                                    onChange={(e) => setLabelFilter(e.target.value)}
+                                />
+                                {labelFilter.trim() && (
+                                    <div className="small text-muted mt-1">
+                                        Найдено сессий: {filteredSections.length}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* когда есть секции, но фильтр ничего не нашёл */}
+                        {sections.length > 0 &&
+                            !query.isLoading &&
+                            !query.isError &&
+                            filteredSections.length === 0 &&
+                            labelFilter.trim() && (
+                                <div className="text-muted p-2">
+                                    По заданным меткам ничего не найдено.
+                                </div>
+                            )}
+
+                        {filteredSections.length > 0 && (
                             <div
                                 style={{
                                     overflowY: "auto",
@@ -430,7 +472,7 @@ export const OperatorActivityModal: React.FC<Props> = ({
                                     gap: 8,
                                 }}
                             >
-                                {sections.map((s) => {
+                                {filteredSections.map((s) => {
                                     const totalMin = s.totalSeconds / 60;
                                     const scorePercent = s.avgScore
                                         ? Math.round(s.avgScore * 100)
@@ -476,16 +518,16 @@ export const OperatorActivityModal: React.FC<Props> = ({
                                                 className="d-flex align-items-center mt-1"
                                                 style={{ gap: 6 }}
                                             >
+                            <span className="badge bg-light text-dark border">
+                                интервалов: {s.intervalsCount}
+                            </span>
                                                 <span className="badge bg-light text-dark border">
-                                                    интервалов: {s.intervalsCount}
-                                                </span>
-                                                <span className="badge bg-light text-dark border">
-                                                    ~ {totalMin.toFixed(1)} мин
-                                                </span>
+                                ~ {totalMin.toFixed(1)} мин
+                            </span>
                                                 {scorePercent !== null && (
                                                     <span className="badge bg-success text-white">
-                                                        Активность ~ {scorePercent}%
-                                                    </span>
+                                    Активность ~ {scorePercent}%
+                                </span>
                                                 )}
                                             </div>
                                         </button>

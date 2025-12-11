@@ -1951,9 +1951,22 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         try {
             const response = await axios.get('/api/v1/express_agents_statuses', {
-                params: {ids},
-                paramsSerializer: params =>
-                    params.ids.map((id: number) => `ids=${id}`).join('&')
+                params: { ids, glagolParent },
+                paramsSerializer: (params) => {
+                    const parts: string[] = [];
+
+                    if (Array.isArray(params.ids)) {
+                        parts.push(
+                            ...params.ids.map((id: number) => `ids=${encodeURIComponent(id)}`)
+                        );
+                    }
+
+                    if (params.glagolParent) {
+                        parts.push(`glagolParent=${encodeURIComponent(params.glagolParent)}`);
+                    }
+
+                    return parts.join('&');
+                },
             });
 
             const {

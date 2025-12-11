@@ -751,12 +751,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         window.location.href = "https://my.glagol.ai/login_work/";
     };
 
-    useEffect(() => {
-        socket.on('logout', handleLogout);
-        return () => {
-            socket.off('logout', handleLogout);
-        };
-    }, []);
+    // useEffect(() => {
+    //     socket.on('logout', handleLogout);
+    //     return () => {
+    //         socket.off('logout', handleLogout);
+    //     };
+    // }, []);
 
     useEffect(() => {
         const now = new Date().toISOString();
@@ -1168,7 +1168,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                     socket.emit('outbound_call_update', {
                         worker,
                         session_key: sessionKey,
-                        assigned_key: assignedKey,
+                        ...(assignedKey ? { assigned_key: assignedKey } : {}),
                         log_status: 'ringing',
                         phone_status: 'ringing',
                         special_key: msg.phone_line[0].special_key,
@@ -1345,7 +1345,9 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         const handleFsCalls = (msg: any) => {
             if (!isOwner || !enabled) return;
             const callsArray: any[] = Object.values(msg);
-            dispatch(setActiveCalls(callsArray));
+            const noConferenceArray = callsArray.filter(item => item.application !== "conference")
+            console.log("callsArray: ", noConferenceArray)
+            dispatch(setActiveCalls(noConferenceArray));
         };
 
         const handleOtherUsers = (msg:any) => {

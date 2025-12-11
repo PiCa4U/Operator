@@ -1,13 +1,26 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+// src/components/managerPanel/tabs/monitoring/index.tsx
+import React, {
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+    useCallback,
+} from "react";
 import axios from "axios";
 import { useSelector } from "react-redux";
-import { store } from "../../../../redux/store";
+import { RootState, store } from "../../../../redux/store";
 import { makeSelectFullProjectPool } from "../../../../redux/operatorSlice";
 import { FiltersBar } from "./components/FiltersBar";
-import { ActiveDialogsTable, Row } from "./components/ActiveDialogsTable";
+import {
+    ActiveDialogsTable,
+    Row,
+    ConnectionType,
+} from "./components/ActiveDialogsTable";
 import { UsersResponse, UserInfo } from "./types";
 import Swal from "sweetalert2";
-import { socket } from "../../../../socket";
+import { socket, stopScreenShareSession } from "../../../../socket";
+import { useSip } from "../../../../context/SipContext";
+import { useScreenShareViewer } from "../../../../screenShare/useScreenShareViewer";
 
 /** сериализация массивов без []: projects=a&projects=b */
 const serializeRepeat = (params: Record<string, any>) => {
@@ -38,15 +51,12 @@ const pickCanonicalId = (p: any) =>
 
 type ProjectOption = { id: string; name: string };
 
-/** Справочник проектов: canonical + alias */
 function useProjectDirectory(glagolParent: string, sipLogin: string) {
     const projectPool = useSelector(
         useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin])
     );
 
-    /** любой ключ (slug, numeric id) -> имя */
     const [projectMap, setProjectMap] = useState<Record<string, string>>({});
-    /** только канонический id (slug/id) -> имя (для селекта, без дублей) */
     const [canonicalMap, setCanonicalMap] = useState<Record<string, string>>({});
 
     const mergeProjects = (arr: any[]) => {
@@ -59,10 +69,9 @@ function useProjectDirectory(glagolParent: string, sipLogin: string) {
             if (!canon) return;
             const name = pickProjectName(p, canon);
 
-            nextCanon[canon] = name; // в селект
-            nextAny[canon] = name; // основной ключ
+            nextCanon[canon] = name;
+            nextAny[canon] = name;
 
-            // алиас: числовой id тоже должен работать при поиске имени
             const numeric = p?.id != null ? String(p.id) : "";
             if (numeric && numeric !== canon) {
                 nextAny[numeric] = name;
@@ -73,12 +82,10 @@ function useProjectDirectory(glagolParent: string, sipLogin: string) {
         setCanonicalMap((prev) => ({ ...prev, ...nextCanon }));
     };
 
-    // 1) заполняем из Redux
     useEffect(() => {
         mergeProjects(projectPool || []);
     }, [projectPool]);
 
-    // 2) догружаем с бэка
     useEffect(() => {
         let cancelled = false;
         (async () => {
@@ -111,8 +118,36 @@ function useProjectDirectory(glagolParent: string, sipLogin: string) {
     return { projectMap, canonicalMap, projectOptions };
 }
 
+/** эврика по uuid: для исходящих берём uuid, для входящих — b_uuid */
+const resolveJoinUuid = (
+    row: Row,
+    type: ConnectionType
+): string | null => {
+    const dir = (row.direction || "").toLowerCase();
+    const uuid = row.uuid ?? null;
+    const bUuid = row.b_uuid ?? null;
+
+    const isTakeover = type === "takeover";
+
+    if (!isTakeover) {
+        // старое поведение
+        if (dir === "outbound") return uuid ?? bUuid;
+        if (dir === "inbound") return bUuid ?? uuid;
+        return bUuid ?? uuid;
+    }
+
+    // takeover — всё наоборот
+    if (dir === "outbound") return bUuid ?? uuid;
+    if (dir === "inbound") return uuid ?? bUuid;
+    return uuid ?? bUuid;
+};
+
+type JoinInfo = {
+    type: ConnectionType; // выбранный тип (слушать / шёпот / ... )
+    managerUuid?: string; // uuid ноги менеджера для uuid_break
+};
+
 export const MonitoringTab: React.FC = () => {
-    // креды
     const {
         sipLogin = "",
         glagolParent = "",
@@ -120,33 +155,144 @@ export const MonitoringTab: React.FC = () => {
         sessionKey = "",
     } = (store.getState() as any).credentials || {};
 
-    // справочник
     const { projectMap, canonicalMap, projectOptions } = useProjectDirectory(
         glagolParent,
         sipLogin
     );
 
-    // фильтры
+    // === WebRTC + просмотр экрана менеджером ===
+    const { userAgent, enabled: webrtcEnabled } = useSip();
+    const {
+        status: screenStatus,
+        error: screenError,
+        videoStreams,
+        joinRoom,
+        leaveRoom,
+    } = useScreenShareViewer({ ua: userAgent });
+
+    /** логин оператора, чей экран сейчас показываем (если есть) */
+    const [activeScreenOperator, setActiveScreenOperator] = useState<
+        string | null
+    >(null);
+
+    /** последняя комната, к которой подключился менеджер (для stop) */
+    const lastRoomRef = useRef<string | null>(null);
+
+    // Подписка на события screen_share:start/stop, чтобы джойнить/покидать SIP-комнату
+    useEffect(() => {
+        if (!webrtcEnabled) return;
+        if (!sipLogin || !sessionKey) return;
+
+        const onStart = (p: any) => {
+            if (process.env.NODE_ENV !== "production") {
+                console.log("[screen_share:start manager]", p);
+            }
+
+            const sk = p?.session_key ?? null;
+            if (sk && sk !== sessionKey) return;
+
+            const room: string =
+                p?.room_id ?? p?.room ?? p?.roomId ?? "";
+            if (!room || !room.trim()) {
+                console.warn(
+                    "[screen_share:start manager] no room/room_id in payload",
+                    p
+                );
+                return;
+            }
+
+            const normRoom = room.trim();
+            lastRoomRef.current = normRoom;
+            void joinRoom(normRoom);
+        };
+
+        const onStop = (p: any) => {
+            const sk = p?.session_key ?? null;
+            if (sk && sk !== sessionKey) return;
+
+            lastRoomRef.current = null;
+            setActiveScreenOperator(null);
+            leaveRoom();
+        };
+
+        socket.on("screen_share:start", onStart);
+        socket.on("screen_share:stop", onStop);
+
+        return () => {
+            socket.off("screen_share:start", onStart);
+            socket.off("screen_share:stop", onStop);
+        };
+    }, [webrtcEnabled, sipLogin, sessionKey, joinRoom, leaveRoom]);
+
+    // Явное завершение просмотра по кнопке в UI
+    const handleScreenShareStop = useCallback(() => {
+        stopScreenShareSession(); // шлём на бек screen_share:stop с текущей room_id
+        setActiveScreenOperator(null);
+        lastRoomRef.current = null;
+        leaveRoom();
+    }, [leaveRoom]);
+
     const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
     const [selectedDepts, setSelectedDepts] = useState<string[]>([]);
     const [userQuery, setUserQuery] = useState("");
 
-    // по умолчанию — все (канонические) проекты
     useEffect(() => {
         if (!selectedProjects.length && projectOptions.length) {
             setSelectedProjects(projectOptions.map((o) => o.id));
         }
     }, [projectOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // состояние
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [users, setUsers] = useState<Record<string, UserInfo>>({});
 
-    // пер-кнопочная блокировка (uuid -> pending)
     const [pending, setPending] = useState<Record<string, boolean>>({});
 
-    // загрузка данных
+    /** локально выбранный тип подключения по uuid исходного вызова */
+    const [joinTypeByTargetUuid, setJoinTypeByTargetUuid] = useState<
+        Record<string, ConnectionType>
+    >({});
+
+    const rawActiveCalls = useSelector(
+        (state: RootState) => state.operator.activeCalls as any
+    );
+    const activeCalls: any[] = useMemo(() => {
+        if (!rawActiveCalls) return [];
+        return Array.isArray(rawActiveCalls)
+            ? rawActiveCalls
+            : Object.values(rawActiveCalls);
+    }, [rawActiveCalls]);
+
+    /** uuid исходного звонка -> { type (из UI), managerUuid (из activeCalls) } */
+    const joinsByTargetUuid = useMemo<Record<string, JoinInfo>>(() => {
+        const map: Record<string, JoinInfo> = {};
+        const calls = activeCalls || [];
+
+        Object.entries(joinTypeByTargetUuid).forEach(
+            ([targetUuid, type]) => {
+                let managerUuid: string | undefined;
+
+                for (const c of calls) {
+                    if (!c) continue;
+                    const appData = String(c.application_data || "").trim();
+                    if (!appData || appData !== targetUuid) continue;
+
+                    const rawManagerUuid = String(
+                        c.call_uuid || c.uuid || ""
+                    ).trim();
+                    if (rawManagerUuid) {
+                        managerUuid = rawManagerUuid;
+                        break;
+                    }
+                }
+
+                map[targetUuid] = { type, managerUuid };
+            }
+        );
+
+        return map;
+    }, [activeCalls, joinTypeByTargetUuid]);
+
     const fetchData = async (showSpinner = false) => {
         if (!selectedProjects?.length) {
             setUsers({});
@@ -158,7 +304,7 @@ export const MonitoringTab: React.FC = () => {
             const resp = await axios.get<UsersResponse>("/api/v1/users", {
                 params: {
                     glagol_parent: glagolParent,
-                    projects: selectedProjects, // канонические id
+                    projects: selectedProjects,
                 },
                 paramsSerializer: serializeRepeat,
             });
@@ -170,13 +316,11 @@ export const MonitoringTab: React.FC = () => {
         }
     };
 
-    // первичная загрузка + при смене фильтра
     useEffect(() => {
         fetchData(true);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedProjects.join("|"), glagolParent]);
 
-    // автообновление каждые 3 сек
     const pollId = useRef<number | null>(null);
     useEffect(() => {
         pollId.current && clearInterval(pollId.current);
@@ -187,7 +331,6 @@ export const MonitoringTab: React.FC = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedProjects.join("|"), glagolParent]);
 
-    // набор выбранных имён (для фильтрации по имени, а не по id)
     const selectedNames = useMemo(() => {
         const set = new Set<string>();
         selectedProjects.forEach((id) => {
@@ -196,7 +339,6 @@ export const MonitoringTab: React.FC = () => {
         return set;
     }, [selectedProjects, canonicalMap, projectMap]);
 
-    // опции отделов
     const departmentOptions = useMemo(() => {
         const set = new Set<string>();
         Object.values(users || {}).forEach((u) => {
@@ -206,7 +348,6 @@ export const MonitoringTab: React.FC = () => {
         return Array.from(set).sort((a, b) => a.localeCompare(b));
     }, [users]);
 
-    // строки таблицы
     const rows: Row[] = useMemo(() => {
         const q = userQuery.trim().toLowerCase();
         const out: Row[] = [];
@@ -220,18 +361,19 @@ export const MonitoringTab: React.FC = () => {
             // имя проекта (по любому ключу)
             const projectName: string = (projectMap[projectId] ?? projectId) || "—";
 
-            // фильтр по проектам: сравниваем по имени
-            if (selectedNames.size && projectName !== "—" && !selectedNames.has(projectName)) {
+            if (
+                selectedNames.size &&
+                projectName !== "—" &&
+                !selectedNames.has(projectName)
+            ) {
                 return;
             }
 
-            // фильтр по отделам
             const dep = (u?.department || null) as string | null;
             if (selectedDepts.length) {
                 if (!dep || !selectedDepts.includes(dep)) return;
             }
 
-            // поиск по пользователю (логин/имя)
             const name = u?.name || "";
             const loginLC = login.toLowerCase();
             const nameLC = String(name).toLowerCase();
@@ -244,27 +386,26 @@ export const MonitoringTab: React.FC = () => {
                 department: dep,
                 phone: String(phone),
                 duration: talk?.duration,
-                uuid: talk?.uuid ?? null,     // добавлено
-                b_uuid: talk?.b_uuid ?? null, // добавлено
+                uuid: talk?.uuid ?? null,
+                b_uuid: talk?.b_uuid ?? null,
+                direction: talk?.direction ?? null,
             });
         });
 
-        // сортировка: проект → отдел → логин
         out.sort(
             (a, b) =>
                 a.project.localeCompare(b.project) ||
-                String(a.department || "").localeCompare(String(b.department || "")) ||
+                String(a.department || "").localeCompare(
+                    String(b.department || "")
+                ) ||
                 a.operator.localeCompare(b.operator)
         );
         return out;
     }, [users, selectedDepts, userQuery, projectMap, selectedNames]);
 
-    // ---- ДЕЙСТВИЯ ПО ЗВОНКУ ----
-
     const markPending = (uuid: string, v: boolean) =>
         setPending((p) => ({ ...p, [uuid]: v }));
 
-    /** hold_toggle по uuid (или b_uuid), без sip_login */
     const handleHold = (uuid: string) => {
         if (!uuid || !worker || !sessionKey) return;
         markPending(uuid, true);
@@ -274,11 +415,9 @@ export const MonitoringTab: React.FC = () => {
             uuid,
             action: "hold_toggle",
         });
-        // снимем блокировку через короткую паузу; UI всё равно обновится поллингом
         setTimeout(() => markPending(uuid, false), 800);
     };
 
-    /** uuid_break по uuid (или b_uuid), требует sip_login и idle_set:true */
     const handleHangup = (uuid: string) => {
         if (!uuid || !worker || !sessionKey || !sipLogin) return;
 
@@ -306,9 +445,134 @@ export const MonitoringTab: React.FC = () => {
                 idle_set: true,
             });
 
-            // UI разморозим чуть позже; состояние всё равно подтянется поллингом
             setTimeout(() => markPending(uuid, false), 800);
         })();
+    };
+
+    /** подключение / отключение менеджера к диалогу */
+    const handleJoinCall = (row: Row, connection_type: ConnectionType) => {
+        if (!sessionKey || !worker || !sipLogin) {
+            Swal.fire({
+                icon: "error",
+                title: "Невозможно подключиться",
+                text: "Нет session_key / worker / sip_login менеджера",
+            });
+            return;
+        }
+
+        const joinUuid = resolveJoinUuid(row, connection_type);
+
+        if (!joinUuid) {
+            Swal.fire({
+                icon: "error",
+                title: "UUID не найден",
+                text: "Для этого вызова не удалось определить UUID.",
+            });
+            return;
+        }
+
+        const currentLocalType = joinTypeByTargetUuid[joinUuid];
+        const currentJoin = joinsByTargetUuid[joinUuid];
+
+        // уже этот тип активен — значит "закончить"
+        if (currentLocalType === connection_type) {
+            const currentUUID = currentJoin?.managerUuid;
+
+            if (!currentUUID) {
+                console.warn(
+                    "[join_call] stop: managerUuid ещё не известен, не шлём uuid_break",
+                    { joinUuid, currentJoin }
+                );
+                return;
+            }
+
+            console.log("[join_call] stop", {
+                joinUuid,
+                currentUUID,
+                type: connection_type,
+            });
+
+            socket.emit("sofia_operations", {
+                worker,
+                sip_login: sipLogin,
+                session_key: sessionKey,
+                uuid: currentUUID,
+                action: "uuid_break",
+                idle_set: true,
+            });
+
+            setJoinTypeByTargetUuid((prev) => {
+                const copy = { ...prev };
+                delete copy[joinUuid];
+                return copy;
+            });
+
+            return;
+        }
+
+        // новый "созвон" с выбранным типом
+        setJoinTypeByTargetUuid((prev) => ({
+            ...prev,
+            [joinUuid]: connection_type,
+        }));
+
+        markPending(joinUuid, true);
+
+        const payload = {
+            session_key: sessionKey,
+            worker,
+            glagol_parent: glagolParent,
+            uuid: joinUuid,
+            connection_type,
+            sip_login: sipLogin,
+        };
+
+        if (process.env.NODE_ENV !== "production") {
+            console.log("[join_call] start", payload, { row });
+        }
+
+        socket.emit("join_call", payload);
+
+        setTimeout(() => markPending(joinUuid, false), 1000);
+    };
+
+    /** Тоггл экрана оператора по кнопке в таблице */
+    const handleScreenShareClick = (operatorLogin: string) => {
+        if (!sessionKey || !worker || !sipLogin) {
+            Swal.fire({
+                icon: "error",
+                title: "Невозможно подключиться",
+                text: "Нет session_key / worker / manager_login",
+            });
+            return;
+        }
+
+        // если уже смотрим именно этого оператора — выключаем
+        if (activeScreenOperator === operatorLogin) {
+            handleScreenShareStop();
+            return;
+        }
+
+        // если смотрим кого-то другого — сначала выключим предыдущего
+        if (activeScreenOperator && activeScreenOperator !== operatorLogin) {
+            handleScreenShareStop();
+        }
+
+        setActiveScreenOperator(operatorLogin);
+
+        socket.emit("screen_share:start", {
+            session_key: sessionKey,
+            worker,
+            manager_login: sipLogin,
+            operator_login: operatorLogin,
+        });
+
+        if (process.env.NODE_ENV !== "production") {
+            console.log("[screen_share] start sent", {
+                operator_login: operatorLogin,
+                manager_login: sipLogin,
+            });
+        }
     };
 
     return (
@@ -331,9 +595,17 @@ export const MonitoringTab: React.FC = () => {
             <ActiveDialogsTable
                 loading={loading}
                 rows={rows}
-                onHold={(uuid) => handleHold(uuid)}
-                onHangup={(uuid) => handleHangup(uuid)}
+                onHold={handleHold}
+                onHangup={handleHangup}
                 pending={pending}
+                onScreenShare={handleScreenShareClick}
+                onJoinCall={handleJoinCall}
+                joinStatesByTargetUuid={joinsByTargetUuid}
+                activeScreenOperator={activeScreenOperator}
+                screenShareStatus={screenStatus}
+                screenShareError={screenError}
+                screenShareStreams={videoStreams}
+                onStopScreenShare={handleScreenShareStop}
             />
         </div>
     );

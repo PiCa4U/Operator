@@ -11,6 +11,7 @@ import axios from "axios";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import ItsmGuidRoute from "./features/itsm/ItsmGuidRoute";
 import { webrtcOwner } from "./webrtcOwner";
+import {OperatorScreenSharePanel} from "./screenShare/OperatorScreenSharePanel";
 
 type PhoneMode = 'softphone' | 'webrtc';
 
@@ -182,22 +183,48 @@ const MicPermissionBanner: React.FC<{
 };
 
 const RootHome: React.FC<RootHomeProps> = ({
-                                               ready, isOwner, mode, setMode, infoOpen, setInfoOpen, infoRef,
-                                               name, glagol, phoneLogin, role, sipLogin, ha1, turnCreds, webrtcUrl,
-                                               micState, hasMic, onRequestMic, micError
-                                           }) => {    const ModeSwitch = (
-        <div style={{ display: 'flex', gap: 8, padding: 8 }}>
+                                               ready,
+                                               isOwner,
+                                               mode,
+                                               setMode,
+                                               infoOpen,
+                                               setInfoOpen,
+                                               infoRef,
+                                               name,
+                                               glagol,
+                                               phoneLogin,
+                                               role,
+                                               sipLogin,
+                                               ha1,
+                                               turnCreds,
+                                               webrtcUrl,
+                                               micState,
+                                               hasMic,
+                                               onRequestMic,
+                                               micError,
+                                           }) => {
+    const ModeSwitch = (
+        <div style={{ display: "flex", gap: 8, padding: 8 }}>
             <button
-                className={mode === 'webrtc' ? 'btn btn-success' : 'btn btn-outline-success'}
-                onClick={() => setMode('webrtc')}
-            >WebRTC</button>
+                className={
+                    mode === "webrtc" ? "btn btn-success" : "btn btn-outline-success"
+                }
+                onClick={() => setMode("webrtc")}
+            >
+                WebRTC
+            </button>
             <button
-                className={mode === 'softphone' ? 'btn btn-primary' : 'btn btn-outline-primary'}
-                onClick={() => setMode('softphone')}
-            >Softphone</button>
+                className={
+                    mode === "softphone" ? "btn btn-primary" : "btn btn-outline-primary"
+                }
+                onClick={() => setMode("softphone")}
+            >
+                Softphone
+            </button>
         </div>
     );
 
+    // Если захочешь вернуть сплэш "готовимся" — раскомментируй:
     // if (!ready) {
     //     return (
     //         <div style={{ padding: 16 }}>
@@ -208,8 +235,21 @@ const RootHome: React.FC<RootHomeProps> = ({
     // }
 
     return (
-        <>
-            {/* Верхняя панель */}
+        <SipProvider
+            enabled={mode === "webrtc" && isOwner}
+            userId={sipLogin}
+            ha1={ha1}
+            wsServer={webrtcUrl}
+            turnCreds={turnCreds}
+        >
+            {/* Мостик "занят/не занят" для мультивкладочности */}
+            <OwnerBusyBridge />
+
+            {/* 🔹 Глобальная панель шаринга экрана для оператора.
+                Показываем только операторам, у менеджеров её не будет. */}
+            {role !== "Менеджер" && <OperatorScreenSharePanel />}
+
+            {/* 🔹 Верхняя панель с переключением режимов и бейджем оператора */}
             <div
                 style={{
                     display: "flex",
@@ -221,20 +261,22 @@ const RootHome: React.FC<RootHomeProps> = ({
                 }}
             >
                 <div style={{ marginLeft: 24 }}>{ModeSwitch}</div>
-                {/* === NEW: Баннер до шапки === */}
+
+                {/* Баннер про микрофон (если WebRTC включён, но разрешения нет) */}
                 <MicPermissionBanner
-                    show={mode === 'webrtc' && isOwner && micState !== 'granted'}
+                    show={mode === "webrtc" && isOwner && micState !== "granted"}
                     micState={micState}
                     hasMic={hasMic}
                     error={micError}
                     onRequest={onRequestMic}
                 />
+
                 {!isOwner && (
                     <button
                         className="btn btn-outline-danger"
                         onClick={async () => {
                             const ok = await webrtcOwner.claim();
-                            if (ok && mode !== 'webrtc') setMode('webrtc');
+                            if (ok && mode !== "webrtc") setMode("webrtc");
                         }}
                     >
                         Сделать звонковой
@@ -244,7 +286,12 @@ const RootHome: React.FC<RootHomeProps> = ({
                 {/* Бейдж оператора с поповером */}
                 <div
                     ref={infoRef}
-                    style={{ marginRight: 20, position: 'relative', display: 'flex', alignItems: 'center' }}
+                    style={{
+                        marginRight: 20,
+                        position: "relative",
+                        display: "flex",
+                        alignItems: "center",
+                    }}
                     onMouseEnter={() => setInfoOpen(true)}
                     onMouseLeave={() => setInfoOpen(false)}
                 >
@@ -256,16 +303,37 @@ const RootHome: React.FC<RootHomeProps> = ({
                         aria-haspopup="dialog"
                         aria-expanded={infoOpen}
                         style={{
-                            display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700,
-                            borderRadius: 999, padding: '6px 12px', boxShadow: '0 1px 2px rgba(0,0,0,.06)'
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            fontWeight: 700,
+                            borderRadius: 999,
+                            padding: "6px 12px",
+                            boxShadow: "0 1px 2px rgba(0,0,0,.06)",
                         }}
                     >
-                        <span style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {name}
+                        <span
+                            style={{
+                                maxWidth: 260,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                            }}
+                        >
+                            {name}
                         </span>
                         <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
-                            <circle cx="12" cy="12" r="10" fill="currentColor" opacity=".12" />
-                            <path d="M12 8.25a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm-1.25 2.5a1.25 1.25 0 1 1 2.5 0v6a1.25 1.25 0 1 1-2.5 0v-6Z" fill="currentColor"/>
+                            <circle
+                                cx="12"
+                                cy="12"
+                                r="10"
+                                fill="currentColor"
+                                opacity=".12"
+                            />
+                            <path
+                                d="M12 8.25a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm-1.25 2.5a1.25 1.25 0 1 1 2.5 0v6a1.25 1.25 0 1 1-2.5 0v-6Z"
+                                fill="currentColor"
+                            />
                         </svg>
                     </button>
 
@@ -273,39 +341,49 @@ const RootHome: React.FC<RootHomeProps> = ({
                         <div
                             role="dialog"
                             style={{
-                                position: 'absolute', right: 0, top: 'calc(100% + 8px)', minWidth: 280,
-                                background: '#fff', border: '1px solid rgba(0,0,0,.08)', borderRadius: 12,
-                                padding: 12, boxShadow: '0 8px 24px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.06)', zIndex: 1000
+                                position: "absolute",
+                                right: 0,
+                                top: "calc(100% + 8px)",
+                                minWidth: 280,
+                                background: "#fff",
+                                border: "1px solid rgba(0,0,0,.08)",
+                                borderRadius: 12,
+                                padding: 12,
+                                boxShadow:
+                                    "0 8px 24px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.06)",
+                                zIndex: 1000,
                             }}
                         >
-                            <div style={{ fontSize: 12, color: '#6c757d', marginBottom: 8 }}>Аккаунт оператора</div>
+                            <div
+                                style={{
+                                    fontSize: 12,
+                                    color: "#6c757d",
+                                    marginBottom: 8,
+                                }}
+                            >
+                                Аккаунт оператора
+                            </div>
                             <Row label="Имя" value={name} />
                             <Row label="Glagol логин" value={glagol} mono />
                             <Row label="Логин телефонии" value={phoneLogin} mono />
                             <Row label="Роль" value={role} />
                             <div style={{ height: 4 }} />
                             <div style={{ fontSize: 11, color: "#98a2b3" }}>
-                                {isOwner ? "Вы — владелец WebRTC в этой вкладке." : "Эта вкладка без WebRTC (не владелец)."}
+                                {isOwner
+                                    ? "Вы — владелец WebRTC в этой вкладке."
+                                    : "Эта вкладка без WebRTC (не владелец)."}
                             </div>
                         </div>
                     )}
                 </div>
             </div>
 
-            {/* Телефония и основное приложение */}
-            <SipProvider
-                enabled={mode === 'webrtc' && isOwner}
-                userId={sipLogin}
-                ha1={ha1}
-                wsServer={webrtcUrl}
-                turnCreds={turnCreds}
-            >
-                <OwnerBusyBridge />
-                <MainApp isOwner={isOwner}/>
-            </SipProvider>
-        </>
+            {/* 🔹 Основное приложение: дашборды, карточки, звонки и т.д. */}
+            <MainApp isOwner={isOwner} />
+        </SipProvider>
     );
 };
+
 
 export default function App() {
     const {

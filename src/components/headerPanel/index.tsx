@@ -206,7 +206,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const { monitorUsers, monitorProjects, allProjects, monitorCallcenter } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
-
+    console.log("monitorUsers: ", monitorUsers)
     const [autocallEnabled, setAutocallEnabled] = useState(() => {
         return localStorage.getItem('autocallEnabled') === 'true';
     });
@@ -370,7 +370,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             socket.emit('outbound_call_update', {
                 worker,
                 session_key: sessionKey,
-                assigned_key: assignedKey,
+                ...(assignedKey ? { assigned_key: assignedKey } : {}),
                 log_status: 'finished',
                 phone_status: 'finished',
                 special_key: specialKey,
@@ -620,8 +620,11 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             setSpecialKey(msg[0].special_key);
             setOutActivePhone(phone);
             setOutActiveProjectName(project_name);
-            setAssignedKey(msg[0].assigned_key);
-
+            if (msg[0].auto_start) {
+                setAssignedKey(msg[0].assigned_key);
+            } else {
+                setAssignedKey("")
+            }
             // 👉 Сначала отправляем check_express
             socket.emit("check_express", {
                 phone,
@@ -717,7 +720,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     socket.emit('outbound_call_update', {
                         worker,
                         session_key: sessionKey,
-                        assigned_key: assignedKey,
+                        ...(assignedKey ? { assigned_key: assignedKey } : {}),
                         log_status: 'ringing',
                         phone_status: 'ringing',
                         special_key: specialKey,
@@ -736,7 +739,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 socket.emit('outbound_call_update', {
                     worker,
                     session_key: sessionKey,
-                    assigned_key: assignedKey,
+                    ...(assignedKey ? { assigned_key: assignedKey } : {}),
                     log_status: 'error',
                     phone_status: 'error',
                     special_key: specialKey,

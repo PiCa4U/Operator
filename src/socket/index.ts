@@ -1,15 +1,18 @@
 // src/socket.ts
 import io from 'socket.io-client';
-import { store } from '../redux/store';
+import {RootState, store} from '../redux/store';
 import {
     setFsReport, setFsStatus, setMonitorData, setFsReasons,
     setHa1, setTurnCreds
 } from '../redux/operatorSlice';
 import { parseMonitorData } from "../utils";
+import Swal from "sweetalert2";
 
 type IOSocket = ReturnType<typeof io>;
 const getCreds = () => store.getState().credentials;
 const getOp    = () => store.getState().operator;
+let screenShareRoomId: string | null = null;
+let screenSharePingIntervalId: number | undefined;
 
 /* === чтение fsServer из data-* + нормализация хоста === */
 function sanitizeHost(raw?: string | null): string | undefined {
@@ -93,6 +96,106 @@ function isReadyForConnect() {
     // host есть, если он в Redux ИЛИ его можно прочитать из DOM.
     const hostOk = Boolean(sanitizeHost(fsServer) || readFsServerFromDOM());
     return Boolean(sessionKey && sipLogin && worker && hostOk);
+}
+
+function getCurrentRole(): "manager" | "operator" | null {
+    const state = store.getState() as RootState;
+
+    const { sipLogin } = state.credentials || {};
+    const monitorUsers = state.operator?.monitorData?.monitorUsers as
+        | Record<string, { type?: string }>
+        | undefined;
+
+    const user = sipLogin && monitorUsers ? monitorUsers[sipLogin] : undefined;
+
+    // 1) пробуем взять из monitorUsers
+    if (user?.type === "manager" || user?.type === "operator") {
+        return user.type;
+    }
+
+    // 2) запасной вариант — то, что лежит в операторском слайсе
+    const op: any = state.operator;
+    const raw = op?.role ?? op?.type;
+    if (raw === "manager" || raw === "operator") {
+        return raw;
+    }
+
+    return null;
+}
+
+/** ---- screen_share:accept ---- */
+function emitScreenShareAccept(roomId: string) {
+    const { sessionKey } = getOp();
+    const { worker, sipLogin } = getCreds();
+
+    if (!sessionKey || !worker || !sipLogin) {
+        if (process.env.NODE_ENV !== "production") {
+            console.warn("[screen_share] cannot accept: no sessionKey/worker/sipLogin");
+        }
+        return;
+    }
+
+    socket.emit("screen_share:accept", {
+        session_key: sessionKey,
+        worker,
+        sip_login: sipLogin,
+        room_id: roomId,
+    });
+}
+
+/** ---- screen_share:ping ---- */
+function emitScreenSharePing() {
+    if (!screenShareRoomId) return;
+
+    const { sessionKey } = getOp();
+    const { worker, sipLogin } = getCreds();
+
+    if (!sessionKey || !worker || !sipLogin) return;
+    if (!isConnected()) return;
+
+    socket.emit("screen_share:ping", {
+        session_key: sessionKey,
+        worker,
+        sip_login: sipLogin,
+        room_id: screenShareRoomId,
+    });
+}
+
+function startScreenSharePing(roomId: string) {
+    screenShareRoomId = roomId;
+
+    if (screenSharePingIntervalId) {
+        clearInterval(screenSharePingIntervalId);
+        screenSharePingIntervalId = undefined;
+    }
+
+    // первый пинг можно отправить сразу
+    emitScreenSharePing();
+    screenSharePingIntervalId = window.setInterval(emitScreenSharePing, 15000);
+}
+
+function stopScreenSharePing() {
+    if (screenSharePingIntervalId) {
+        clearInterval(screenSharePingIntervalId);
+        screenSharePingIntervalId = undefined;
+    }
+    screenShareRoomId = null;
+}
+
+/** Опциональный публичный хелпер: завершить сессию вручную (для менеджера) */
+export function stopScreenShareSession() {
+    if (!screenShareRoomId) return;
+
+    const { sessionKey } = getOp();
+    const { worker } = getCreds();
+    if (!sessionKey || !worker) return;
+    if (!isConnected()) return;
+
+    socket.emit("screen_share:stop", {
+        session_key: sessionKey,
+        worker,
+        room_id: screenShareRoomId,
+    });
 }
 
 /** Уже подключены? */
@@ -204,6 +307,96 @@ export function disableWebRTC() {
     if (initialHa1TimerId) { clearTimeout(initialHa1TimerId); initialHa1TimerId = undefined; }
 }
 
+socket.on("screen_share:start", (data: any) => {
+    const roomId = data?.room_id || data?.room || data?.roomId;
+    if (!roomId) {
+        console.warn("[screen_share:start] no room_id in payload", data);
+        return;
+    }
+
+    if (process.env.NODE_ENV !== "production") {
+        console.log("[screen_share:start] room_id =", roomId, data);
+    }
+
+    // запускаем пинги для этой вкладки
+    startScreenSharePing(roomId);
+
+    const role = getCurrentRole();
+    const isManager  = role === "manager";
+    const isOperator = role === "operator" || !role; // дефолтом считаем оператором
+
+    // 🔹 Оператор в вкладке с включённым WebRTC — сразу авто-accept
+    if (isOperator && webrtcEnabled) {
+        emitScreenShareAccept(roomId);
+    }
+
+    // 🔹 Менеджеру ничего не показываем (только ждём стрима)
+    if (isManager && process.env.NODE_ENV !== "production") {
+        console.log("[screen_share] manager got start, waiting for operator stream");
+    }
+});
+socket.on("screen_share:error", (data: any) => {
+    if (process.env.NODE_ENV !== "production") {
+        console.warn("[screen_share:error]", data);
+    }
+
+    stopScreenSharePing();
+
+    const message =
+        data?.message ||
+        (data?.status === "timeout"
+            ? "Оператор не принял запрос на просмотр экрана."
+            : "Ошибка при подключении к экрану.");
+
+    Swal.fire({
+        icon: "error",
+        title: "Ошибка screen sharing",
+        text: message,
+    })
+});
+
+socket.on("screen_share:stop", (data: any) => {
+    if (process.env.NODE_ENV !== "production") {
+        console.log("[screen_share:stop]", data);
+    }
+
+    // в любом случае гасим пинги
+    stopScreenSharePing();
+
+    // 👇 определяем роль
+    const role = getCurrentRole();
+    const isManager = role === "manager";
+
+    // Операторам (и непонятной роли) никаких попапов не показываем
+    if (!isManager) {
+        return;
+    }
+
+    const reason = data?.reason || "unknown";
+    let text = "Сессия просмотра экрана завершена.";
+
+    if (reason === "manual") {
+        text = "Сессия просмотра экрана завершена менеджером.";
+    } else if (reason === "ping_timeout_manager") {
+        text = "Сессия завершена из-за отсутствия пингов от менеджера.";
+    } else if (reason === "ping_timeout_operator") {
+        text = "Сессия завершена из-за отсутствия пингов от оператора.";
+    }
+
+    void Swal.fire({
+        icon: "info",
+        title: "Просмотр экрана завершён",
+        text,
+    });
+});
+
+
+socket.on("screen_share:pong", (data: any) => {
+    if (process.env.NODE_ENV !== "production") {
+        console.log("[screen_share:pong]", data);
+    }
+});
+
 /** ---- Общие подписки ---- */
 socket.on('connect', () => {
     console.log('Socket connected:', socket.id);
@@ -222,11 +415,14 @@ socket.on('disconnect', () => {
     console.log('Socket disconnected');
     stopStatusInterval();
     stopAuthIntervals();
+    stopScreenSharePing();
 });
 
 socket.on("fs_status", (data: any) => store.dispatch(setFsStatus(data)));
 socket.on("fs_report", (data: any) => store.dispatch(setFsReport(data)));
-socket.on("monitor_projects", (data: any) => store.dispatch(setMonitorData(parseMonitorData(data))));
+socket.on("monitor_projects", (data: any) => {
+    store.dispatch(setMonitorData(parseMonitorData(data)))
+});
 socket.on('fs_reasons',    (data: any) => store.dispatch(setFsReasons(data)));
 socket.on('cc_fs_reasons', (data: any) => store.dispatch(setFsReasons(data)));
 

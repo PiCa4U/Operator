@@ -228,8 +228,47 @@ const DevBootstrap: React.FC = () => {
 
 // ===== РЕНДЕР =====
 
-if (process.env.NODE_ENV === 'production') {
-    // ПРОД: сразу используем креды (почти как старый код, только без SSE)
+// ===== РЕНДЕР =====
+
+const isProdBuild = process.env.NODE_ENV === 'production';
+
+// флаг "принудительно включить dev-выбор профиля" в проде
+let forceDevBootstrap = false;
+
+if (isProdBuild) {
+    try {
+        const hostname = window.location.hostname;
+
+        // если запущено на Vercel — включаем dev-режим с выбором профиля
+        if (hostname.endsWith('.vercel.app')) {
+            forceDevBootstrap = true;
+        }
+
+        // (дополнительно можно руками включать через ?mock=1)
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('mock') === '1') {
+            forceDevBootstrap = true;
+        }
+    } catch (e) {
+        // на всякий случай игнорируем любые ошибки
+        console.warn('Env detection failed', e);
+    }
+}
+
+// используем DevBootstrap:
+// - всегда в dev-сборке
+// - либо в проде, но когда мы явно форсим (Vercel / ?mock=1)
+const useDevBootstrap = !isProdBuild || forceDevBootstrap;
+
+if (useDevBootstrap) {
+    // здесь креды выставляются внутри DevBootstrap после выбора профиля
+    root.render(
+        <Provider store={store}>
+            <DevBootstrap />
+        </Provider>
+    );
+} else {
+    // нормальный продовый бутстрап из data-* (как раньше)
     store.dispatch(
         setCredentials({
             sessionKey,
@@ -247,13 +286,6 @@ if (process.env.NODE_ENV === 'production') {
     root.render(
         <Provider store={store}>
             <App />
-        </Provider>
-    );
-} else {
-    // DEV: сначала показываем выбор оператора
-    root.render(
-        <Provider store={store}>
-            <DevBootstrap />
         </Provider>
     );
 }

@@ -333,11 +333,15 @@ export function useSipUA(config: {
                 sessionDescriptionHandlerFactoryOptions: {
                     constraints: { audio: true, video: false },
                     mediaStreamFactory: () => Promise.resolve(localStream),
-                    iceGatheringTimeout: 1000,
+                    iceGatheringTimeout: 4000,
                     peerConnectionConfiguration: {
+                        iceTransportPolicy: "relay" as RTCIceTransportPolicy,
                         iceServers: [
-                            { urls: 'stun:stun.l.google.com:19302' },
-                            creds || undefined
+                            // при relay STUN всё равно игнорируется, но пусть будет
+                            { urls: "stun:stun.l.google.com:19302" },
+
+                            // TURN из creds (важно, чтобы creds был валидным RTCIceServer)
+                            creds || undefined,
                         ].filter(Boolean) as RTCIceServer[],
                     },
                     modifiers: [filterG711]

@@ -221,7 +221,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const [selectedRowsKeys, setSelectedRowsKeys] = React.useState<string[]>([]);
 
     const [phoneID, setPhoneID] = useState<number|null>(null)
-    useEffect(() => console.log("expressCall:", expressCall ),[expressCall])
 
     const [appliedLocalFilters, setAppliedLocalFilters] = useState<Record<string, string>>({});
     const [appliedServerFilters, setAppliedServerFilters] = useState<Record<string, ServerAppliedByCol>>({});
@@ -229,13 +228,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const [serverFilterDraft, setServerFilterDraft] = useState<Record<string, ServerDraftByCol>>({});
     const [unreadOnly, setUnreadOnly] = useState(false); // если нужно сохранять этот фильтр
 
-    useEffect(() => console.log("scriptProject:", scriptProject ),[scriptProject])
     const { start: defaultStart, end: defaultEnd } = getInitialDateRange();
     const [startDate, setStartDate] = useState<Date | null>(defaultStart);
     const [endDate, setEndDate]     = useState<Date | null>(defaultEnd);
     const [selectedStatus, setSelectedStatus] = useState<string | null>(() => {
         const saved = localStorage.getItem('selectedStatus');
-        console.log("saved: ", saved)
         return saved !== null ? saved : null;
     });
 
@@ -270,7 +267,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const openedGuids = useMemo(() => {
         return openedPhones.filter(open => Boolean(open.guid));
     }, [openedPhones]);
-    useEffect(() => console.log("openedGuids: ", openedGuids), [openedGuids])
     const firstGuid = useMemo(() => {
         return openedGuids.length > 0 ? openedGuids[0].guid : null;
     }, [openedGuids]);
@@ -303,7 +299,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         return { role, name, login, worker: worker || null };
     }, [sipLogin, worker]);
 
-    useEffect(() => console.log("appliedServerFilters: ", appliedServerFilters),[appliedServerFilters])
 
     const collapsed = useChatCollapsed(firstGuid);
 
@@ -346,7 +341,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         const saved = localStorage.getItem('tasksCurrentPage');
         return saved !== null ? parseInt(saved, 10) : 1;
     });
-    useEffect(() => console.log("currentPresetPage: ", currentPresetPage),[currentPresetPage])
     const [selectedPreset, setSelectedPreset] = useState<OptionType | null>(() => {
         const saved = localStorage.getItem('tasksSelectedPreset');
         return saved ? JSON.parse(saved) as OptionType : null;
@@ -749,14 +743,14 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         logoutShownRef.current = true;
 
         window.location.href = "https://my.glagol.ai/login_work/";
-    };
+};
 
-    // useEffect(() => {
-    //     socket.on('logout', handleLogout);
-    //     return () => {
-    //         socket.off('logout', handleLogout);
-    //     };
-    // }, []);
+    useEffect(() => {
+        socket.on('logout', handleLogout);
+        return () => {
+            socket.off('logout', handleLogout);
+        };
+    }, []);
 
     useEffect(() => {
         const now = new Date().toISOString();
@@ -782,7 +776,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 // 3) selectedPreset
 
 
-    useEffect(() => console.log("scriptProject: ", scriptProject),[scriptProject])
     useEffect(() => {
         if (!selectedCall || !openedPhones.length) {
             setScriptProject("")
@@ -844,7 +837,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 //         sse.close();
 //     });
 
-    useEffect(() => console.log('selectedPreset: ', selectedPreset),[selectedPreset])
     const [fullWidthCard, setFullWidthCard] = useState<boolean>(() => {
         try {
             return JSON.parse(localStorage.getItem('fullWidthCard') ?? 'false');
@@ -866,15 +858,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     }
     useEffect(() => {
         if (activeCalls.length || postActive) return
-        console.log("scriptTestselectedCall: ",selectedCall)
         if (selectedCall) {
-            console.log("scriptTestselectedCall112: ",Object.values(selectedCall?.projects)[0].call_result)
         }
         if (selectedCall && Object.values(selectedCall.projects)[0].call_result === null) {
 
         }
         if (selectedCall && Object.values(selectedCall.projects)[0].call_result === null) {
-            // console.log("script")
             const scriptDirection = selectedCall.total_direction || "inbound"
             const scriptProj = Object.keys(selectedCall.projects)[0] !== "outbound" ?
                 Object.keys(selectedCall.projects)[0] :
@@ -927,16 +916,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         //     setGroupIDs([])
         // }
     },[showTasksDashboard, postActive, activeCalls.length, selectedCall])
-    useEffect(() => console.log("openedPhones: ", openedPhones),[openedPhones])
-    useEffect(() => console.log("phonesData: ", phonesData),[phonesData])
 
     const groupProjects = useMemo(() =>
             Array.from(new Set(openedPhones.map(p => p.project))),
         [openedPhones]
     );
-    useEffect(() => {
-        console.log("fullWidthCard: ", fullWidthCard)
-    },[fullWidthCard])
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
 
@@ -994,8 +978,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     }, [openedGroup, phonesData, outboundID, GroupIDs, outboundCall, showTasksDashboard]);
 
 
-    useEffect(()=> console.log("activeProjectName: ", activeProjectName),[activeProjectName])
-    useEffect(()=> console.log("activeCall: ", activeCall),[activeCall])
 
     // const sessionKey = getCookies('session_key') || '';
     useEffect(() => {
@@ -1015,13 +997,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         //         worker
         //     })
         // }
-        console.log("activeCalls: ", activeCalls)
     },[activeCalls])
 
 
     useEffect(()=> {
         if (!activeCall && !postActive && (modules.length || Object.keys(monoModules).length) && !openedPhones.length && !selectedCall) {
-            console.log("1234delete")
             setModules([])
             setMonoModules({})
         }
@@ -1062,9 +1042,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         }
     },[activeCall, postActive, activeCalls, sessionKey])
     useEffect(() => {
-        console.log("activeCalls: ", activeCalls)
         const first = activeCalls && activeCalls.length ? activeCalls[0] : {};
-        console.log("first: ", first)
 
         if (activeCalls.length > 0 && !activeCall && (first?.application || first?.b_callstate === "ACTIVE")) {
             setActiveCall(true);
@@ -1134,7 +1112,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         };
 
         const handleCheckExpress = (check: any) => {
-            console.log("check_express response:", check);
             if (check.express && check.assigned_key) {
                 normalizeUrl()
                 setOpenedPhones?.([]);
@@ -1159,7 +1136,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         };
 
         const handleGetPhoneLine = (msg: any) => {
-            console.log("get_phone_line response:", msg);
 
             // ✅ Если приходит массив phone_line, берем special_key
             if (msg.phone_line[0]?.special_key) {
@@ -1176,7 +1152,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
                 }
             }
-            console.log()
             if (expressCall) {
                 socket.emit("accept_express_call",{
                     worker,
@@ -1245,10 +1220,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                     p.preset.projects.includes(projNamesSaved[0])
                 );
                 if (!matchedPreset) {
-                    console.log("Нет пресета под проект:", projNamesSaved[0]);
                     return;
                 } else {
-                    console.log("matchedPreset:", matchedPreset);
                     setSelectedPreset(matchedPreset);
                 }
 
@@ -1276,7 +1249,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                     ...groupFilter,
                 };
 
-                console.log("get_grouped_phones.filter_by →", filter_by);
 
                 const response2 = await axios.post<any>("/api/v1/get_grouped_phones", {
                     glagol_parent: projectPool[0].scheme || "",
@@ -1295,7 +1267,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 const matchedGroups = allGroups.filter(group =>
                     group.some(item => item.id === phoneID)
                 );
-                console.log("matchedGroups:", matchedGroups);
 
                 if (matchedGroups.length > 0) {
                     setShowTasksDashboard(true);
@@ -1315,7 +1286,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
                     momoProjectRepo.current = true;
                 } else {
-                    console.log("Номер не найден → tuskMode OFF");
                     setShowTasksDashboard(false);
                 }
             } catch (err) {
@@ -1346,7 +1316,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             if (!isOwner || !enabled) return;
             const callsArray: any[] = Object.values(msg);
             const noConferenceArray = callsArray.filter(item => item.application !== "conference")
-            console.log("callsArray: ", noConferenceArray)
             dispatch(setActiveCalls(noConferenceArray));
         };
 
@@ -1375,14 +1344,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         };
     }, [dispatch, isOwner, enabled]);
 
-    useEffect(() => console.log("outActivePhone: ",outActivePhone),[outActivePhone])
     useEffect(() => {
         if (!(activeCalls[0] && Object.keys(activeCalls[0]).length > 0)) return
         const first = activeCalls[0]
         if (first.direction === "inbound") {
             setShowTasksDashboard(false)
         }
-        console.log("first: ", first)
         if (first.uuid !== "" && first.cid_num !== "" && !get_callcenter && !outboundCall){
             setGet_callcenter(true)
             setScriptDir("inbound")
@@ -1410,7 +1377,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         });
         // clearIncoming();
     };
-    useEffect(() => console.log("incoming: ", incoming),[incoming])
     const onReject = () => {
         if (!incoming) return;
         hangUp()

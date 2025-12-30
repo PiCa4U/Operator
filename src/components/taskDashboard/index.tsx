@@ -381,7 +381,6 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [flatPhones, setFlatPhones] = useState<any[]>([])
     const [expressStates, setExpressStates] = useState<Record<string, ExpressState>>({});
     const [expressConfig, setExpressConfig] = useState<Record<string, any>>({});
-    console.log("presets: ", presets)
     const operatorOptions = useMemo(() => {
         const entries = Object.entries(monitorUsers || {})
             .filter(([_, data]) => data.post_obrabotka === true);
@@ -577,7 +576,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         void fetchCountsForGuids(toFetch.slice(0, 300));
     }, [unreadOnly, tableData, guidCounts]);
 
-    useEffect(() => console.log("filterSide: ", filterSide), [filterSide])
     useEffect(() => {
         // раньше: localStorage.setItem(ROWS_PER_PAGE_KEY, String(rowsPerPage));
         ssWrite(ssKey.rowsPerPage, rowsPerPage);
@@ -702,7 +700,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                 const { data } = await axios.post<Record<string, any[]>>(
                     '/api/v1/get_grouped_phones',
                     {
-                        glagol_parent: glagolParent2,
+                        glagol_parent: glagolParent,
                         group_by: ['project'],
                         group_table: preset.group_table,
                         filter_by: filterFlat,
@@ -976,8 +974,6 @@ const PresetSelectorTable: React.FC<Props> = ({
     }, [searchTerm]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
-    const glagolParent2 = "fs.at.glagol.ai";
-
     const defaultStatusToState = useRef<boolean>(false)
 
     const projectPool = useSelector(useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]));
@@ -1065,8 +1061,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         };
     }, [projectNames, sessionKey, worker]);
 
-    console.log("projectNames: ", projectNames)
-    useEffect(() => console.log("selectedRows: ", selectedRows))
 
     useEffect(() => {
         if (selectedPreset) {
@@ -1099,7 +1093,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                         }
                     });
                     setExpressConfig(configMap);
-                    console.log('expressConfig:', configMap);
                 });
         }
     }, [role, selectedPreset]);
@@ -1111,7 +1104,7 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         (async () => {
             const response = await axios.post<Preset[]>('/api/v1/get_preset_list', {
-                glagol_parent: glagolParent2,
+                glagol_parent: glagolParent,
                 worker,
                 projects: projectNames,
                 role
@@ -1149,7 +1142,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                 }
             }
         })();
-    }, [glagolParent2, worker, role, projectNames]);
+    }, [glagolParent, worker, role, projectNames]);
 
     const finishChain = () => {
         Swal.fire("Готово", "Действия выполнены", "success");
@@ -1328,7 +1321,6 @@ const PresetSelectorTable: React.FC<Props> = ({
             return;
         }
 
-        console.log("statusOptions: ", statusOptions)
         if (statusOptions.length && !statusOptions.includes(saved)) {
             setSelectedStatus(null);
         } else {
@@ -1356,7 +1348,7 @@ const PresetSelectorTable: React.FC<Props> = ({
             const filterBy: any = extraFilterBy ? { ...base, ...extraFilterBy } : base;
 
             const response1 = await axios.post<ApiRow[]>('/api/v1/get_grouped_phones', {
-                glagol_parent: glagolParent2,
+                glagol_parent: glagolParent,
                 group_table: preset.group_table,
                 filter_by: filterBy,
                 preset_id: preset.id,
@@ -1541,7 +1533,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         if (modalOpen || modulesInFlight === 0 || !moduleStartTableRef.current) return
         const handleComplete = () => {
             modulesCompletedRef.current += 1;
-            // console.log("modulesCompletedRef.current: ", modulesCompletedRef.current)
             if (modulesCompletedRef.current >= modulesInFlight) {
                 Swal.fire("Готово", "Все модули завершены", "success");
                 moduleStartTableRef.current = false;
@@ -1560,7 +1551,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         };
 
         const onRunModuleSuccess = (data: any) => {
-            console.log("✅ run_module_success:", data);
             handleComplete();
         };
 
@@ -1578,7 +1568,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         };
     }, [modulesInFlight]);
 
-    useEffect(() => console.log("actionOptions: ", actionOptions), [actionOptions])
     // Внутри PresetSelectorTable:
     const processRows = (rows: ApiRow[], opt: ActionOption, operator?: string) => {
         if (!opt?.action) return;
@@ -1870,7 +1859,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         }
     };
 
-    useEffect(() => console.log("processedRows: ", processedRows), [processedRows])
     // 3.3 разбиваем на страницы
     const totalPages = Math.max(1, Math.ceil(processedRows.length / rowsPerPage));
     const paginatedRows = processedRows.slice(
@@ -1902,7 +1890,6 @@ const PresetSelectorTable: React.FC<Props> = ({
     const showingFrom = totalRowsCount ? (currentPage - 1) * rowsPerPage + 1 : 0;
     const showingTo = totalRowsCount ? Math.min(currentPage * rowsPerPage, totalRowsCount) : 0;
 
-    useEffect(() => console.log("selected: ", selectedPreset), [selectedPreset])
     // --- обработчики ---
     const toggleSort = (colKey: string) => {
         setSortConfig(prev => {
@@ -1962,7 +1949,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                     }
 
                     if (params.glagolParent) {
-                        parts.push(`glagolParent=${encodeURIComponent(params.glagolParent)}`);
+                        parts.push(`glagol_parent=${encodeURIComponent(params.glagolParent)}`);
                     }
 
                     return parts.join('&');
@@ -2354,7 +2341,6 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     const handleDateChange = (dates: [Date | null, Date | null]) => {
         const [start, end] = dates;
-        console.log("dates: ", dates)
         setStartDate(start);
         setEndDate(end);
     }
@@ -2476,9 +2462,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         });
     }, [worker, sipLogin, sessionKey, projectNames]);
 
-    // useEffect(() => {
-    //     console.log("selectedRows: ", selectedRows)
-    // }, [selectedRows])
     return (
         <div>
             {renderExpressCards()}

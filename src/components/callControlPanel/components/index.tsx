@@ -301,7 +301,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                     // невалидный JSON — игнорируем
                                 }
                             }
-                            console.log("opts: ", opts)
                             // 3) Формируем final options и рендерим SearchableSelect
                             const options = [{ id: "", name: "" }, ...opts.map((o: any) => ({ id: o, name: o }))];
 
@@ -573,7 +572,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                     // если есть options — заменяем
                                     if (Array.isArray(parsed.options) && parsed.options.length > 0) {
                                         dates = parsed.options;
-                                        console.log("333dates: ", dates)
                                         baseOptionsRef.current = dates
                                     }
                                     // если есть select — запоминаем
@@ -589,7 +587,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                             // 3) Собираем ISO-строку "ГГГГ-ММ-ДД"
                                             selectDateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
 
-                                            console.log("selectDateStr (ISO):", selectDateStr);
 
                                             // 4) Передаем в родительский onChange уже в нужном формате
                                             onChange({ [param.field_id]: selectDateStr });

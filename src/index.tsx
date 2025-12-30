@@ -1,293 +1,97 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import './index.css';
-import App from './App';
-import reportWebVitals from './reportWebVitals';
-import { store } from './redux/store';
-import { Provider } from 'react-redux';
-import './socket';
-import { setCredentials } from './redux/credentialsSlice';
-import {
-    setFsStatus,
-    setActiveCalls,
-    setUserStatuses,
-    setSessionKey as setOpSessionKey,
-} from './redux/operatorSlice';
-import axios from 'axios';
-import 'react-datepicker/dist/react-datepicker.css';
+// src/index.tsx
+import React from "react";
+import ReactDOM from "react-dom/client";
+import "./index.css";
+import App from "./App";
+import reportWebVitals from "./reportWebVitals";
+
+import { Provider } from "react-redux";
+import { store } from "./redux/store";
+
+import "./socket";
+
+import { setCredentials } from "./redux/credentialsSlice";
+import { setSessionKey as setOpSessionKey } from "./redux/operatorSlice";
+
+import axios from "axios";
+
+import "react-datepicker/dist/react-datepicker.css";
 import "@chatscope/chat-ui-kit-styles/dist/default/styles.min.css";
 
-const container = document.getElementById('root');
-if (!container) throw new Error('Root container not found');
+const container = document.getElementById("root");
+if (!container) throw new Error("Root container not found");
 
-// читаем ВСЕ нужные data-*
-const {
-    sessionKey: rawSessionKey,
-    sipLogin: rawSipLogin,
-    fsServer: rawFsServer,
-    worker: rawWorker,
-    chatServer: rawChatServer,
-    codeServer: rawCodeServer,
-    webrtc: rawWebrtcUrl,
-    glagolParent: rawGlagolParent,
-} = container.dataset as Partial<Record<string, string>>;
+const isProd = process.env.NODE_ENV === "production";
 
-// дефолты (если не передали атрибуты)
-const sipLogin     = rawSipLogin     || '1000';
-const fsServer     = rawFsServer     || 'wwstest.glagol.ai';
-const worker       = rawWorker       || '4.fs@akc24.ru';
-// общий дефолтный ключ (используется только там, где не переопределяем профилем)
-const sessionKey   = rawSessionKey || 'efa01b6be8b079bab901b519640bcc7ee547a14635e80d6cdfbc5e527248e62b67bc5110';
-const chatServer   = rawChatServer   || 'wwstest.glagol.ai/chat';
-const codeServer   = rawCodeServer   || 'wwstest.glagol.ai/code';
-const glagolParent = rawGlagolParent || 'fs.at.akc24.ru';
-const webrtcUrl    = rawWebrtcUrl    || 'wss://24webrtc.ru/ws';
+/* ===================== читаем data-* ===================== */
+const ds = container.dataset as Partial<Record<string, string>>;
 
-// axios: базовый URL по fsServer
-axios.defaults.baseURL = `https://${fsServer}`;
+const pick = (v: string | undefined, fallback = "") => {
+    const s = (v ?? "").trim();
+    return s || fallback;
+};
 
-// --- SSE URL (как у тебя; оставляем закомментированным) ---
-const sseUrl = `https://${fsServer}/api/v1/fs_data?sip_login=${encodeURIComponent(sipLogin)}`;
+// jQuery/шаблон обычно прокидывает вот это:
+// data-sip-login, data-worker, data-session-key, data-fs-server, data-glagol-parent, data-webrtc, data-chat-server, data-code-server
+const sipLogin = pick(ds.sipLogin);
+const worker = pick(ds.worker);
+const sessionKey = pick(ds.sessionKey);
 
-// ===== СТАРЫЙ БУТСТРАП (оставлен, но закомментирован) =====
-// store.dispatch(setCredentials({
-//     sessionKey,
-//     sipLogin,
-//     fsServer,
-//     worker,
-//     chatServer,
-//     codeServer,
-//     glagolParent,
-//     webrtcUrl,
-// }));
-//
-// store.dispatch(setOpSessionKey(sessionKey));
-//
-// const evtSource = new EventSource(sseUrl);
-// evtSource.onmessage = (e) => {
-//   try {
-//     const { fs_calls, fs_status, other_users } = JSON.parse(e.data);
-//     store.dispatch(setFsStatus(fs_status));
-//     store.dispatch(setActiveCalls(fs_calls));
-//     store.dispatch(setUserStatuses(other_users));
-//     if (fs_status?.status === 'shutdown') {
-//       evtSource.close();
-//     }
-//   } catch (err) {
-//     console.error('Failed to parse SSE data:', err);
-//   }
-// };
-// evtSource.onerror = (err) => {
-//   console.error('SSE connection error:', err);
-// };
+const fsServer = pick(ds.fsServer);
+const glagolParent = pick(ds.glagolParent);
+const webrtcUrl = pick(ds.webrtc); // data-webrtc
+const chatServer = pick(ds.chatServer);
+const codeServer = pick(ds.codeServer);
+
+// В проде — обязательно требуем все атрибуты, чтобы билд не “уехал” на пустые значения
+if (isProd) {
+    const missing: string[] = [];
+    if (!sipLogin) missing.push("data-sip-login");
+    if (!worker) missing.push("data-worker");
+    if (!sessionKey) missing.push("data-session-key");
+    if (!fsServer) missing.push("data-fs-server");
+    if (!glagolParent) missing.push("data-glagol-parent");
+    if (!webrtcUrl) missing.push("data-webrtc");
+    if (!chatServer) missing.push("data-chat-server");
+    if (!codeServer) missing.push("data-code-server");
+
+    if (missing.length) {
+        throw new Error(
+            `[BOOT] Missing required attributes on #root: ${missing.join(", ")}`
+        );
+    }
+}
+
+/* ===================== axios ===================== */
+if (fsServer) {
+    axios.defaults.baseURL = `https://${fsServer}`;
+}
+if (sessionKey) {
+    axios.defaults.headers.common["Authorization"] = `Bearer ${sessionKey}`;
+}
+
+/* ===================== bootstrap ===================== */
+store.dispatch(
+    setCredentials({
+        sessionKey,
+        sipLogin,
+        fsServer,
+        worker,
+        chatServer,
+        codeServer,
+        glagolParent,
+        webrtcUrl,
+    })
+);
+
+store.dispatch(setOpSessionKey(sessionKey));
 
 const root = ReactDOM.createRoot(container);
 
-/**
- * В проде — ведём себя как раньше (читаем data-* или дефолты и сразу стартуем).
- * В dev (localhost) — просим выбрать профиль оператора для тестов.
- */
-
-// ===== КОМПОНЕНТ ДЛЯ DEV РЕЖИМА (выбор оператора) =====
-const DevBootstrap: React.FC = () => {
-    const [profileId, setProfileId] = React.useState<string | null>(null);
-
-    React.useEffect(() => {
-        if (!profileId) return;
-
-        // два профиля на выбор, у каждого свой session_key
-        const profile =
-            profileId === '1000'
-                ? {
-                    sipLogin: '1000',
-                    worker: '4.fs@akc24.ru',
-                    sessionKey:
-                        '197dcf472e5e5a011a8dbef4774c5f6ecc1c77251260a301e35f6f152c7af0356527f248',
-                }
-                : {
-                    sipLogin: '1012',
-                    worker: '1.fs@akc24.ru',
-                    sessionKey:
-                        'b67705eef2f4ea78a50fd6630213e06180875970abb966842f1d0a8f74d17eecc0d184a9',
-                };
-
-        // базовый URL уже установлен выше, но продублируем на всякий случай
-        axios.defaults.baseURL = `https://${fsServer}`;
-
-        // пишем креды в Redux
-        store.dispatch(
-            setCredentials({
-                sessionKey: profile.sessionKey,
-                sipLogin: profile.sipLogin,
-                fsServer,
-                worker: profile.worker,
-                chatServer,
-                codeServer,
-                glagolParent,
-                webrtcUrl,
-            })
-        );
-
-        // sessionKey в операторском слайсе — тоже из профиля
-        store.dispatch(setOpSessionKey(profile.sessionKey));
-
-        // Если нужно, тут же можно включить SSE под конкретный sipLogin:
-        // const devSseUrl = `https://${fsServer}/api/v1/fs_data?sip_login=${encodeURIComponent(profile.sipLogin)}`;
-        // const evtSource = new EventSource(devSseUrl);
-        // ...
-    }, [profileId]);
-
-    if (!profileId) {
-        // экран выбора профиля: 1000 / 1012
-        return (
-            <div
-                style={{
-                    minHeight: '100vh',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: '#121212',
-                    color: '#fff',
-                    fontFamily:
-                        'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                }}
-            >
-                <div
-                    style={{
-                        padding: '32px',
-                        borderRadius: '12px',
-                        background: '#1e1e1e',
-                        boxShadow: '0 12px 30px rgba(0,0,0,0.4)',
-                        maxWidth: '420px',
-                        width: '100%',
-                    }}
-                >
-                    <h2 style={{ marginBottom: '16px', fontSize: '20px' }}>
-                        Выбор профиля оператора (dev)
-                    </h2>
-                    <p style={{ marginBottom: '24px', fontSize: '14px', opacity: 0.8 }}>
-                        Запускаем localhost с одним из преднастроенных операторов (логин + worker +
-                        свой session_key). Дальше уже будут подтягиваться твои моковые данные.
-                    </p>
-
-                    <button
-                        type="button"
-                        style={{
-                            width: '100%',
-                            padding: '10px 14px',
-                            borderRadius: '8px',
-                            border: '1px solid #3f51b5',
-                            background: '#3f51b5',
-                            color: '#fff',
-                            fontWeight: 500,
-                            cursor: 'pointer',
-                            marginBottom: '12px',
-                        }}
-                        onClick={() => setProfileId('1000')}
-                    >
-                        Оператор 1000 — worker 4.fs@akc24.ru
-                        <br />
-                        <span style={{ fontSize: '11px', opacity: 0.8 }}>
-                            session_key: efa0…e62b67bc5110
-                        </span>
-                    </button>
-
-                    <button
-                        type="button"
-                        style={{
-                            width: '100%',
-                            padding: '10px 14px',
-                            borderRadius: '8px',
-                            border: '1px solid #4caf50',
-                            background: '#4caf50',
-                            color: '#fff',
-                            fontWeight: 500,
-                            cursor: 'pointer',
-                        }}
-                        onClick={() => setProfileId('1012')}
-                    >
-                        Оператор 1012 — worker 1.fs@akc24.ru
-                        <br />
-                        <span style={{ fontSize: '11px', opacity: 0.8 }}>
-                            session_key: 17a6…321d82f2e
-                        </span>
-                    </button>
-
-                    <p style={{ marginTop: '16px', fontSize: '12px', opacity: 0.6 }}>
-                        Это всё временно для тестов. Старый бутстрап из data-* оставлен
-                        закомментированным в index.tsx.
-                    </p>
-                </div>
-            </div>
-        );
-    }
-
-    // профиль выбран → приложение работает как обычно
-    return <App />;
-};
-
-// ===== РЕНДЕР =====
-
-// ===== РЕНДЕР =====
-
-const isProdBuild = process.env.NODE_ENV === 'production';
-
-// флаг "принудительно включить dev-выбор профиля" в проде
-let forceDevBootstrap = false;
-
-if (isProdBuild) {
-    try {
-        const hostname = window.location.hostname;
-
-        // если запущено на Vercel — включаем dev-режим с выбором профиля
-        if (hostname.endsWith('.vercel.app')) {
-            forceDevBootstrap = true;
-        }
-
-        // (дополнительно можно руками включать через ?mock=1)
-        const params = new URLSearchParams(window.location.search);
-        if (params.get('mock') === '1') {
-            forceDevBootstrap = true;
-        }
-    } catch (e) {
-        // на всякий случай игнорируем любые ошибки
-        console.warn('Env detection failed', e);
-    }
-}
-
-// используем DevBootstrap:
-// - всегда в dev-сборке
-// - либо в проде, но когда мы явно форсим (Vercel / ?mock=1)
-const useDevBootstrap = !isProdBuild || forceDevBootstrap;
-
-if (useDevBootstrap) {
-    // здесь креды выставляются внутри DevBootstrap после выбора профиля
-    root.render(
-        <Provider store={store}>
-            <DevBootstrap />
-        </Provider>
-    );
-} else {
-    // нормальный продовый бутстрап из data-* (как раньше)
-    store.dispatch(
-        setCredentials({
-            sessionKey,
-            sipLogin,
-            fsServer,
-            worker,
-            chatServer,
-            codeServer,
-            glagolParent,
-            webrtcUrl,
-        })
-    );
-    store.dispatch(setOpSessionKey(sessionKey));
-
-    root.render(
-        <Provider store={store}>
-            <App />
-        </Provider>
-    );
-}
+root.render(
+    <Provider store={store}>
+        <App />
+    </Provider>
+);
 
 reportWebVitals();

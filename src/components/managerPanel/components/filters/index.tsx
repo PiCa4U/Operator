@@ -107,12 +107,10 @@ export interface ChartConfig {
 export const Filters = () => {
     const [filters, setFilters] = useState<any[]>([]);
     const [activeFilters, setActiveFilters] = useState<FilterItem[]>([]);
-    useEffect(() => console.log("activeFilters: ", activeFilters),[activeFilters])
     const [selectedFilterId, setSelectedFilterId] = useState<string | null>(null);
     const [reportList, setReportList] = useState<any[]>([])
     const [selectedReport, setSelectedReport] = useState<any>(null)
 
-    useEffect(() => console.log("selectedReport: ", selectedReport),[selectedReport])
     const [projectPool, setProjectPool] = useState<any[]>([])
 
     const [page, setPage] = useState(1);
@@ -132,7 +130,6 @@ export const Filters = () => {
     const [charts, setCharts] = useState<MyChartData[]>([]);
     const [chartConfigs, setChartConfigs] = useState<ChartConfig[]>([]);
 
-    useEffect(() => console.log("chartConfigs: ", chartConfigs),[chartConfigs])
     const {
         sipLogin   = '',
         worker     = '',
@@ -294,7 +291,6 @@ export const Filters = () => {
         async function fetchFilters() {
             try {
                 const response = await axios.get("/api/v1/communications/filters");
-                console.log("data:", response.data.filters);
                 setFilters(response.data.filters);
             } catch (err) {
                 console.error(err);
@@ -328,7 +324,6 @@ export const Filters = () => {
                     glagol_parent: glagolParent,
                     filter_json,
                 });
-                console.log("Создан новый фильтр", response.data);
             } catch (err) {
                 console.error("Ошибка при создании фильтра:", err);
             }
@@ -340,7 +335,6 @@ export const Filters = () => {
                     glagol_parent: glagolParent,
                     filter_json,
                 });
-                console.log("Фильтр обновлён", response.data);
             } catch (err) {
                 console.error("Ошибка при обновлении фильтра:", err);
             }
@@ -498,7 +492,6 @@ export const Filters = () => {
             const chartLabels = `${dataOptions.find(item => item.id === data)?.name} (${modifyOptions.find(item => item.id === modify)?.name})`
             const labels: string[] = response.data.chart.labels;
             const values: number[] = response.data.chart.data;
-            console.log("datap: ", data)
             const newChart: MyChartData = {
                 label: chartLabels, // подпись линии
                 color: color,

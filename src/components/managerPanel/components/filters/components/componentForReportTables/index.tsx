@@ -73,7 +73,6 @@ export const ComponentForReportTables: FC<Props> = ({
                                                         setChartConfig,
                                                     }) => {
     const timeoutRef = useRef<number | null>(null);
-    useEffect(() => console.log("charts: ", charts),[charts])
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const newColor = e.target.value;
         if (timeoutRef.current !== null) {

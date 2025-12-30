@@ -1,40 +1,79 @@
 // src/socket.ts
-import io from 'socket.io-client';
-import {RootState, store} from '../redux/store';
-import {
-    setFsReport, setFsStatus, setMonitorData, setFsReasons,
-    setHa1, setTurnCreds
-} from '../redux/operatorSlice';
-import { parseMonitorData } from "../utils";
+import io from "socket.io-client";
 import Swal from "sweetalert2";
+import { RootState, store } from "../redux/store";
+import {
+    setFsReasons,
+    setFsReport,
+    setFsStatus,
+    setHa1,
+    setMonitorData,
+    setTurnCreds,
+} from "../redux/operatorSlice";
+import { parseMonitorData } from "../utils";
 
 type IOSocket = ReturnType<typeof io>;
 const getCreds = () => store.getState().credentials;
-const getOp    = () => store.getState().operator;
+const getOp = () => store.getState().operator;
+
 let screenShareRoomId: string | null = null;
 let screenSharePingIntervalId: number | undefined;
+
+const pickRoomId = (p?: any): string =>
+    String(p?.room_id || p?.room || p?.roomId || p?.session_uuid || p?.uuid || "").trim();
+
+function detectRole(): string | undefined {
+    const state = store.getState() as RootState;
+    const myLogin = String(state.credentials?.sipLogin || getCreds().sipLogin || "").trim();
+    const fromMonitor =
+        (state.operator as any)?.monitorData?.monitorUsers?.[myLogin]?.type;
+    return fromMonitor || (state.operator as any)?.role || (state.operator as any)?.type;
+}
+
+function isManagerClient(): boolean {
+    return detectRole() === "manager";
+}
+
+/**
+ * Если бэк шлёт manager_login / operator_login / sip_login — фильтруем.
+ * Если не шлёт — пропускаем (backward compat).
+ */
+function isScreenShareEventForMe(p: any): boolean {
+    const myLogin = String(getCreds().sipLogin || "").trim();
+    if (!myLogin) return true;
+
+    const role = detectRole();
+    const mgr = String(p?.manager_login ?? p?.viewer_login ?? "").trim();
+    const op  = String(p?.operator_login ?? "").trim();
+    const sip = String(p?.sip_login ?? "").trim();
+
+    // Если есть явные таргеты — используем их.
+    if (role === "manager") {
+        if (mgr) return mgr === myLogin;
+        if (sip && !op) return sip === myLogin;
+        return true; // нет manager target — не рискуем отфильтровать нужное
+    }
+
+    // operator/unknown
+    if (op) return op === myLogin;
+    if (sip && !mgr) return sip === myLogin;
+    return true;
+}
 
 /* === чтение fsServer из data-* + нормализация хоста === */
 function sanitizeHost(raw?: string | null): string | undefined {
     if (!raw) return;
     let s = String(raw).trim();
-    // убираем протокол и путь, оставляем только host[:port]
-    s = s.replace(/^[a-z]+:\/\//i, ''); // http(s)://, ws(s)://
-    s = s.replace(/\/.*$/, '');         // всё после первого /
-    s = s.replace(/^\/\//, '');         // //host -> host
+    s = s.replace(/^[a-z]+:\/\//i, "");
+    s = s.replace(/\/.*$/, "");
+    s = s.replace(/^\/\//, "");
     return s || undefined;
 }
 function readFsServerFromDOM(): string | undefined {
-    const el = document.getElementById('root') as HTMLElement | null;
+    const el = document.getElementById("root") as HTMLElement | null;
     if (!el) return;
     const ds = (el.dataset || {}) as Partial<Record<string, string>>;
-
-    // возможные источники
-    const candidates = [
-        ds.fsServer,
-        ds.chatServer,
-        ds.chatApiBase,
-    ];
+    const candidates = [ds.fsServer, ds.chatServer, ds.chatApiBase];
     for (const c of candidates) {
         const host = sanitizeHost(c);
         if (host) return host;
@@ -42,39 +81,33 @@ function readFsServerFromDOM(): string | undefined {
     return undefined;
 }
 
-/* === НАСТРОЙКИ “ГРЕЙСА” ДЛЯ ПЕРВОГО HA1/TURN ===
-   Можно переопределять через data-атрибуты корневого элемента:
-   <div id="root" data-ha1-grace-ms="3000" data-ha1-grace-jitter-ms="2000" ... />
-   По умолчанию: base=3000 мс, jitter=2000 мс → фактическая задержка 3–5 c. */
+/* === HA1/TURN grace === */
 function readNumberFromDataset(key: string, def: number): number {
-    const el = document.getElementById('root') as HTMLElement | null;
+    const el = document.getElementById("root") as HTMLElement | null;
     if (!el) return def;
     const raw = (el.dataset as any)?.[key];
     if (raw == null) return def;
     const n = Number(raw);
     return Number.isFinite(n) ? Math.max(0, n) : def;
 }
-const HA1_GRACE_BASE_MS   = readNumberFromDataset('ha1GraceMs', 3000);
-const HA1_GRACE_JITTER_MS = readNumberFromDataset('ha1GraceJitterMs', 2000);
+const HA1_GRACE_BASE_MS = readNumberFromDataset("ha1GraceMs", 3000);
+const HA1_GRACE_JITTER_MS = readNumberFromDataset("ha1GraceJitterMs", 2000);
 function graceDelayMs(): number {
     const j = HA1_GRACE_JITTER_MS > 0 ? Math.floor(Math.random() * HA1_GRACE_JITTER_MS) : 0;
     return HA1_GRACE_BASE_MS + j;
 }
 
-/**
- * Создаём сокет с autoConnect: false.
- * URL берём из Redux, если нет — из data-атрибутов DOM, если нет — дефолт.
- */
 function makeSocket(): IOSocket {
     const fromRedux = sanitizeHost(getCreds().fsServer);
-    const fromDOM   = readFsServerFromDOM();
-    const host = (fromRedux || fromDOM || 'wwstest.glagol.ai').trim();
+    console.log("fromRedux: ", fromRedux)
+    const fromDOM = readFsServerFromDOM();
+    const host = (fromRedux || fromDOM || "pmpbx.glagol.ai").trim();
 
-    const url  = `wss://${host}`;
-    if (process.env.NODE_ENV !== 'production') {
-        console.log('[socket] using host:', host);
+    const url = `wss://${host}`;
+    if (process.env.NODE_ENV !== "production") {
+        console.log("[socket] using host:", host);
     }
-    return io(url, { transports: ['websocket'], autoConnect: false });
+    return io(url, { transports: ["websocket"], autoConnect: false });
 }
 
 export const socket: IOSocket = makeSocket();
@@ -84,63 +117,29 @@ let webrtcEnabled = false;
 let statusIntervalId: number | undefined;
 let ha1IntervalId: number | undefined;
 let turnIntervalId: number | undefined;
+let initialAuthTimerId: number | undefined;
 
-// отдельный таймер на первую отложенную отправку HA1/TURN
-let initialHa1TimerId: number | undefined;
+// интервалы (можешь подстроить)
+const HA1_REFRESH_MS = 160_000; // ~2:40 (у тебя так и было)
+const TURN_REFRESH_MS = 3_300_000; // 55 минут (при TTL 1 час безопаснее обновлять раньше)
 
-/** Готовы ли к подключению: есть ключ + базовые креды (+ есть хоть какой-то host) */
 function isReadyForConnect() {
     const { sessionKey } = getOp();
     const { sipLogin, worker, fsServer } = getCreds();
-
-    // host есть, если он в Redux ИЛИ его можно прочитать из DOM.
     const hostOk = Boolean(sanitizeHost(fsServer) || readFsServerFromDOM());
     return Boolean(sessionKey && sipLogin && worker && hostOk);
 }
 
-function getCurrentRole(): "manager" | "operator" | null {
-    const state = store.getState() as RootState;
-
-    const { sipLogin } = state.credentials || {};
-    const monitorUsers = state.operator?.monitorData?.monitorUsers as
-        | Record<string, { type?: string }>
-        | undefined;
-
-    const user = sipLogin && monitorUsers ? monitorUsers[sipLogin] : undefined;
-
-    // 1) пробуем взять из monitorUsers
-    if (user?.type === "manager" || user?.type === "operator") {
-        return user.type;
-    }
-
-    // 2) запасной вариант — то, что лежит в операторском слайсе
-    const op: any = state.operator;
-    const raw = op?.role ?? op?.type;
-    if (raw === "manager" || raw === "operator") {
-        return raw;
-    }
-
-    return null;
+function isConnected() {
+    return socket.connected;
 }
 
-/** ---- screen_share:accept ---- */
-function emitScreenShareAccept(roomId: string) {
-    const { sessionKey } = getOp();
-    const { worker, sipLogin } = getCreds();
-
-    if (!sessionKey || !worker || !sipLogin) {
-        if (process.env.NODE_ENV !== "production") {
-            console.warn("[screen_share] cannot accept: no sessionKey/worker/sipLogin");
-        }
-        return;
+function ensureConnected() {
+    if (!isConnected() && isReadyForConnect()) {
+        try {
+            socket.connect();
+        } catch {}
     }
-
-    socket.emit("screen_share:accept", {
-        session_key: sessionKey,
-        worker,
-        sip_login: sipLogin,
-        room_id: roomId,
-    });
 }
 
 /** ---- screen_share:ping ---- */
@@ -169,7 +168,6 @@ function startScreenSharePing(roomId: string) {
         screenSharePingIntervalId = undefined;
     }
 
-    // первый пинг можно отправить сразу
     emitScreenSharePing();
     screenSharePingIntervalId = window.setInterval(emitScreenSharePing, 15000);
 }
@@ -182,9 +180,10 @@ function stopScreenSharePing() {
     screenShareRoomId = null;
 }
 
-/** Опциональный публичный хелпер: завершить сессию вручную (для менеджера) */
-export function stopScreenShareSession() {
-    if (!screenShareRoomId) return;
+/** Публичный: завершить сессию вручную (для viewer/manager) */
+export function stopScreenShareSession(roomId?: string | null) {
+    const rid = String(roomId || screenShareRoomId || "").trim();
+    if (!rid) return;
 
     const { sessionKey } = getOp();
     const { worker } = getCreds();
@@ -194,20 +193,8 @@ export function stopScreenShareSession() {
     socket.emit("screen_share:stop", {
         session_key: sessionKey,
         worker,
-        room_id: screenShareRoomId,
+        room_id: rid,
     });
-}
-
-/** Уже подключены? */
-function isConnected() {
-    return socket.connected;
-}
-
-/** Одноразовая попытка подключения, если готовы */
-function ensureConnected() {
-    if (!isConnected() && isReadyForConnect()) {
-        try { socket.connect(); } catch {}
-    }
 }
 
 /** ---- FS статус (каждые 3с) ---- */
@@ -216,7 +203,11 @@ const emitStatus = () => {
     const { sipLogin, worker } = getCreds();
     if (!sessionKey || !sipLogin || !worker) return;
     if (!isConnected()) return;
-    socket.emit('get_fs_status_once', { worker, sip_login: sipLogin, session_key: sessionKey });
+    socket.emit("get_fs_status_once", {
+        worker,
+        sip_login: sipLogin,
+        session_key: sessionKey,
+    });
 };
 
 function emitReconnectEvent() {
@@ -224,14 +215,13 @@ function emitReconnectEvent() {
     const { worker } = getCreds();
 
     if (!sessionKey || !worker) {
-        if (process.env.NODE_ENV !== 'production') {
-            console.log('[socket] skip reconnect: no sessionKey or worker');
+        if (process.env.NODE_ENV !== "production") {
+            console.log("[socket] skip reconnect: no sessionKey or worker");
         }
         return;
     }
 
-    // 👇 имя евента тут то, что бек ждёт: "reconnect" / "fs_reconnect" / и т.п.
-    socket.emit('reconnect', {
+    socket.emit("reconnect", {
         session_key: sessionKey,
         worker,
     });
@@ -243,72 +233,137 @@ function startStatusInterval() {
     statusIntervalId = window.setInterval(emitStatus, 3000);
 }
 function stopStatusInterval() {
-    if (statusIntervalId) { clearInterval(statusIntervalId); statusIntervalId = undefined; }
+    if (statusIntervalId) {
+        clearInterval(statusIntervalId);
+        statusIntervalId = undefined;
+    }
 }
 
 /** ---- HA1/TURN (только при включённом WebRTC) ---- */
-function requestHa1AndTurn() {
+function requestHa1() {
     const { sessionKey } = getOp();
     const { sipLogin, worker } = getCreds();
     if (!webrtcEnabled) return;
     if (!sessionKey || !sipLogin || !worker) return;
     if (!isConnected()) return;
-    socket.emit("fs_ha1",  { session_key: sessionKey, method: "POST", sip_login: sipLogin, worker });
-    socket.emit("fs_turn", { session_key: sessionKey, sip_login: sipLogin, worker });
+
+    socket.emit("fs_ha1", {
+        session_key: sessionKey,
+        method: "POST",
+        sip_login: sipLogin,
+        worker,
+    });
+}
+
+function requestTurn() {
+    const { sessionKey } = getOp();
+    const { sipLogin, worker } = getCreds();
+    if (!webrtcEnabled) return;
+    if (!sessionKey || !sipLogin || !worker) return;
+    if (!isConnected()) return;
+
+    socket.emit("fs_turn", {
+        session_key: sessionKey,
+        sip_login: sipLogin,
+        worker,
+    });
     // socket.emit('login', {worker})
 }
 
-/** Планирование отложенной первой отправки HA1/TURN */
-function scheduleInitialHa1Turn(delayMs: number) {
-    if (initialHa1TimerId) {
-        clearTimeout(initialHa1TimerId);
-        initialHa1TimerId = undefined;
+// стартовая подкачка (и HA1, и TURN) — одним таймером
+function scheduleInitialAuth(delayMs: number) {
+    if (initialAuthTimerId) {
+        clearTimeout(initialAuthTimerId);
+        initialAuthTimerId = undefined;
     }
-    initialHa1TimerId = window.setTimeout(() => {
-        requestHa1AndTurn();
-        initialHa1TimerId = undefined;
+
+    initialAuthTimerId = window.setTimeout(() => {
+        requestHa1();
+        requestTurn();
+        initialAuthTimerId = undefined;
     }, Math.max(0, delayMs));
 }
 
 function startAuthIntervals() {
     stopAuthIntervals();
-    // периодические запросы (после первой отложенной)
-    ha1IntervalId  = window.setInterval(() => { requestHa1AndTurn(); }, 160000);
-    turnIntervalId = window.setInterval(() => { requestHa1AndTurn(); }, 3595000);
+
+    // HA1 часто
+    ha1IntervalId = window.setInterval(() => requestHa1(), HA1_REFRESH_MS);
+
+    // TURN редко (раз в ~55 мин, TTL=60 мин)
+    turnIntervalId = window.setInterval(() => requestTurn(), TURN_REFRESH_MS);
 }
 
 function stopAuthIntervals() {
-    if (ha1IntervalId)  { clearInterval(ha1IntervalId);  ha1IntervalId  = undefined; }
-    if (turnIntervalId) { clearInterval(turnIntervalId); turnIntervalId = undefined; }
+    if (ha1IntervalId) {
+        clearInterval(ha1IntervalId);
+        ha1IntervalId = undefined;
+    }
+    if (turnIntervalId) {
+        clearInterval(turnIntervalId);
+        turnIntervalId = undefined;
+    }
 }
 
-/** ---- WebRTC подписки на входящие ответы ---- */
-function onHa1(data: { ha1: string }) { if (webrtcEnabled) store.dispatch(setHa1(data.ha1)); }
-function onTurn(data: any)             { if (webrtcEnabled) store.dispatch(setTurnCreds(data)); }
+// чтобы не дергать redux одинаковыми TURN, если бэк шлёт то же самое
+let lastTurnSignature = "";
+function makeTurnSignature(data: any): string {
+    try {
+        const username = String(data?.username ?? "");
+        const credential = String(data?.credential ?? "");
+        const urls = Array.isArray(data?.urls) ? data.urls.join("|") : String(data?.urls ?? "");
+        return `${username}::${credential}::${urls}`;
+    } catch {
+        return "";
+    }
+}
 
-/** Публичные переключатели WebRTC (используются в App.tsx) */
+function onHa1(data: { ha1: string }) {
+    if (!webrtcEnabled) return;
+    if (data?.ha1) store.dispatch(setHa1(data.ha1));
+}
+
+function onTurn(data: any) {
+    if (!webrtcEnabled) return;
+    const sig = makeTurnSignature(data);
+    if (sig && sig === lastTurnSignature) return;
+    lastTurnSignature = sig;
+    store.dispatch(setTurnCreds(data));
+}
+
 export function enableWebRTC() {
     if (webrtcEnabled) return;
     webrtcEnabled = true;
+
     socket.on("fs_ha1", onHa1);
     socket.on("fs_turn", onTurn);
 
-    // ⬇️ Грейс перед первой отправкой, чтобы предыдущая вкладка успела сделать DELETE
-    scheduleInitialHa1Turn(graceDelayMs());
+    // стартовая подкачка чуть позже (как было)
+    scheduleInitialAuth(graceDelayMs());
     startAuthIntervals();
+
+    ensureConnected();
 }
 
 export function disableWebRTC() {
     if (!webrtcEnabled) return;
     webrtcEnabled = false;
+
     socket.off("fs_ha1", onHa1);
     socket.off("fs_turn", onTurn);
+
     stopAuthIntervals();
-    if (initialHa1TimerId) { clearTimeout(initialHa1TimerId); initialHa1TimerId = undefined; }
+    if (initialAuthTimerId) {
+        clearTimeout(initialAuthTimerId);
+        initialAuthTimerId = undefined;
+    }
 }
 
+/** ===== screen share events ===== */
 socket.on("screen_share:start", (data: any) => {
-    const roomId = data?.room_id || data?.room || data?.roomId;
+    if (!isScreenShareEventForMe(data)) return;
+
+    const roomId = pickRoomId(data);
     if (!roomId) {
         console.warn("[screen_share:start] no room_id in payload", data);
         return;
@@ -318,78 +373,76 @@ socket.on("screen_share:start", (data: any) => {
         console.log("[screen_share:start] room_id =", roomId, data);
     }
 
-    // запускаем пинги для этой вкладки
     startScreenSharePing(roomId);
-
-    const role = getCurrentRole();
-    const isManager  = role === "manager";
-    const isOperator = role === "operator" || !role; // дефолтом считаем оператором
-
-    // 🔹 Оператор в вкладке с включённым WebRTC — сразу авто-accept
-    if (isOperator && webrtcEnabled) {
-        emitScreenShareAccept(roomId);
-    }
-
-    // 🔹 Менеджеру ничего не показываем (только ждём стрима)
-    if (isManager && process.env.NODE_ENV !== "production") {
-        console.log("[screen_share] manager got start, waiting for operator stream");
-    }
 });
+
 socket.on("screen_share:error", (data: any) => {
-    if (process.env.NODE_ENV !== "production") {
-        console.warn("[screen_share:error]", data);
+    if (!isScreenShareEventForMe(data)) return;
+
+    const rid = pickRoomId(data);
+
+    // 🔒 если ошибка по старой комнате — не ломаем текущую
+    if (rid && screenShareRoomId && rid !== screenShareRoomId) {
+        if (process.env.NODE_ENV !== "production") {
+            console.log("[screen_share:error] ignore stale error", { rid, current: screenShareRoomId, data });
+        }
+        return;
     }
 
     stopScreenSharePing();
 
+    // ✅ оператору никаких попапов
+    if (!isManagerClient()) return;
+
     const message =
         data?.message ||
         (data?.status === "timeout"
-            ? "Оператор не принял запрос на просмотр экрана."
+            ? "Пользователь не принял запрос на просмотр экрана."
             : "Ошибка при подключении к экрану.");
 
     Swal.fire({
         icon: "error",
         title: "Ошибка screen sharing",
         text: message,
-    })
+    });
 });
 
 socket.on("screen_share:stop", (data: any) => {
+    if (!isScreenShareEventForMe(data)) return;
+
+    const rid = pickRoomId(data);
+
+    // 🔒 поздний stop по старому room_id не должен ронять новую сессию
+    if (rid && screenShareRoomId && rid !== screenShareRoomId) {
+        if (process.env.NODE_ENV !== "production") {
+            console.log("[screen_share:stop] ignore stale stop", { rid, current: screenShareRoomId, data });
+        }
+        return;
+    }
+
     if (process.env.NODE_ENV !== "production") {
         console.log("[screen_share:stop]", data);
     }
 
-    // в любом случае гасим пинги
     stopScreenSharePing();
 
-    // 👇 определяем роль
-    const role = getCurrentRole();
-    const isManager = role === "manager";
-
-    // Операторам (и непонятной роли) никаких попапов не показываем
-    if (!isManager) {
-        return;
-    }
+    if (!isManagerClient()) return;
 
     const reason = data?.reason || "unknown";
     let text = "Сессия просмотра экрана завершена.";
 
-    if (reason === "manual") {
-        text = "Сессия просмотра экрана завершена менеджером.";
-    } else if (reason === "ping_timeout_manager") {
+    if (reason === "manual") text = "Сессия просмотра экрана завершена менеджером.";
+    else if (reason === "ping_timeout_manager")
         text = "Сессия завершена из-за отсутствия пингов от менеджера.";
-    } else if (reason === "ping_timeout_operator") {
-        text = "Сессия завершена из-за отсутствия пингов от оператора.";
-    }
+    else if (reason === "ping_timeout_operator")
+        text = "Сессия завершена из-за отсутствия пингов от отправителя экрана.";
 
-    void Swal.fire({
-        icon: "info",
-        title: "Просмотр экрана завершён",
-        text,
-    });
+    // void Swal.fire({
+    //     icon: "info",
+    //     title: "Просмотр экрана завершён",
+    //     text,
+    // });
 });
-
 
 socket.on("screen_share:pong", (data: any) => {
     if (process.env.NODE_ENV !== "production") {
@@ -397,22 +450,37 @@ socket.on("screen_share:pong", (data: any) => {
     }
 });
 
+let reconnectEnabled = false;
+
+export function setReconnectEnabled(v: boolean) {
+    reconnectEnabled = Boolean(v);
+
+    // если включили и мы уже подключены — можно сразу отправить reconnect
+    if (reconnectEnabled && socket.connected) {
+        emitReconnectEvent();
+    }
+}
+
 /** ---- Общие подписки ---- */
-socket.on('connect', () => {
-    console.log('Socket connected:', socket.id);
-    emitReconnectEvent();
+socket.on("connect", () => {
+    console.log("Socket connected:", socket.id);
+
+    // ✅ reconnect только в звонковой вкладке
+    if (reconnectEnabled) emitReconnectEvent();
+
+    // ✅ статусы нужны везде — оставляем как было
     if (getOp().sessionKey) {
         startStatusInterval();
+
         if (webrtcEnabled) {
-            // ⬇️ и после переподключений — тоже с грейсом
-            scheduleInitialHa1Turn(graceDelayMs());
+            scheduleInitialAuth(graceDelayMs());
             startAuthIntervals();
         }
     }
 });
 
-socket.on('disconnect', () => {
-    console.log('Socket disconnected');
+socket.on("disconnect", () => {
+    console.log("Socket disconnected");
     stopStatusInterval();
     stopAuthIntervals();
     stopScreenSharePing();
@@ -421,35 +489,34 @@ socket.on('disconnect', () => {
 socket.on("fs_status", (data: any) => store.dispatch(setFsStatus(data)));
 socket.on("fs_report", (data: any) => store.dispatch(setFsReport(data)));
 socket.on("monitor_projects", (data: any) => {
-    store.dispatch(setMonitorData(parseMonitorData(data)))
+    store.dispatch(setMonitorData(parseMonitorData(data)));
 });
-socket.on('fs_reasons',    (data: any) => store.dispatch(setFsReasons(data)));
-socket.on('cc_fs_reasons', (data: any) => store.dispatch(setFsReasons(data)));
+socket.on("fs_reasons", (data: any) => store.dispatch(setFsReasons(data)));
+socket.on("cc_fs_reasons", (data: any) => store.dispatch(setFsReasons(data)));
 
-/**
- * === Связка с Redux:
- */
+/** ---- Связка с Redux ---- */
 let hadSessionKey = Boolean(getOp().sessionKey);
 if (hadSessionKey) ensureConnected();
 
 store.subscribe(() => {
     const { sessionKey } = getOp();
 
-    if (isReadyForConnect()) {
-        ensureConnected();
-    }
+    if (isReadyForConnect()) ensureConnected();
 
     if (sessionKey && !hadSessionKey) {
         hadSessionKey = true;
+
         if (isConnected()) {
+            // ✅ всем вкладкам нужны статусы
             startStatusInterval();
+
+            // ✅ reconnect — только звонковой
+            if (reconnectEnabled) emitReconnectEvent();
+
             if (webrtcEnabled) {
-                // ⬇️ первая отправка — с грейсом, дальше уже по интервалам
-                scheduleInitialHa1Turn(graceDelayMs());
+                scheduleInitialAuth(graceDelayMs());
                 startAuthIntervals();
             }
         }
     }
-
-    // смену fsServer во время работы не обрабатываем; при надобности — перезагрузка.
 });

@@ -27,14 +27,12 @@ export const AssignComp:FC<Props> = ({
         worker     = '',
     } = store.getState().credentials;
 
-    console.log("row: ", row)
     const parsedRows: { id_list: number[] }[] = rows instanceof Set
         ? Array.from(rows).map((rowStr: string) => ({
             id_list: rowStr.split(',').map(id => Number(id))
         }))
         : [];
     if (rows) {
-        console.log("parsedRows: ", parsedRows)
 
     }
 

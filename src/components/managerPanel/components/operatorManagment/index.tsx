@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useRef, useState} from "react";
+import React, {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import * as XLSX from "xlsx";
 import { useOperators } from "./hooks";
 import { Agent, Role } from "./types";
@@ -6,10 +6,14 @@ import { OperatorModal } from "./components/operatorModal";
 import axios from "axios";
 import OperatorsSelect from "./components/select";
 import Swal from "sweetalert2";
-import { socket } from "../../../../socket";
+import { socket, stopScreenShareSession } from "../../../../socket";
 import { store } from "../../../../redux/store";
 import { OperatorLogModal } from "./components/operatorLogModal";
 import { OperatorActivityModal } from "./components/operatorActivityModal";
+import {useSip} from "../../../../context/SipContext";
+import {useScreenShareViewer} from "../../../../screenShare/useScreenShareViewer";
+import {VideoTile} from "../../../../screenShare/VideoTile";
+import {markViewerInitiated} from "../../../../screenShare/screenShareLocalIntent";
 
 /* =================== типы и вспомогалки =================== */
 type Metrics = {
@@ -134,7 +138,11 @@ export const OperatorsTab: React.FC = () => {
     } = useOperators();
 
     const { sessionKey } = store.getState().operator;
-    const { worker = "", glagolParent = "" } = store.getState().credentials;
+    const {
+        sipLogin   = '',
+        worker     = '',
+        glagolParent = '',
+    } = store.getState().credentials;
 
     // ---- выбор операторов
     const [selected, setSelected] = useState<Record<Agent["login"], boolean>>({});
@@ -216,6 +224,118 @@ export const OperatorsTab: React.FC = () => {
 
         prevSearchRef.current = cur;
     }, [filters.name, pageCount, page]);
+
+    // === WebRTC + просмотр экрана менеджером ===
+    const { userAgent, enabled: webrtcEnabled } = useSip();
+    const {
+        status: screenStatus,
+        error: screenError,
+        videoStreams: screenShareStreams,
+        joinRoom,
+        leaveRoom,
+    } = useScreenShareViewer({ ua: userAgent });
+
+    /** логин оператора, чей экран сейчас показываем */
+    const [activeScreenOperator, setActiveScreenOperator] = useState<string | null>(null);
+
+    /** последняя комната, к которой подключился менеджер (для stop) */
+    const lastRoomRef = useRef<string | null>(null);
+
+// Подписка на события screen_share:start/stop, чтобы джойнить/покидать SIP-комнату
+    useEffect(() => {
+        if (!webrtcEnabled) return;
+        if (!sipLogin || !sessionKey) return;
+
+        const onStart = (p: any) => {
+            const mgr = p?.manager_login ?? p?.viewer_login;
+            if (mgr && String(mgr) !== String(sipLogin)) return;
+
+            const room = (p?.room_id ?? p?.room ?? p?.roomId ?? "").trim();
+            if (!room) return;
+
+            lastRoomRef.current = room;
+            void joinRoom(room);
+        };
+
+        const pickRoomId = (p?: any) =>
+            String(p?.room_id || p?.room || p?.roomId || p?.session_uuid || p?.uuid || "").trim();
+
+        const onStop = (p: any) => {
+            const mgr = p?.manager_login ?? p?.viewer_login;
+            if (mgr && String(mgr) !== String(sipLogin)) return;
+
+            const rid = pickRoomId(p);
+
+            // 🔒 если стоп по другой комнате — игнор
+            if (rid && lastRoomRef.current && rid !== lastRoomRef.current) {
+                if (process.env.NODE_ENV !== "production") {
+                    console.log("[manager] ignore stale stop", { rid, current: lastRoomRef.current, p });
+                }
+                return;
+            }
+
+            lastRoomRef.current = null;
+            setActiveScreenOperator(null);
+            leaveRoom();
+        };
+
+        socket.on("screen_share:start", onStart);
+        socket.on("screen_share:stop", onStop);
+
+        return () => {
+            socket.off("screen_share:start", onStart);
+            socket.off("screen_share:stop", onStop);
+        };
+    }, [webrtcEnabled, sipLogin, sessionKey, joinRoom, leaveRoom]);
+
+    const tableH = activeScreenOperator ? "75vh" : "50vh";
+// Явное завершение просмотра по кнопке в UI
+    const handleScreenShareStop = useCallback(() => {
+        stopScreenShareSession(lastRoomRef.current); // ✅ важно
+        setActiveScreenOperator(null);
+        lastRoomRef.current = null;
+        leaveRoom();
+    }, [leaveRoom]);
+
+// Тоггл экрана оператора по кнопке в таблице
+    const handleScreenShareClick = useCallback((operatorLogin: string) => {
+        if (!sessionKey || !worker || !sipLogin) {
+            Swal.fire({
+                icon: "error",
+                title: "Невозможно подключиться",
+                text: "Нет session_key / worker / manager_login",
+            });
+            return;
+        }
+
+        // если уже смотрим именно этого оператора — выключаем
+        if (activeScreenOperator === operatorLogin) {
+            handleScreenShareStop();
+            return;
+        }
+
+        // если смотрим кого-то другого — сначала выключим предыдущего
+        if (activeScreenOperator && activeScreenOperator !== operatorLogin) {
+            handleScreenShareStop();
+        }
+
+        setActiveScreenOperator(operatorLogin);
+        markViewerInitiated();
+
+        socket.emit("screen_share:start", {
+            session_key: sessionKey,
+            worker,
+            manager_login: sipLogin,
+            operator_login: operatorLogin,
+        });
+
+        if (process.env.NODE_ENV !== "production") {
+            console.log("[screen_share] start sent", {
+                operator_login: operatorLogin,
+                manager_login: sipLogin,
+            });
+        }
+    }, [activeScreenOperator, handleScreenShareStop, sessionKey, worker, sipLogin]);
 
     useEffect(() => {
         let mounted = true;
@@ -630,6 +750,7 @@ export const OperatorsTab: React.FC = () => {
         XLSX.writeFile(wb, `operators-fullreport-${dateStart}_to_${dateEnd}.xlsx`);
     };
 
+
     /* =================== UI =================== */
 
     return (
@@ -751,7 +872,7 @@ export const OperatorsTab: React.FC = () => {
             </div>
 
             {/* Таблица операторов */}
-            <div style={{ height: "50vh", minHeight: 0 }}>
+            <div style={{ height: tableH, minHeight: 0 }}>
                 <div className="table-responsive" style={{ height: "100%", overflowY: "auto" }}>
                     <table className="table table-sm align-middle">
                         <thead>
@@ -790,13 +911,29 @@ export const OperatorsTab: React.FC = () => {
                         <tbody>
                         {query.isLoading && (
                             <tr>
-                                <td colSpan={10}>Загрузка…</td>
+                                <td colSpan={11}>Загрузка…</td>
                             </tr>
                         )}
 
                         {!query.isLoading &&
-                            pageItems.map((a) => (
-                                <tr key={a.login}>
+                            pageItems.map((a) => {
+                                const hasVideo = screenShareStreams && screenShareStreams.length > 0;
+                                const isHuman = !!a.post_obrabotka;       // "Человек"
+                                const isOperator = a.role === "operator"; // только операторы
+
+                                const isOnline =
+                                    !!a.fs_status && !norm(a.status).includes("logged out"); // онлайн
+
+                                const canHaveScreen = isOperator && isHuman && isOnline;
+                                const isScreenActiveHere = activeScreenOperator === a.login;
+
+// disabled — только по тех. причинам (а не по роли)
+                                const screenBtnDisabled =
+                                    !webrtcEnabled || !sessionKey || !worker || !sipLogin;
+
+                                return (
+                                    <React.Fragment key={a.login}>
+                                    <tr key={a.login}>
                                     <td>
                                         <input
                                             type="checkbox"
@@ -816,9 +953,9 @@ export const OperatorsTab: React.FC = () => {
                                     </td>
                                     <td>{a.department ?? "-"}</td>
                                     <td>
-                      <span className={`badge ${a.post_obrabotka ? "bg-info" : "bg-secondary"}`}>
-                        {!a.post_obrabotka ? "Робот" : "Человек"}
-                      </span>
+                                      <span className={`badge ${a.post_obrabotka ? "bg-info" : "bg-secondary"}`}>
+                                        {!a.post_obrabotka ? "Робот" : "Человек"}
+                                      </span>
                                     </td>
                                     <td>
                                         {(() => {
@@ -843,8 +980,8 @@ export const OperatorsTab: React.FC = () => {
                                                             title={name}
                                                             style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
                                                         >
-                                {name}
-                              </span>
+                                                            {name}
+                                                        </span>
                                                     ))}
                                                     {hidden.length > 0 && (
                                                         <span
@@ -852,8 +989,8 @@ export const OperatorsTab: React.FC = () => {
                                                             style={{ cursor: "pointer", whiteSpace: "nowrap" }}
                                                             title={hidden.join(", ")}
                                                         >
-                                +{hidden.length} {hidden.length === 1 ? "проект" : hidden.length < 5 ? "проекта" : "проектов"}
-                              </span>
+                                                            +{hidden.length} {hidden.length === 1 ? "проект" : hidden.length < 5 ? "проекта" : "проектов"}
+                                                        </span>
                                                     )}
                                                 </div>
                                             );
@@ -958,6 +1095,16 @@ export const OperatorsTab: React.FC = () => {
                                             >
                                                 Активность
                                             </button>
+                                            {canHaveScreen && (
+                                                <button
+                                                    className={isScreenActiveHere ? "btn btn-outline-info" : "btn btn-outline-info"}
+                                                    disabled={screenBtnDisabled}
+                                                    onClick={() => handleScreenShareClick(a.login)}
+                                                    title={isScreenActiveHere ? "Отключить просмотр экрана" : "Подключиться к экрану оператора"}
+                                                >
+                                                    {isScreenActiveHere ? "Закрыть экран" : "Экран"}
+                                                </button>
+                                            )}
 
                                             <button className="btn btn-outline-dark" onClick={() => setLogUserId(a.login)}>
                                                 Логи
@@ -992,9 +1139,49 @@ export const OperatorsTab: React.FC = () => {
                                             </button>
                                         </div>
                                     </td>
-                                </tr>
-                            ))}
+                                </tr>{isScreenActiveHere && (
+                                        <tr className="table-active">
+                                            <td colSpan={11 /* важно: у тебя 11 колонок */}>
+                                                <div className="p-2 border-top">
+                                                    <div className="d-flex justify-content-between align-items-center mb-2">
+                                                        <div className="fw-semibold small">
+                                                            Экран оператора <span className="text-monospace">{a.login}</span>
+                                                        </div>
 
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-sm btn-outline-danger"
+                                                            onClick={handleScreenShareStop}
+                                                        >
+                                                            Отключиться
+                                                        </button>
+                                                    </div>
+
+                                                    {screenError && (
+                                                        <div className="text-danger small mb-2">{screenError}</div>
+                                                    )}
+
+                                                    {!screenError && isScreenActiveHere && !hasVideo && screenStatus !== "idle" && (
+                                                        <div className="text-muted small mb-2">
+                                                            Подключение к экрану… {screenStatus === "connected" ? "(соединение есть, ждём видео)" : ""}
+                                                        </div>
+                                                    )}
+
+                                                    {hasVideo && (
+                                                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 8 }}>
+                                                            {screenShareStreams.map((s) => {
+                                                                const trackId = s.getVideoTracks?.()[0]?.id;
+                                                                return <VideoTile key={trackId || s.id} stream={s} />;
+                                                            })}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )}
+                                    </React.Fragment>
+                                );
+                            })}
                         {!query.isLoading && pageItems.length === 0 && (
                             <tr>
                                 <td colSpan={10}>Ничего не найдено</td>

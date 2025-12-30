@@ -206,7 +206,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const { monitorUsers, monitorProjects, allProjects, monitorCallcenter } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
-    console.log("monitorUsers: ", monitorUsers)
     const [autocallEnabled, setAutocallEnabled] = useState(() => {
         return localStorage.getItem('autocallEnabled') === 'true';
     });
@@ -325,7 +324,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         setHandleOutboundCall(false);
 
         const first = activeCalls[0];
-        console.log("first: ", first)
         const hasAppField = first !== undefined && 'application' in first;
         const hasApp      = Boolean(first?.application);
 
@@ -449,17 +447,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     };
 
     const outProjectClickToCall = ( phone: string, project_name: string, specialKey: string ) => {
-            console.log("123arg: ", {
-                // fs_server: fsServer,
-                // room_id: roomId,
-                worker,
-                session_key: sessionKey,
-                // call_section: 1,
-                project_name: project_name,
-                phone: phone,
-                // out_extension: out_extension,
-                special_key: specialKey
-            })
 
             socket.emit('get_phone_line', {
                 // fs_server: fsServer,
@@ -514,7 +501,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 );
 
                 if (!matchedPreset) {
-                    console.log('Нет пресета под проект:', outActiveProjectName);
                     socket.emit("get_project_fields", {
                         projects: [outActiveProjectName],
                         session_key: sessionKey,
@@ -522,14 +508,11 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     });
                     return;
                 } else {
-                    console.log("matchedPreset:", matchedPreset);
                     setSelectedPreset(matchedPreset);
                 }
-                console.log("outActivePhoneData: ", outActivePhoneData)
 
                 // 🔽 строим filter_by из group_by + проект
                 const groupFilter = buildGroupByFilter(matchedPreset.preset.group_by, outActivePhoneData || {});
-                console.log("groupFilter: ", groupFilter)
                 const filter_by: Record<string, any> = {
                     project: ['IN', matchedPreset.preset.projects],
                     ...groupFilter,
@@ -545,21 +528,17 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 });
 
                 const projectIdData = response.data;
-                console.log("projectIdData:", projectIdData);
 
                 // ✅ Рекурсивный обход для сборки групп (как у тебя было)
                 const allGroups = extractPhoneGroups(projectIdData);
-                console.log("allGroups:", allGroups);
 
                 const flatPhones = allGroups.flat();
-                console.log('OUTflatPhones:', flatPhones);
 
                 if (!outActivePhoneData.id) return;
 
                 const matchedGroups = allGroups.filter(group =>
                     group.some(item => item.id === outActivePhoneData.id)
                 );
-                console.log("matchedGroups:", matchedGroups);
 
                 if (matchedGroups.length > 0) {
                     setShowTasksDashboard(true);
@@ -567,10 +546,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     const matchedGroupIDs = Array.from(
                         new Set(matchedGroups.flat().map(item => item.id))
                     );
-                    console.log("OUTmatchedGroup:", matchedGroupIDs);
 
                     const openedPhones = matchedGroups.flat();
-                    console.log("OUTopenedPhones:", openedPhones);
 
                     const groupIDs = allGroups.map(group => group.map(item => item.id));
 
@@ -583,7 +560,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     window.history.replaceState({}, "", url);
 
                 } else {
-                    console.log("Номер не найден → tuskMode OFF");
                     setShowTasksDashboard(false);
                 }
             } catch (err) {
@@ -635,7 +611,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
             // 👉 Слушаем ответ
             const handleCheckExpress = (response: any) => {
-                console.log("check_express response:", response);
                 if (response.express) return
 
                 const startType = projectPool.find(p => p.project_name === project_name)?.start_type || "auto";
@@ -812,7 +787,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     useEffect(() => {
         const handleGetOutStart = (msg: any) => {
-            console.log("get_out_data: ", msg)
             setOutboundID(msg.phone_line[0].id)
             setOutboundCall(true)
             if (setOutActivePhoneData) {
@@ -1059,7 +1033,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             filtered = filtered.filter(([_, u]) => u.post_obrabotka === false);
         }
 
-        console.log("monitorCallcenter: ", monitorCallcenter )
         // 3. Онлайн/оффлайн
         if (statusFilter !== 'all') {
             filtered = filtered.filter(([login, user]) => {
@@ -1076,7 +1049,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             });
         }
 
-        console.log("userStatuses.statuses: ", userStatuses.statuses)
         const liveOperators = filtered.filter(([_, u]) => u.post_obrabotka !== false);
         const robots        = filtered.filter(([_, u]) => u.post_obrabotka === false);
 
@@ -1089,11 +1061,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                         .filter((key: string) => typeof key === 'string' || typeof key === 'number')
                         .map((key: string) => monitorProjects?.[key] ?? key)
                     : [];
-                console.log("123333projectNames: ", projectNames)
 
                 // 1) Получаем статус для этого логина
                 const statusObj = userStatuses[login] || {};
-                console.log("statusObj: ", statusObj)
                 const { sofia_status, status: fsStatus, state: fsState } = statusObj;
                 // 2) Вычисляем Sofía-статус
                 const sofiaText  = sofia_status?.includes('Registered') ? 'Авторизован' : 'Выключен';
@@ -1109,7 +1079,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     fsText  = 'Активный вызов';
                     fsColor = '#cba200';
                 } else if (fsStatus?.includes('Available') && fsState === 'Idle') {
-                    console.log("postActiveTEST")
                     fsText  = 'Постобработка';
                     fsColor = '#cba200';
                 } else if (fsStatus?.includes('Available') && fsState === 'Waiting') {

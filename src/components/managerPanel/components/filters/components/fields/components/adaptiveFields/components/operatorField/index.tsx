@@ -25,7 +25,6 @@ export const OperatorField: React.FC<Props> = ({ value, onChange }) => {
         glagolParent      = ''
     } = store.getState().credentials;
 
-    useEffect(() => console.log("agents: ", agents),[agents])
     useEffect(() => {
         const fetchAgents = async () => {
             setIsLoading(true);

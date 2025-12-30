@@ -1,18 +1,15 @@
 import axios from "axios";
 
-const DEFAULT_CHAT_BASE = "https://wwstest.glagol.ai/chat";
+const DEFAULT_CHAT_BASE = "https://pmpbx.glagol.ai/chat";
 
 function readChatBaseURL(): string {
     const el = document.getElementById("root") as HTMLElement | null;
     let raw = (el?.dataset?.chatServer || el?.dataset?.chatApiBase || "").trim();
     if (!raw) return DEFAULT_CHAT_BASE;
 
-    // если начинается с // — добавим текущий протокол (https: или http:)
     if (raw.startsWith("//")) {
         raw = `${window.location.protocol}${raw}`;
-    }
-    // если протокола нет вообще — тоже добавим текущий протокол
-    else if (!/^[a-zA-Z][\w+.-]*:\/\//.test(raw)) {
+    } else if (!/^[a-zA-Z][\w+.-]*:\/\//.test(raw)) {
         raw = `${window.location.protocol}//${raw}`;
     }
 
@@ -20,8 +17,21 @@ function readChatBaseURL(): string {
 }
 
 export const chatApi = axios.create({
-    baseURL: readChatBaseURL(), // теперь будет, например, "https://wwstest.glagol.ai/chat"
     headers: { Accept: "application/json" },
+});
+
+// ✅ каждый запрос сам подставит актуальный baseURL
+chatApi.interceptors.request.use((config) => {
+    config.baseURL = readChatBaseURL();
+
+    const el = document.getElementById("root") as HTMLElement | null;
+    const sessionKey = (el?.dataset?.sessionKey || "").trim();
+    if (sessionKey) {
+        config.headers = config.headers ?? {};
+        (config.headers as any).Authorization = `Bearer ${sessionKey}`;
+    }
+
+    return config;
 });
 
 export type RawChatMessage = {
@@ -36,19 +46,15 @@ export type RawChatMessage = {
 export type UploadItem = { status: string; filename: string };
 
 function normalizeUploadResponse(raw: any): UploadItem[] {
-    // уже в целевом формате?
-    if (Array.isArray(raw) && raw.every(x => x && typeof x === "object" && "filename" in x)) {
+    if (Array.isArray(raw) && raw.every((x) => x && typeof x === "object" && "filename" in x)) {
         return raw as UploadItem[];
     }
-    // массив строк -> конвертируем
-    if (Array.isArray(raw) && raw.every(x => typeof x === "string")) {
-        return (raw as string[]).map(name => ({ status: "ok", filename: name }));
+    if (Array.isArray(raw) && raw.every((x) => typeof x === "string")) {
+        return (raw as string[]).map((name) => ({ status: "ok", filename: name }));
     }
-    // обёртки
     if (Array.isArray(raw?.storage)) return normalizeUploadResponse(raw.storage);
-    if (Array.isArray(raw?.data))    return normalizeUploadResponse(raw.data);
-    // одиночная строка
-    if (typeof raw === "string")     return [{ status: "ok", filename: raw }];
+    if (Array.isArray(raw?.data)) return normalizeUploadResponse(raw.data);
+    if (typeof raw === "string") return [{ status: "ok", filename: raw }];
     return [];
 }
 
@@ -58,12 +64,11 @@ export async function fetchChatHistory(guid: string): Promise<RawChatMessage[]> 
     return rows as RawChatMessage[];
 }
 
-/** Бэкенд ждёт multipart/form-data: files */
 export async function uploadToStorage(guid: string, files: File[]): Promise<UploadItem[]> {
     if (!files?.length) return [];
 
     const fd = new FormData();
-    files.forEach(f => fd.append("files", f, f.name));
+    files.forEach((f) => fd.append("files", f, f.name));
 
     const { data } = await chatApi.post(
         `/api/v1/storage/upload/${encodeURIComponent(guid)}`,
@@ -73,16 +78,14 @@ export async function uploadToStorage(guid: string, files: File[]): Promise<Uplo
     return normalizeUploadResponse(data);
 }
 
-/** привязка имён к guid */
 export async function attachFilesToGuid(guid: string, items: UploadItem[]) {
     if (!items.length) return;
-    const storage = items.map(i => i.filename);
+    const storage = items.map((i) => i.filename);
     await chatApi.post(`/api/v1/contacts/storage/add`, { guid, storage });
 }
 
-/** полный цикл: upload -> attach -> вернуть имена с индексами от сервера */
 export async function uploadAndAttach(guid: string, files: File[]) {
     const items = await uploadToStorage(guid, files);
     await attachFilesToGuid(guid, items);
-    return items; // [{ status, filename }]
+    return items;
 }

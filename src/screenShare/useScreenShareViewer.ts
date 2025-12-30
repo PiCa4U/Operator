@@ -1,12 +1,8 @@
 // src/screenShare/useScreenShareViewer.ts
+
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-    Inviter,
-    Session,
-    SessionState,
-    UserAgent,
-    UserAgentOptions,
-} from "sip.js";
+import { Inviter, Session, SessionState, UserAgent, UserAgentOptions } from "sip.js";
+import { attachIceDebug, logSelectedIcePair, onlyTurnServers } from "./iceDebug";
 
 export type ViewerStatus = "idle" | "connecting" | "connected";
 
@@ -23,20 +19,79 @@ type Result = {
     leaveRoom: () => Promise<void>;
 };
 
+type VideoInbound = {
+    bytesReceived?: number;
+    framesDecoded?: number;
+    keyFramesDecoded?: number;
+    packetsReceived?: number;
+    pliCount?: number;
+    firCount?: number;
+    nackCount?: number;
+    framesDropped?: number;
+    freezeCount?: number;
+};
+
+type JoinMode = "relay" | "all";
+
+function resolveSipDomain(ua: UserAgent): string {
+    const uri: any = (ua.configuration as UserAgentOptions).uri;
+    return uri?.host || "24webrtc.ru";
+}
+
+function getPcConfigFromUa(ua: UserAgent) {
+    const factoryOpts = (ua.configuration as any).sessionDescriptionHandlerFactoryOptions || {};
+    return (factoryOpts.peerConnectionConfiguration || undefined) as RTCConfiguration | undefined;
+}
+
+function buildPcConfigForMode(ua: UserAgent, mode: JoinMode): RTCConfiguration {
+    const fromUa = (getPcConfigFromUa(ua) || {}) as RTCConfiguration;
+
+    if (mode === "all") {
+        // максимально “не мешаем” браузеру: пусть сам выбирает лучший путь
+        return {
+            ...fromUa,
+            iceTransportPolicy: "all",
+            // оставляем и STUN, и TURN как есть
+            iceServers: fromUa.iceServers,
+        };
+    }
+
+    // relay-only: только TURN
+    const turnOnly = onlyTurnServers(fromUa.iceServers);
+    return {
+        ...fromUa,
+        iceTransportPolicy: "relay",
+        iceServers: turnOnly,
+    };
+}
+
 export function useScreenShareViewer({ ua }: Options): Result {
     const [status, setStatus] = useState<ViewerStatus>("idle");
     const [error, setError] = useState<string | null>(null);
 
-    // track.id -> MediaStream (по одному треку на поток)
+    // track.id -> MediaStream
     const streamsRef = useRef<Map<string, MediaStream>>(new Map());
-    const [version, setVersion] = useState(0);
+    const [, forceRerender] = useState(0);
 
     const sessionRef = useRef<Session | null>(null);
+    const pcRef = useRef<RTCPeerConnection | null>(null);
 
-    const resolveSipDomain = (ua: UserAgent): string => {
-        const uri: any = (ua.configuration as UserAgentOptions).uri;
-        return uri?.host || "24webrtc.ru";
-    };
+    const roomRef = useRef<string | null>(null);
+
+    // watchdog state
+    const watchdogTimerRef = useRef<number | null>(null);
+    const lastOkTsRef = useRef<number>(0);
+    const lastFramesDecodedRef = useRef<number>(0);
+    const lastBytesRef = useRef<number>(0);
+
+    // NEW: когда стали connected
+    const connectedAtRef = useRef<number>(0);
+    // NEW: если inbound-rtp вообще не появился
+    const noInboundSinceRef = useRef<number>(0);
+
+    const reconnectLockRef = useRef(false);
+    const reconnectAttemptsRef = useRef<number>(0);
+    const lastReconnectTsRef = useRef<number>(0);
 
     const attachTrack = useCallback((track: MediaStreamTrack) => {
         if (track.kind !== "video") return;
@@ -44,86 +99,344 @@ export function useScreenShareViewer({ ua }: Options): Result {
 
         const stream = new MediaStream([track]);
         streamsRef.current.set(track.id, stream);
-        setVersion((v) => v + 1);
+        forceRerender((v) => v + 1);
 
-        track.addEventListener(
-            "ended",
-            () => {
-                streamsRef.current.delete(track.id);
-                setVersion((v) => v + 1);
-            },
-            { once: true }
-        );
+        const cleanup = () => {
+            streamsRef.current.delete(track.id);
+            forceRerender((v) => v + 1);
+        };
+
+        track.addEventListener("ended", cleanup, { once: true });
     }, []);
 
+    const stopWatchdog = useCallback(() => {
+        if (watchdogTimerRef.current) {
+            window.clearInterval(watchdogTimerRef.current);
+            watchdogTimerRef.current = null;
+        }
+        lastOkTsRef.current = 0;
+        lastFramesDecodedRef.current = 0;
+        lastBytesRef.current = 0;
+
+        connectedAtRef.current = 0;
+        noInboundSinceRef.current = 0;
+
+        reconnectLockRef.current = false;
+        reconnectAttemptsRef.current = 0;
+        lastReconnectTsRef.current = 0;
+    }, []);
+
+    const clearStreams = useCallback(() => {
+        streamsRef.current.forEach((s) => {
+            s.getTracks().forEach((t) => {
+                try {
+                    t.stop();
+                } catch {}
+            });
+        });
+        streamsRef.current.clear();
+        forceRerender((v) => v + 1);
+    }, []);
+
+    const leaveRoom = useCallback(async () => {
+        stopWatchdog();
+
+        const s = sessionRef.current;
+        sessionRef.current = null;
+        roomRef.current = null;
+
+        try {
+            pcRef.current?.close();
+        } catch {}
+        pcRef.current = null;
+
+        if (s) {
+            try {
+                await s.bye();
+            } catch {}
+        }
+
+        setStatus("idle");
+        clearStreams();
+    }, [clearStreams, stopWatchdog]);
+
+    const readInboundVideo = useCallback(async (): Promise<VideoInbound | null> => {
+        const pc = pcRef.current;
+        if (!pc) return null;
+
+        try {
+            const stats = await pc.getStats();
+
+            // выбираем “лучший” inbound-rtp(video): с максимальным bytesReceived
+            let best: any = null;
+            let bestBytes = -1;
+
+            stats.forEach((r: any) => {
+                const isVideo = r.type === "inbound-rtp" && (r.kind === "video" || r.mediaType === "video");
+                if (!isVideo) return;
+
+                const bytes = Number(r.bytesReceived || 0);
+                if (bytes >= bestBytes) {
+                    bestBytes = bytes;
+                    best = r;
+                }
+            });
+
+            if (!best) return null;
+
+            return {
+                bytesReceived: best.bytesReceived,
+                framesDecoded: best.framesDecoded,
+                keyFramesDecoded: best.keyFramesDecoded,
+                packetsReceived: best.packetsReceived,
+                pliCount: best.pliCount,
+                firCount: best.firCount,
+                nackCount: best.nackCount,
+                framesDropped: best.framesDropped,
+                freezeCount: best.freezeCount,
+            };
+        } catch {
+            return null;
+        }
+    }, []);
+
+    // joinRoom будет доступен в maybeReconnect через ref
+    const joinRoomRef = useRef<(room: string, mode?: JoinMode) => Promise<void>>(async () => {});
+
+    const maybeReconnect = useCallback(
+        async (reason: string) => {
+            const room = roomRef.current;
+            if (!room) return;
+            if (!ua) return;
+            if (reconnectLockRef.current) return;
+
+            const now = Date.now();
+
+            // анти-шторм
+            if (now - lastReconnectTsRef.current < 6000) return;
+            if (reconnectAttemptsRef.current >= 3) return;
+
+            reconnectLockRef.current = true;
+            reconnectAttemptsRef.current += 1;
+            lastReconnectTsRef.current = now;
+
+            // NEW: первые 1-2 попытки — relay (как сейчас),
+            // потом пробуем all, чтобы повысить шанс “вылечить” кривой NAT/ICE сервера
+            const mode: JoinMode = reconnectAttemptsRef.current >= 2 ? "all" : "relay";
+
+            if (process.env.NODE_ENV !== "production") {
+                console.warn("[viewer] watchdog reconnect:", reason, "attempt", reconnectAttemptsRef.current, "mode", mode);
+            }
+
+            try {
+                await leaveRoom();
+                await new Promise((r) => setTimeout(r, 350));
+                await joinRoomRef.current(room, mode);
+            } finally {
+                reconnectLockRef.current = false;
+            }
+        },
+        [leaveRoom, ua]
+    );
+
+    const startWatchdog = useCallback(() => {
+        // ВАЖНО: не сбрасываем reconnectAttemptsRef тут,
+        // иначе fallback relay->all никогда не наступит.
+        if (watchdogTimerRef.current) {
+            window.clearInterval(watchdogTimerRef.current);
+            watchdogTimerRef.current = null;
+        }
+
+        const WARMUP_SEC = 3;
+        const STUCK_SEC = 8;
+        const NO_INBOUND_GRACE_SEC = 5; // NEW: если inbound-rtp(video) вообще не появилось
+
+        connectedAtRef.current = Date.now();
+        noInboundSinceRef.current = 0;
+
+        lastOkTsRef.current = Date.now();
+        lastFramesDecodedRef.current = 0;
+        lastBytesRef.current = 0;
+
+        watchdogTimerRef.current = window.setInterval(async () => {
+            if (status !== "connected") return;
+            if (!pcRef.current) return;
+
+            const now = Date.now();
+            const inbound = await readInboundVideo();
+
+            // NEW: inbound-rtp(video) вообще не появился
+            if (!inbound) {
+                if (!noInboundSinceRef.current) noInboundSinceRef.current = now;
+
+                const sinceConnected = (now - (connectedAtRef.current || now)) / 1000;
+                const sinceNoInbound = (now - (noInboundSinceRef.current || now)) / 1000;
+
+                if (sinceConnected > NO_INBOUND_GRACE_SEC && sinceNoInbound > NO_INBOUND_GRACE_SEC) {
+                    void maybeReconnect("no inbound-rtp(video) after connected");
+                }
+                return;
+            } else {
+                noInboundSinceRef.current = 0;
+            }
+
+            const bytes = inbound.bytesReceived || 0;
+            const frames = inbound.framesDecoded || 0;
+
+            // NEW: inbound найден, но всё ещё 0/0 после grace — значит RTP реально не идёт
+            if ((now - connectedAtRef.current) > NO_INBOUND_GRACE_SEC * 1000 && bytes === 0 && frames === 0) {
+                void maybeReconnect("inbound video stuck at 0 bytes/frames");
+                return;
+            }
+
+            // warmup
+            if (now - lastOkTsRef.current < WARMUP_SEC * 1000) {
+                lastBytesRef.current = bytes;
+                lastFramesDecodedRef.current = frames;
+                return;
+            }
+
+            const bytesGrowing = bytes > (lastBytesRef.current || 0);
+            const framesGrowing = frames > (lastFramesDecodedRef.current || 0);
+
+            if (framesGrowing) {
+                lastOkTsRef.current = now;
+                lastBytesRef.current = bytes;
+                lastFramesDecodedRef.current = frames;
+                return;
+            }
+
+            if (bytesGrowing && !framesGrowing) {
+                const stuckFor = now - lastOkTsRef.current;
+                if (stuckFor > STUCK_SEC * 1000) {
+                    void maybeReconnect("bytes grow but framesDecoded not grow (likely missing keyframe)");
+                }
+            } else {
+                // ничего не растёт — если долго, тоже реконнект
+                const stuckFor = now - lastOkTsRef.current;
+                if (stuckFor > STUCK_SEC * 1000) {
+                    void maybeReconnect("no progress in inbound video (bytes/frames not growing)");
+                }
+            }
+
+            lastBytesRef.current = bytes;
+            lastFramesDecodedRef.current = frames;
+        }, 2000);
+    }, [maybeReconnect, readInboundVideo, status]);
+
     const joinRoom = useCallback(
-        async (room: string) => {
+        async (room: string, mode: JoinMode = "relay") => {
             setError(null);
+
             if (!ua) {
                 setError("SIP UA is not ready");
                 return;
             }
-            if (!room.trim()) {
+
+            const rid = room.trim();
+            if (!rid) {
                 setError("room is empty");
                 return;
             }
-            if (sessionRef.current) {
-                // уже подключены
+
+            // уже в сессии — не стартуем вторую
+            if (sessionRef.current) return;
+
+            roomRef.current = rid;
+
+            const domain = resolveSipDomain(ua);
+            const confUri = UserAgent.makeURI(`sip:conf+${rid}@${domain}`);
+            if (!confUri) {
+                setError("cannot build conf URI");
+                roomRef.current = null;
                 return;
             }
 
-            const domain = resolveSipDomain(ua);
-            const confUri = UserAgent.makeURI(`sip:conf+${room}@${domain}`);
-            if (!confUri) {
-                setError("cannot build conf URI");
-                return;
+            // build pc config by mode
+            const pcConfig = buildPcConfigForMode(ua, mode);
+            if (mode === "relay") {
+                const turnOnly = onlyTurnServers(pcConfig.iceServers);
+                if (!turnOnly.length) {
+                    setError("TURN is not configured (no turn: / turns: in iceServers). Cannot enforce relay.");
+                    roomRef.current = null;
+                    return;
+                }
             }
 
             const viewerOptions: any = {
                 sessionDescriptionHandlerFactoryOptions: {
                     mediaStreamFactory: () => Promise.resolve(new MediaStream()),
+                    constraints: { audio: false, video: false },
+                    iceGatheringTimeout: 13000,
+                    peerConnectionConfiguration: pcConfig,
                 },
                 sessionDescriptionHandlerOptions: {
-                    offerOptions: {
-                        offerToReceiveVideo: true,
-                        offerToReceiveAudio: false,
-                    },
+                    offerOptions: { offerToReceiveVideo: true, offerToReceiveAudio: false },
                     constraints: { audio: false, video: false },
                 },
             };
 
             const viewer = new Inviter(ua, confUri, viewerOptions);
-
             sessionRef.current = viewer;
             setStatus("connecting");
 
             viewer.delegate = viewer.delegate || {};
             viewer.delegate.onSessionDescriptionHandler = (sdh: any) => {
                 const pc: RTCPeerConnection = sdh.peerConnection;
+                pcRef.current = pc;
 
-                pc.addEventListener("track", (ev: RTCTrackEvent) => {
-                    const track = ev.track;
-                    attachTrack(track);
-                });
+                if (process.env.NODE_ENV !== "production") {
+                    attachIceDebug(pc, `viewer:${mode}`);
+                }
 
-                // если ontrack уже отстрелил до наших обработчиков
-                pc.getReceivers().forEach((r) => {
-                    if (r.track) attachTrack(r.track);
-                });
+                // Явно просим recvonly video
+                try {
+                    const hasVideoTr = pc.getTransceivers().some((t) => t.receiver?.track?.kind === "video");
+                    if (!hasVideoTr) pc.addTransceiver("video", { direction: "recvonly" });
+                } catch {}
+
+                pc.addEventListener("track", (ev: RTCTrackEvent) => attachTrack(ev.track));
+
+                // если track уже прилетел
+                try {
+                    pc.getReceivers().forEach((r) => r.track && attachTrack(r.track));
+                } catch {}
             };
 
             viewer.stateChange.addListener((st) => {
                 if (st === SessionState.Establishing) setStatus("connecting");
-                if (st === SessionState.Established) setStatus("connected");
+
+                if (st === SessionState.Established) {
+                    setStatus("connected");
+
+                    // NEW: не обнуляем попытки здесь — иначе fallback relay->all не наступит
+                    connectedAtRef.current = Date.now();
+                    noInboundSinceRef.current = 0;
+
+                    startWatchdog();
+
+                    if (process.env.NODE_ENV !== "production" && pcRef.current) {
+                        void logSelectedIcePair(pcRef.current, `viewer:${mode}`);
+                    }
+                }
+
                 if (st === SessionState.Terminated) {
+                    // watchdog сбросим в leaveRoom(), но тут на всякий
+                    if (watchdogTimerRef.current) {
+                        window.clearInterval(watchdogTimerRef.current);
+                        watchdogTimerRef.current = null;
+                    }
+
                     setStatus("idle");
                     sessionRef.current = null;
-                    // подчистить все потоки
-                    streamsRef.current.forEach((s) =>
-                        s.getTracks().forEach((t) => t.stop())
-                    );
-                    streamsRef.current.clear();
-                    setVersion((v) => v + 1);
+                    roomRef.current = null;
+
+                    try {
+                        pcRef.current?.close();
+                    } catch {}
+                    pcRef.current = null;
+
+                    clearStreams();
                 }
             });
 
@@ -132,48 +445,41 @@ export function useScreenShareViewer({ ua }: Options): Result {
             } catch (e: any) {
                 console.error("[screenShareViewer] invite() failed", e);
                 setError(e?.message || String(e));
+
                 setStatus("idle");
                 sessionRef.current = null;
+                roomRef.current = null;
+
+                try {
+                    pcRef.current?.close();
+                } catch {}
+                pcRef.current = null;
+
+                clearStreams();
             }
         },
-        [ua, attachTrack]
+        [ua, attachTrack, clearStreams, startWatchdog]
     );
 
-    const leaveRoom = useCallback(async () => {
-        const s = sessionRef.current;
-        if (s) {
-            try {
-                await s.bye();
-            } catch {}
-        }
-        sessionRef.current = null;
-        setStatus("idle");
-        streamsRef.current.forEach((s) =>
-            s.getTracks().forEach((t) => t.stop())
-        );
-        streamsRef.current.clear();
-        setVersion((v) => v + 1);
-    }, []);
-
-    // если UA пропал — выходим
     useEffect(() => {
-        if (!ua) {
-            leaveRoom();
-        }
+        joinRoomRef.current = joinRoom;
+    }, [joinRoom]);
+
+    useEffect(() => {
+        if (!ua) void leaveRoom();
     }, [ua, leaveRoom]);
 
-    useEffect(
-        () => () => {
-            leaveRoom();
-        },
-        [leaveRoom]
-    );
+    useEffect(() => {
+        return () => {
+            void leaveRoom();
+        };
+    }, [leaveRoom]);
 
     return {
         status,
         error,
         videoStreams: Array.from(streamsRef.current.values()),
-        joinRoom,
+        joinRoom: (room: string) => joinRoom(room, "relay"),
         leaveRoom,
     };
 }

@@ -128,18 +128,32 @@ const resolveJoinUuid = (
     const bUuid = row.b_uuid ?? null;
 
     const isTakeover = type === "takeover";
-
-    if (!isTakeover) {
+    const listen_only = type === "listen_only"
+    const whisper = type === "whisper"
+    const barge = type === "barge"
+    if (listen_only) {
+        if (dir === "outbound") return uuid ?? bUuid;
+        if (dir === "inbound") return uuid ?? bUuid;
+        return bUuid ?? uuid;
+    }
+    if (whisper) {
+        if (dir === "outbound") return uuid ?? bUuid;
+        if (dir === "inbound") return uuid ?? bUuid;
+        return bUuid ?? uuid;
+    }
+    if (barge) {
         // старое поведение
         if (dir === "outbound") return uuid ?? bUuid;
         if (dir === "inbound") return bUuid ?? uuid;
         return bUuid ?? uuid;
     }
-
-    // takeover — всё наоборот
-    if (dir === "outbound") return bUuid ?? uuid;
-    if (dir === "inbound") return uuid ?? bUuid;
-    return uuid ?? bUuid;
+    if (isTakeover) {
+        // takeover — всё наоборот
+        if (dir === "outbound") return uuid ?? uuid;
+        if (dir === "inbound") return uuid ?? bUuid;
+        return uuid ?? bUuid;
+    }
+    return null;
 };
 
 type JoinInfo = {

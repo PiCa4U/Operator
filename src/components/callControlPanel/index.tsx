@@ -671,10 +671,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     } = store.getState().credentials;
 
     const { sessionKey } = store.getState().operator
-    useEffect(() => console.log("monoModulesCallControlPanel: ", monoModules),[monoModules])
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
-    console.log("projectPool: ", projectPool)
 
     const activeCalls: ActiveCall[] = useSelector((state: RootState) => state.operator.activeCalls);
 
@@ -695,9 +693,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [mergedFieldsAll, setMergedFieldsAll] = useState<MergedField[]>([]); // ВСЕ поля
     const [mergedFields,    setMergedFields]    = useState<MergedField[]>([]); // Поля, которые рендерим
     const [values, setValues] = useState<GroupFieldValues>({});
-    useEffect(() => console.log("values323123: ", values), [values])
-
-    useEffect(() => console.log("mergedFields: ", mergedFields), [mergedFields])
     // Состояние для списка модулей, полученных с сервера
     // const [modules, setModules] = useState<ModuleData[]>([]);
     const [isParams, setIsParams] = useState<boolean>(true)
@@ -975,7 +970,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const [runningModulesCount, setRunningModulesCount] = useState(0);
 
-    useEffect(() => console.log("selectedPhoneByField: ", selectedPhoneByField),[selectedPhoneByField])
 
     const [groupModalOpen, setGroupModalOpen] = useState(false);
 
@@ -994,7 +988,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     };
 
     const groupProjects = useMemo(() => {
-        console.log("openedPhonesMEMO: ", openedPhones)
         if (!openedPhones) return [];
         return Array.from(new Set(openedPhones.map(p => p.project)));
     }, [openedPhones]);
@@ -1093,8 +1086,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const idProjectMap = useMemo(() =>
             openedPhones?.map(ph => ({ id: ph.id, project_name: ph.project })) || [],
         [openedPhones]);
-    useEffect(() => console.log("444groupProjects: ", groupProjects),[groupProjects])
-    useEffect(() => console.log("444selectedProjects: ", selectedProjects),[selectedProjects])
 
     useEffect(() => {
         if (groupProjects.length === 0 && activeProject) {
@@ -1189,7 +1180,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // Логика «постобработки»
     const POST_LIMIT = worker.includes('fs@akc24.ru') ? 12000 : 1200;
     const [postSeconds, setPostSeconds] = useState(POST_LIMIT);
-    useEffect(() => console.log("postCall: ", postCallData),[postCallData])
 
     const forbiddenProjects = ['api_call', 'no_project_out'];
     const project = call?.project_name || '';
@@ -1201,7 +1191,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     useEffect(() => {
         if (openedPhones && openedPhones.length) {
             const projects = Array.from(new Set(openedPhones.map(p => p.project)));
-            console.log("AGNAINDANSDN", projects);
 
             if (isClient && projects.length) {
                 // клиент → тянем данные через API
@@ -1258,7 +1247,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 });
             }
 
-            console.log("projectNames: ", projectNames)
             const projectName = projectNames[0];
             const projectDataArray = Object.values(call.projects) as Array<{
                 call_reason: number;
@@ -1271,7 +1259,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
             const firstProjectData = projectDataArray[0];
             const baseFields = firstProjectData?.base_fields || {};
-            console.log("baseFieldsbaseFieldsbaseFieldsbaseFields: ", baseFields)
 
             const sanitized: Record<string, string> = {};
             Object.entries(baseFields).forEach(([fid, val]) => {
@@ -1279,14 +1266,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 sanitized[fid] = String(val);
             });
 
-            console.log("sanitized: ", sanitized)
             setValues({ [projectName]: sanitized });
-            console.log("valueanotherOneTRADE1")
         }
     }, [call, hasActiveCall, postActive, sessionKey, worker]);
 
-    useEffect(() => console.log("activeProject: ", activeProject),[activeProject])
-    useEffect(() => console.log("selectedProjs: ", selectedProjects),[selectedProjects])
 // ────────────────────────────────────────────────────────────────────────────────
     const handleProjectFields = (data: {
         project_fields: string;
@@ -1355,16 +1338,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             const init: GroupFieldValues = { ...values }; // не пустой, а текущий
             if (selectedProjects.length) {
                 selectedProjects.forEach(p => {
-                    console.log("init[p]: ", init[p])
                     if (!init[p]) {
                         init[p] = {};
                     }
                 });
             }
-            console.log("initValues: ", values)
-            console.log("init: ", init)
-            console.log("TEST123call: ",call)
-            console.log("TEST123momoProjectRepo: ",momoProjectRepo)
 
             if (call && momoProjectRepo && momoProjectRepo.current) {
                 // 1) InitKwargs — копируем base_fields всех проектов
@@ -1378,7 +1356,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     },
                     {} as InitKwargs
                 );
-                console.log("initVALUESinitKwargs: ",initKwargs)
                 // if (!manualCallRef.current) {
                     setValues(initKwargs);
                 // }
@@ -1403,7 +1380,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 setCallReason(String(rawReasonId) || '');
                 setCallResult(String(rawResultId) || '');
             } else {
-                console.log("manualCallRef.currentINIT: ", manualCallRef.current)
                 // if (!manualCallRef.current) {
                     setValues(init);
                 // }
@@ -1498,7 +1474,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             .trim();
     }
 
-    console.log("cleanProjectName: ", cleanProjectName("test_2@default"))
 
     useEffect(() => {
         if (!hasActiveCall && !postActive && call) {
@@ -1525,9 +1500,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     useEffect(() => {
         // setModules([]);
         // startModulesRanRef.current = false;
-        console.log()
-        // if ((!hasActiveCall && (!openedPhones?.length || !call))) return;
-        console.log("it's working")
         const handleModules = (data: any) => {
             if (data && typeof data === 'object' && setMonoModules) {
                 setMonoModules(normalizeMono(data)); // <— было: setMonoModules(data)
@@ -1563,7 +1535,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     }, [openedPhones, hasActiveCall, activeProject, worker, sessionKey, setModules, tuskMode, setMonoModules, selectedProjects]);
 
-    useEffect(() => console.log("activeProject: ", activeProject),[activeProject])
 
     useEffect(() => {
         if (runningModulesCount > 0) {
@@ -1902,15 +1873,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             );
         }
     }, [monoModules, modules]);
-    useEffect(() => console.log("runningModulesCount: ", runningModulesCount),[runningModulesCount])
     useEffect(() => {
         // если уже запустили — не запускаем снова
         if (startModulesRanRef.current) return;
-        console.log("START")
 
         // 1) активный звонок
         if (startModules.length && (hasActiveCall || call)) {
-            console.log("startModules")
             setRunningModulesCount(startModules.length)
             startModules.forEach(mod => handleModuleRun(mod, false, undefined, { manual: true }));
             startModulesRanRef.current = true;
@@ -1920,7 +1888,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         // 2) таск-мод: карточка открыта (есть openedPhones), но колл не активен и не в пост-моде
         const countPhones = openedPhones?.length ?? 0;
         if (startModules.length && tuskMode && countPhones > 0 && !postActive) {
-            console.log("TUSKMODESTART")
             setRunningModulesCount(startModules.length)
             startModules.forEach(mod => handleModuleRun(mod, false, undefined, { manual: true }));
             startModulesRanRef.current = true;
@@ -2065,7 +2032,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         });
     };
 
-    useEffect(()=> console.log("selectedCall: ", call),[call])
     const handleSave = () => {
         // if (!callReason || !callResult) {
         //     Swal.fire({ title: "Ошибка", text: "Проверьте заполнение обязательных полей", icon: "error" });
@@ -2145,7 +2111,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         const b_uuid = expressCall ? postCallData?.b_uuid : postCallData?.direction === "outbound" ? postCallData?.call_uuid : postCallData?.uuid
 
         const phoneNumber = postCallData?.direction === 'outbound' && postCallData?.application !== 'uuid_bridge' ? postCallData.b_callee_num : postCallData?.cid_num;
-        console.log("Object.entries(groupedByProject): ",Object.entries(groupedByProject))
         if (statusText) {
             Object.entries(groupedByProject).forEach(([project_name, ids]) => {
                 const payload: any = {
@@ -2444,7 +2409,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return Array.from(map.values());
     }, [openedPhones]);
 
-    useEffect(() => console.log("phoneGroups: ", phoneGroups),[phoneGroups])
 // Строим карту вариантов для каждого поля
     const contactInfoVariants = useMemo(() => {
         const result: Record<string, Set<string>> = {};
@@ -2571,7 +2535,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         onClose();
     };
 
-    useEffect(() => console.log("phoneGroups: ", phoneGroups),[phoneGroups])
     const renderGroupPhones = () => {
         if (!phoneGroups.length) return null;
 
@@ -2802,7 +2765,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             </div>
         );
     };
-    useEffect(() => console.log("activeProject: ", activeProject),[activeProject])
     const renderPostCallHeader = () => {
 
         const iconColor = postCallData?.direction === 'outbound' ? '#f26666' : '#7cd420';

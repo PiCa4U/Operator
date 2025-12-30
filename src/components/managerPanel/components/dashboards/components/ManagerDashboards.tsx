@@ -218,7 +218,6 @@ function CardChrome({
 // ===== Renderers =====
 function NumberCard({ card, payload }: { card: DashCard; payload: any }) {
     const entries = useMemo(() => Object.entries(card.data_sources || {}), [card.data_sources]);
-    console.log("entries: ", entries)
     return (
         <CardChrome icon={card.icon} color={card.color} title={card.name} description={card.description}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
@@ -238,7 +237,6 @@ function NumberCard({ card, payload }: { card: DashCard; payload: any }) {
 
 function TableCard({ card, payload }: { card: DashCard; payload: any }) {
     const columns = useMemo(() => Object.entries(card.data_sources || {}), [card.data_sources]);
-    console.log("columns: ", columns)
     const colArrays = columns.map(([label, pgPath]) => {
         const val = resolvePgPath(payload, String(pgPath));
         return [label, Array.isArray(val) ? val : [val]] as const;
@@ -288,8 +286,6 @@ function TableCard({ card, payload }: { card: DashCard; payload: any }) {
 function GraphCard({ card, payload }: { card: DashCard; payload: any }) {
     const labelsPath = card.data_sources?.labels as string | undefined;
     const seriesObj = card.data_sources?.data as Record<string, string> | undefined;
-    console.log("labelsPath: ", labelsPath)
-    console.log("seriesObj: ", seriesObj)
 
     const labels = (resolvePgPath(payload, labelsPath || "") ?? []) as any[];
     const seriesEntries = Object.entries(seriesObj || {});

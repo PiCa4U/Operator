@@ -202,7 +202,6 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
 
     const handleDateChange = (dates: [Date | null, Date | null]) => {
         const [start, end] = dates;
-        console.log("dates: ", dates)
         setStartDate(start);
         setEndDate(end);
     };

@@ -28,10 +28,8 @@ export const FilterFields: FC<Props> = ({
                                             setActiveFilters
                                         }) => {
 
-    useEffect(()=> console.log("activeFilters: ", activeFilters),[activeFilters])
     const handleAddField = (selected: any) => {
         if (!selected) return;
-        console.log("selected: ", selected)
         if (activeFilters.find(f => f.fieldId === selected.id)) return;
         const name = FILTER_FIELDS.find(row => row.id === selected)?.name
         setActiveFilters(prev => [

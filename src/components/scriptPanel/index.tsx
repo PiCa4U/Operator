@@ -108,8 +108,6 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
         sipLogin   = '',
         worker     = '',
     } = store.getState().credentials;
-    console.log("scriptuuid: ", uuid)
-    console.log("scriptbUuid: ", bUuid)
 
     // Текущая «комната» (room_id)
 

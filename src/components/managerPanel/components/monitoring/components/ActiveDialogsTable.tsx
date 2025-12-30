@@ -53,17 +53,31 @@ const resolveJoinUuidFromRow = (
     const bUuid = row.b_uuid ?? null;
 
     const isTakeover = type === "takeover";
+    const listen_only = type === "listen_only"
+    const whisper = type === "whisper"
+    const barge = type === "barge"
 
-    if (!isTakeover) {
+    if (listen_only) {
+        if (dir === "outbound") return uuid ?? bUuid;
+        if (dir === "inbound") return uuid ?? bUuid;
+        return bUuid ?? uuid;
+    }
+    if (whisper) {
+        if (dir === "outbound") return uuid ?? bUuid;
+        if (dir === "inbound") return uuid ?? bUuid;
+        return bUuid ?? uuid;
+    }
+    if (barge) {
         if (dir === "outbound") return uuid ?? bUuid;
         if (dir === "inbound") return bUuid ?? uuid;
         return bUuid ?? uuid;
     }
-
-    // takeover — наоборот
-    if (dir === "outbound") return bUuid ?? uuid;
-    if (dir === "inbound") return uuid ?? bUuid;
-    return uuid ?? bUuid;
+    if (isTakeover) {
+        if (dir === "outbound") return uuid ?? uuid;
+        if (dir === "inbound") return uuid ?? bUuid;
+        return uuid ?? bUuid;
+    }
+    return null;
 };
 
 export const ActiveDialogsTable: React.FC<Props> = ({
@@ -355,34 +369,34 @@ export const ActiveDialogsTable: React.FC<Props> = ({
                                                 )}
                                             </button>
 
-                                            {/* экран оператора */}
-                                            {onScreenShare && (
-                                                <button
-                                                    type="button"
-                                                    className={
-                                                        isScreenActiveHere
-                                                            ? "btn btn-sm btn-danger"
-                                                            : "btn btn-sm btn-outline-primary"
-                                                    }
-                                                    disabled={
-                                                        screenBtnDisabled
-                                                    }
-                                                    onClick={() =>
-                                                        onScreenShare(
-                                                            r.operator
-                                                        )
-                                                    }
-                                                    title={
-                                                        isScreenActiveHere
-                                                            ? "Отключить просмотр экрана"
-                                                            : "Подключиться к экрану оператора"
-                                                    }
-                                                >
-                                                    {isScreenActiveHere
-                                                        ? "Закрыть экран"
-                                                        : "Экран"}
-                                                </button>
-                                            )}
+                                            {/*/!* экран оператора *!/*/}
+                                            {/*{onScreenShare && (*/}
+                                            {/*    <button*/}
+                                            {/*        type="button"*/}
+                                            {/*        className={*/}
+                                            {/*            isScreenActiveHere*/}
+                                            {/*                ? "btn btn-sm btn-danger"*/}
+                                            {/*                : "btn btn-sm btn-outline-primary"*/}
+                                            {/*        }*/}
+                                            {/*        disabled={*/}
+                                            {/*            screenBtnDisabled*/}
+                                            {/*        }*/}
+                                            {/*        onClick={() =>*/}
+                                            {/*            onScreenShare(*/}
+                                            {/*                r.operator*/}
+                                            {/*            )*/}
+                                            {/*        }*/}
+                                            {/*        title={*/}
+                                            {/*            isScreenActiveHere*/}
+                                            {/*                ? "Отключить просмотр экрана"*/}
+                                            {/*                : "Подключиться к экрану оператора"*/}
+                                            {/*        }*/}
+                                            {/*    >*/}
+                                            {/*        {isScreenActiveHere*/}
+                                            {/*            ? "Закрыть экран"*/}
+                                            {/*            : "Экран"}*/}
+                                            {/*    </button>*/}
+                                            {/*)}*/}
                                         </div>
                                     </td>
                                 </tr>

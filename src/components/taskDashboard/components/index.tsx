@@ -95,7 +95,6 @@ const GroupActionModal: React.FC<Props> = ({
     const [loading, setLoading] = useState(false);
     const idsUniq = useMemo(() => Array.from(new Set(ids || [])), [ids]);
 
-    console.log("ids123: ", ids)
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
     const [selectedFilters, setSelectedFilters] = useState<{
         group1: Set<string>,
@@ -185,9 +184,7 @@ const GroupActionModal: React.FC<Props> = ({
 
     useEffect(() => {
         if (modulesInFlight === 0 || !moduleStartModalRef.current ) return
-        console.log("COMPLETEMODALOPENTRUE")
         const handleComplete = () => {
-            console.log("modulesCompletedRef.current: ", modulesCompletedRef.current)
             modulesCompletedRef.current += 1;
             if (modulesCompletedRef.current >= modulesInFlight) {
                 Swal.fire("Готово", "Все модули завершены", "success");

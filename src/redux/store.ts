@@ -2,6 +2,8 @@
 import { configureStore } from '@reduxjs/toolkit';
 import operatorReducer from './operatorSlice';
 import credentialsSlice from './credentialsSlice';
+import screenShareReducer from "./screenShareSlice";
+
 
 // ⬇️ твой новый слайс (как в примере выше)
 import tasksTableReducer from './tasksTableSlice';
@@ -11,6 +13,8 @@ export const store = configureStore({
         operator: operatorReducer,
         credentials: credentialsSlice,
         tasksTable: tasksTableReducer,
+        screenShare: screenShareReducer,
+
     },
 });
 

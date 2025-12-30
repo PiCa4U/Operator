@@ -6,16 +6,54 @@ import { VideoTile } from "./VideoTile";
 import { socket } from "../socket";
 import { store } from "../redux/store";
 
+const LoadingTile: React.FC<{ text: string; sub?: string }> = ({ text, sub }) => {
+    return (
+        <div
+            style={{
+                width: "100%",
+                aspectRatio: "16 / 9",
+                borderRadius: 12,
+                background: "#000",
+                border: "1px solid rgba(255,255,255,0.12)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexDirection: "column",
+                gap: 10,
+                color: "#fff",
+                padding: 16,
+                textAlign: "center",
+            }}
+        >
+            <style>{`
+        @keyframes ssSpin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+      `}</style>
+
+            <div
+                style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: "50%",
+                    border: "4px solid rgba(255,255,255,0.25)",
+                    borderTopColor: "#fff",
+                    animation: "ssSpin 1s linear infinite",
+                }}
+            />
+            <div style={{ fontWeight: 800 }}>{text}</div>
+            {sub && <div style={{ fontSize: 12, opacity: 0.9 }}>{sub}</div>}
+        </div>
+    );
+};
+
 export const ManagerScreenSharePanel: React.FC = () => {
     const { userAgent, enabled } = useSip();
-    const { status, error, videoStreams, joinRoom, leaveRoom } =
-        useScreenShareViewer({ ua: userAgent });
+    const { status, error, videoStreams, joinRoom, leaveRoom } = useScreenShareViewer({ ua: userAgent });
 
-    const { sipLogin, sessionKey, worker } =
-    (store.getState() as any).credentials || {};
+    const { sipLogin, sessionKey, worker } = (store.getState() as any).credentials || {};
 
-    // запоминаем последнюю комнату, к которой подключился менеджер
     const lastRoomRef = useRef<string | null>(null);
+    const pickRoomId = (p?: any): string =>
+        String(p?.room_id || p?.room || p?.roomId || p?.session_uuid || p?.uuid || "").trim();
 
     useEffect(() => {
         if (!enabled) return;
@@ -27,41 +65,29 @@ export const ManagerScreenSharePanel: React.FC = () => {
             }
 
             const sk = p?.session_key ?? null;
-            if (sk && sk !== sessionKey) {
-                // не наша сессия
-                return;
-            }
+            if (sk && sk !== sessionKey) return;
 
-            const room: string =
-                p?.room_id ?? p?.room ?? p?.roomId ?? "";
+            const room: string = p?.room_id ?? p?.room ?? p?.roomId ?? "";
             if (!room || !room.trim()) {
-                console.warn(
-                    "[screen_share:start manager] no room/room_id in payload",
-                    p
-                );
+                console.warn("[screen_share:start manager] no room/room_id in payload", p);
                 return;
             }
 
             if (!enabled) {
-                console.warn(
-                    "[screen_share] manager got start, but WebRTC disabled in this tab"
-                );
+                console.warn("[screen_share] manager got start, but WebRTC disabled in this tab");
                 return;
             }
 
             const normRoom = room.trim();
             lastRoomRef.current = normRoom;
-
             void joinRoom(normRoom);
         };
 
         const onStop = (p: any) => {
-            const sk = p?.session_key ?? null;
-            if (sk && sk !== sessionKey) return;
-
-            // бэк сказал "стоп" — просто выходим из комнаты
+            const rid = pickRoomId(p);
+            if (rid && lastRoomRef.current && rid !== lastRoomRef.current) return;
             lastRoomRef.current = null;
-            leaveRoom();
+            void leaveRoom();
         };
 
         socket.on("screen_share:start", onStart);
@@ -73,29 +99,21 @@ export const ManagerScreenSharePanel: React.FC = () => {
         };
     }, [sipLogin, sessionKey, joinRoom, leaveRoom, enabled]);
 
-    // ручное нажатие на красную кнопку менеджером
     const handleManualStop = useCallback(() => {
         const room = lastRoomRef.current;
-
-        // сначала уведомим бэкенд, что менеджер завершил просмотр
         if (sessionKey && worker && sipLogin && room) {
-            socket.emit("screen_share:stop", {
-                session_key: sessionKey,
-                worker,
-                // как вы договорились с бэком — можно оставить sip_login
-                sip_login: sipLogin,
-                room_id: room,
-            });
+            socket.emit("screen_share:stop", { session_key: sessionKey, worker, sip_login: sipLogin, room_id: room });
         }
-
-        // и локально сразу рвём SIP-конференцию
         lastRoomRef.current = null;
-        leaveRoom();
+        void leaveRoom();
     }, [sessionKey, worker, sipLogin, leaveRoom]);
 
     if (!enabled) return null;
 
     const hasVideo = videoStreams.length > 0;
+
+    const showWaitingTile =
+        status === "connecting" || (status === "connected" && !hasVideo);
 
     return (
         <div className="card mt-3">
@@ -106,14 +124,11 @@ export const ManagerScreenSharePanel: React.FC = () => {
             <span className="badge bg-secondary">
               {status === "idle" && "нет подключения"}
                 {status === "connecting" && "подключение…"}
-                {status === "connected" && "подключено"}
+                {status === "connected" && (hasVideo ? "видео получено" : "ожидаем видео…")}
             </span>
+
                         {status !== "idle" && (
-                            <button
-                                type="button"
-                                className="btn btn-sm btn-outline-danger"
-                                onClick={handleManualStop}
-                            >
+                            <button type="button" className="btn btn-sm btn-outline-danger" onClick={handleManualStop}>
                                 Отключиться
                             </button>
                         )}
@@ -122,11 +137,30 @@ export const ManagerScreenSharePanel: React.FC = () => {
 
                 {error && <div className="text-danger small mb-2">{error}</div>}
 
-                {!hasVideo && (
+                {/* Важно: даже если стрима нет — показываем “живую” загрузку вместо чёрного экрана */}
+                {showWaitingTile && (
+                    <div
+                        style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                            gap: 12,
+                        }}
+                    >
+                        <LoadingTile
+                            text={status === "connecting" ? "Подключаемся к трансляции…" : "Ожидаем видео…"}
+                            sub={
+                                status === "connected"
+                                    ? "Соединение установлено, но кадров ещё нет (часто ждём keyframe)."
+                                    : "Устанавливаем SIP/WebRTC-сессию."
+                            }
+                        />
+                    </div>
+                )}
+
+                {!hasVideo && status === "idle" && (
                     <div className="text-muted small">
-                        Сейчас нет активной трансляции экрана. Нажмите кнопку «Экран» в
-                        таблице диалогов — бэкенд отправит событие <code>screen_share:start</code>,
-                        оператор подключится, и вы автоматически присоединитесь к комнате.
+                        Сейчас нет активной трансляции экрана. Нажмите кнопку «Экран» в таблице диалогов — бэкенд отправит событие{" "}
+                        <code>screen_share:start</code>, оператор подключится, и вы автоматически присоединитесь к комнате.
                     </div>
                 )}
 
@@ -139,7 +173,7 @@ export const ManagerScreenSharePanel: React.FC = () => {
                         }}
                     >
                         {videoStreams.map((s, idx) => (
-                            <VideoTile key={idx} stream={s} />
+                            <VideoTile key={idx} stream={s} title={`Экран оператора (${idx + 1})`} />
                         ))}
                     </div>
                 )}

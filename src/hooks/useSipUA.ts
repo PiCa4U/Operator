@@ -41,13 +41,11 @@ type SipResponseLite = {
 };
 type AnyAudioRef = { current: HTMLAudioElement | null };
 
-// utils
 function safeSetSrcObject(ref: AnyAudioRef, val: MediaStream | null) {
     if (ref.current) (ref.current as any).srcObject = val;
 }
 async function safePlay(ref: AnyAudioRef) { try { await ref.current?.play(); } catch {} }
 
-// --- SDP модификатор G.711
 const filterG711: SessionDescriptionHandlerModifier = desc => {
     if (!desc.sdp) return Promise.resolve(desc);
     const keep = ['0', '8', '101'];
@@ -66,7 +64,6 @@ const filterG711: SessionDescriptionHandlerModifier = desc => {
     return Promise.resolve(desc);
 };
 
-// Нормализуем ws-URL и достаём хост (c портом, если он есть)
 function extractSipHost(wsServer: string): string {
     try {
         const url = new URL(wsServer.startsWith('ws://') || wsServer.startsWith('wss://')
@@ -78,14 +75,12 @@ function extractSipHost(wsServer: string): string {
     }
 }
 
-// --- Проверка: есть ли SDP
 const responseHasSDP = (res: any) => {
     const body = res?.message?.body ?? res?.body;
     const ctype = res?.message?.getHeader?.('Content-Type') || res?.getHeader?.('Content-Type');
     return (ctype && /sdp/i.test(ctype)) || (typeof body === 'string' && body.includes('m=audio'));
 };
 
-// данные из контейнера (фолбэки)
 const container = document.getElementById('root');
 if (!container) throw new Error('Root container not found');
 const { sipLogin: rawSipLogin, worker: rawWorker } =
@@ -101,7 +96,7 @@ export function useSipUA(config: {
     ha1: string;
     wsServer: string;
     turnCreds?: TurnCredentials | null;
-    onCleared?: () => void;     // вызовется только при shutdown
+    onCleared?: () => void;
 }): SipUA {
     const { enabled, userId, ha1, wsServer, turnCreds, onCleared } = config;
     const { sessionKey } = store.getState().operator;
@@ -126,13 +121,13 @@ export function useSipUA(config: {
     const regListenerRef       = useRef<((st: RegistererState)=>void) | null>(null);
     const transportListenerRef = useRef<((st: TransportState)=>void) | null>(null);
 
-    // ⬇️ новый «кипер» регистрации: мягко дожимаем REGISTER, пока не зарегистрируемся
+    // мягко дожимаем REGISTER, пока не зарегистрируемся
     const regKeepaliveRef      = useRef<number | null>(null);
 
     const aliveRef             = useRef(true);
     useEffect(() => () => { aliveRef.current = false; }, []);
 
-    // ---- ToneManager с внешним конфигом
+    // ToneManager с внешним конфигом
     const tonesRef   = useRef<ToneManager | null>(null);
     const extCfgRef  = useRef<AppExternalConfig>(readExternalConfig());
 
@@ -169,7 +164,6 @@ export function useSipUA(config: {
         return () => { tm.stopAll(); unsub(); };
     }, []);
 
-    // признаки запуска и отправки DELETE
     const wasStartedRef  = useRef(false);
     const sentDeleteRef  = useRef(false);
     useEffect(() => { if (enabled) sentDeleteRef.current = false; }, [enabled]);
@@ -177,7 +171,6 @@ export function useSipUA(config: {
     const isInCall = () =>
         !!sessionRef.current && sessionRef.current.state !== SessionState.Terminated;
 
-    // контроль «тона окончания», чтобы его не обрывал Terminated
     const endTonePlayedRef = useRef(false);
     const endToneUntilRef  = useRef(0);
     function playEndToneOnce(ms = 1500) {
@@ -285,7 +278,6 @@ export function useSipUA(config: {
             onCleared?.();
         }
 
-        // 🔽 критично: полностью очистить видимое состояние
         setIncoming(null);
         setStatus(null);
         sessionRef.current = null;
@@ -305,7 +297,6 @@ export function useSipUA(config: {
         endToneUntilRef.current  = 0;
     }
 
-// рядом с «главным свитчем»
     useEffect(() => {
         if (!enabled) {
             setIncoming(null);
@@ -337,10 +328,8 @@ export function useSipUA(config: {
                     peerConnectionConfiguration: {
                         iceTransportPolicy: "relay" as RTCIceTransportPolicy,
                         iceServers: [
-                            // при relay STUN всё равно игнорируется, но пусть будет
                             { urls: "stun:stun.l.google.com:19302" },
 
-                            // TURN из creds (важно, чтобы creds был валидным RTCIceServer)
                             creds || undefined,
                         ].filter(Boolean) as RTCIceServer[],
                     },
@@ -380,12 +369,10 @@ export function useSipUA(config: {
             wasStartedRef.current = true;
             await registerer.register();
 
-            // включаем «кипер» до успешной регистрации
             startRegKeepalive();
 
             regListenerRef.current = st => {
                 if (st === RegistererState.Registered) {
-                    // как только зарегались — отключаем «кипер»
                     stopRegKeepalive();
                     setTimeout(() => {
                         if (registerer.state !== RegistererState.Terminated && enabled) {
@@ -393,7 +380,6 @@ export function useSipUA(config: {
                         }
                     }, 240_000);
                 } else if (st === RegistererState.Unregistered) {
-                    // если отвалились — снова включим «кипер»
                     startRegKeepalive();
                 }
             };
@@ -425,7 +411,6 @@ export function useSipUA(config: {
         }
     }
 
-    // главный свитч
     useEffect(() => {
         if (!enabled) { void clearUA('shutdown'); return; }
         if (!userId || !wsServer || !turnCreds || !ha1) return;
@@ -433,7 +418,6 @@ export function useSipUA(config: {
         if (!uaRef.current) void initUA(turnCreds);
     }, [enabled, userId, wsServer, turnCreds, ha1]);
 
-    // обновление TURN
     useEffect(() => {
         if (!enabled) return;
         if (!turnCreds) return;
@@ -444,8 +428,6 @@ export function useSipUA(config: {
         void restartUAWith(turnCreds);
     }, [enabled, turnCreds]);
 
-    // обновление HA1 — теперь всегда мягко дожимаем REGISTER,
-    // пока не Terminated (раньше было только при Registered)
     useEffect(() => {
         if (!enabled) return;
         const ua  = uaRef.current;
@@ -514,7 +496,7 @@ export function useSipUA(config: {
         const s = sessionRef.current || incoming;
         if (!s) return;
         switch (s.state) {
-            case SessionState.Established:  s.bye(); break;   // «конец» прозвучит в onBye
+            case SessionState.Established:  s.bye(); break;
             case SessionState.Initial:
             default:                        s.dispose();
         }

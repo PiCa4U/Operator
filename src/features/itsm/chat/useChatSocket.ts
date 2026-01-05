@@ -17,7 +17,6 @@ export type UiMessage = {
     isRead?: boolean;
 };
 
-// "YYYY-MM-DD HH:mm:ss" -> ISO (UTC)
 function toIso(s: string): string {
     const [d, t = "00:00:00"] = s.trim().split(" ");
     const [y, m, day] = d.split("-").map(Number);
@@ -27,10 +26,10 @@ function toIso(s: string): string {
 
 /** коллбэки событий */
 type Handlers = {
-    onIncoming?: (msg: UiMessage) => void;                         // прилетело сообщение от другого участника
-    onAck?: (ack: { tempId: string; message_id: number }) => void; // ACK на наш send
-    onRead?: (ids: number[]) => void;                              // кто-то прочитал пачку сообщений
-    onUploaded?: (p: { tempId: string; filenames: string[] }) => void; // имена после upload
+    onIncoming?: (msg: UiMessage) => void;
+    onAck?: (ack: { tempId: string; message_id: number }) => void;
+    onRead?: (ids: number[]) => void;
+    onUploaded?: (p: { tempId: string; filenames: string[] }) => void;
 };
 
 export function useChatSocket(opts: { guid: string; login: string | null } & Handlers) {
@@ -40,20 +39,17 @@ export function useChatSocket(opts: { guid: string; login: string | null } & Han
     const [connected, setConnected] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // очередь tempId для сопоставления с ack (message:sent)
     const pendingQueue = useRef<string[]>([]);
 
-    // актуальные обработчики — в ref
     const handlersRef = useRef<Handlers>({});
     useEffect(() => {
         handlersRef.current = { onIncoming, onAck, onRead, onUploaded };
     }, [onIncoming, onAck, onRead, onUploaded]);
 
-    // создаём/пересоздаём сокет ТОЛЬКО когда меняются guid или login
     useEffect(() => {
         if (!guid) return;
 
-        const s = createChatSocket(); // autoConnect:false допустим
+        const s = createChatSocket();
         sockRef.current = s;
 
         const doLogin = () => s.emit("login", { guid, login });
@@ -72,10 +68,8 @@ export function useChatSocket(opts: { guid: string; login: string | null } & Han
             handlersRef.current.onAck?.({ tempId: tempId ?? "", message_id: payload.message_id });
         });
 
-        // входящее сообщение — ТОЛЬКО прокидываем наверх
-        // (НИЧЕГО не эмитим здесь, автопрочтение делает родитель)
         s.on("message", (p: {
-            login: string;            // "client" | glagol_service | sipLogin
+            login: string;
             message_id: number;
             message: string;
             storage: string[] | null;
@@ -97,13 +91,12 @@ export function useChatSocket(opts: { guid: string; login: string | null } & Han
                 authorName: p.login,
                 authorRole: role,
                 attachments,
-                isRead: false, // решать будет верхний слой
+                isRead: false,
             };
 
             handlersRef.current.onIncoming?.(ui);
         });
 
-        // сервер сообщает, что кто-то прочитал сообщения пачкой
         s.on("message:read", (p: { ids: number[] }) => {
             const ids = Array.isArray(p?.ids) ? p.ids : [];
             if (ids.length) handlersRef.current.onRead?.(ids);
@@ -121,7 +114,6 @@ export function useChatSocket(opts: { guid: string; login: string | null } & Han
         };
     }, [guid, login]);
 
-    /** Отправка сообщения + (опционально) загрузка файлов */
     async function send(tempId: string, text: string, files: File[] = []) {
         try {
             let storageNames: string[] = [];
@@ -145,12 +137,10 @@ export function useChatSocket(opts: { guid: string; login: string | null } & Han
         }
     }
 
-    /** отметить одну штуку прочитанной (оставил на всякий случай) */
     function markRead(message_id: number) {
         sockRef.current?.emit("message:read", { ids: [message_id] });
     }
 
-    /** отметить пачку прочитанными — одним эмитом */
     function markManyRead(ids: number[]) {
         const distinct = Array.from(new Set(ids.filter((n) => Number.isFinite(n))));
         if (!distinct.length) return;

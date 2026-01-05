@@ -1,12 +1,16 @@
-// src/screenShare/screenSource.ts
 let screenSource: MediaStream | null = null;
 
 export function getScreenSource(): MediaStream | null {
     return screenSource;
 }
 
+function hasLiveVideo(stream: MediaStream | null): boolean {
+    if (!stream) return false;
+    return stream.getVideoTracks().some((t) => t.readyState === "live");
+}
+
 export async function ensureScreenSource(): Promise<MediaStream> {
-    if (screenSource && screenSource.getVideoTracks().some(t => t.readyState === "live")) {
+    if (screenSource && hasLiveVideo(screenSource)) {
         return screenSource;
     }
 
@@ -17,16 +21,19 @@ export async function ensureScreenSource(): Promise<MediaStream> {
 
     const track = stream.getVideoTracks()[0];
     if (!track) {
-        stream.getTracks().forEach(t => t.stop());
+        stream.getTracks().forEach((t) => t.stop());
         throw new Error("no video track in displayMedia");
     }
 
     screenSource = stream;
 
-    // если юзер нажал Stop в баннере браузера — считаем доступ отозванным
-    track.addEventListener("ended", () => {
-        screenSource = null;
-    }, { once: true });
+    track.addEventListener(
+        "ended",
+        () => {
+            screenSource = null;
+        },
+        { once: true }
+    );
 
     return stream;
 }

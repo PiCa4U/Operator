@@ -1,4 +1,3 @@
-// src/screenShare/useScreenShareSender.ts
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -35,7 +34,6 @@ type Result = {
 
 type JoinMode = "relay" | "all";
 
-// --- SDP модификатор: двигать VP8 первым в m=video
 function preferVP8InVideoMLine(sdp: string): string {
     const lines = sdp.split(/\r?\n/);
     const mIdx = lines.findIndex((l) => l.startsWith("m=video"));
@@ -132,6 +130,74 @@ function buildPcConfigForMode(ua: UserAgent, mode: JoinMode): RTCConfiguration {
     };
 }
 
+async function safeEndSession(session: Session) {
+    const anyS: any = session as any;
+    try {
+        if (session.state === SessionState.Established) {
+            await session.bye();
+            return;
+        }
+    } catch {}
+    try {
+        if (typeof anyS.cancel === "function") {
+            await anyS.cancel();
+            return;
+        }
+    } catch {}
+    try {
+        if (typeof anyS.dispose === "function") {
+            anyS.dispose();
+        }
+    } catch {}
+}
+
+function waitUntilEstablishedOrFail(session: Session, timeoutMs: number): Promise<boolean> {
+    return new Promise((resolve) => {
+        let done = false;
+
+        const cleanup = (timer?: number) => {
+            if (done) return;
+            done = true;
+            try {
+                session.stateChange.removeListener(onState);
+            } catch {}
+            if (timer) window.clearTimeout(timer);
+        };
+
+        const onState = (st: SessionState) => {
+            if (done) return;
+            if (st === SessionState.Established) {
+                cleanup(timer);
+                resolve(true);
+            } else if (st === SessionState.Terminated) {
+                cleanup(timer);
+                resolve(false);
+            }
+        };
+
+        // current state guard
+        try {
+            if (session.state === SessionState.Established) {
+                resolve(true);
+                return;
+            }
+            if (session.state === SessionState.Terminated) {
+                resolve(false);
+                return;
+            }
+        } catch {}
+
+        try {
+            session.stateChange.addListener(onState);
+        } catch {}
+
+        const timer = window.setTimeout(() => {
+            cleanup();
+            resolve(false);
+        }, Math.max(1000, timeoutMs));
+    });
+}
+
 export function useScreenShareSender({ ua, onAccessLost }: Options): Result {
     const [status, setStatus] = useState<ScreenCastStatus>("idle");
     const [error, setError] = useState<string | null>(null);
@@ -146,7 +212,7 @@ export function useScreenShareSender({ ua, onAccessLost }: Options): Result {
 
     const [hasAccess, setHasAccess] = useState(false);
 
-    // исходный поток экрана (живёт постоянно)
+    // исходный поток экрана
     const sourceStreamRef = useRef<MediaStream | null>(null);
 
     // текущая SIP-сессия publish
@@ -194,7 +260,7 @@ export function useScreenShareSender({ ua, onAccessLost }: Options): Result {
             castSessionRef.current = null;
             if (s) {
                 try {
-                    void s.bye();
+                    void safeEndSession(s);
                 } catch {}
             }
 
@@ -275,7 +341,7 @@ export function useScreenShareSender({ ua, onAccessLost }: Options): Result {
         const s = castSessionRef.current;
         if (s) {
             try {
-                void s.bye();
+                void safeEndSession(s);
             } catch {}
         }
         castSessionRef.current = null;
@@ -346,7 +412,6 @@ export function useScreenShareSender({ ua, onAccessLost }: Options): Result {
         const pc = pcRef.current;
         if (!pc) return;
 
-        // burst: 0ms / 800ms / 2500ms
         tryRequestKeyframe(pc);
         keyframeBurstTimerRef.current = window.setTimeout(() => {
             tryRequestKeyframe(pc);
@@ -355,13 +420,37 @@ export function useScreenShareSender({ ua, onAccessLost }: Options): Result {
             }, 2500);
         }, 800);
 
-        // steady: каждые 7 сек
         keyframeTimerRef.current = window.setInterval(() => {
             const pc2 = pcRef.current;
             if (!pc2) return;
             tryRequestKeyframe(pc2);
         }, 7000);
     }, [stopKeyframeTimers]);
+
+    const disconnectFromRoom = useCallback(async () => {
+        stopKeyframeTimers();
+
+        const s = castSessionRef.current;
+        if (!s) return;
+
+        try {
+            await safeEndSession(s);
+        } catch {
+            /* no-op */
+        } finally {
+            castSessionRef.current = null;
+            activeRoomRef.current = null;
+
+            const pc = pcRef.current;
+            hardClosePc(pc);
+            pcRef.current = null;
+
+            const stillHaveAccess = isLiveScreenStream(sourceStreamRef.current);
+            setHasAccess(stillHaveAccess);
+            setStatus(stillHaveAccess ? "access-ready" : "idle");
+            setPreviewStream(stillHaveAccess ? sourceStreamRef.current : null);
+        }
+    }, [setPreviewStream, stopKeyframeTimers]);
 
     const connectToRoom = useCallback(
         async (room: string): Promise<boolean> => {
@@ -378,7 +467,14 @@ export function useScreenShareSender({ ua, onAccessLost }: Options): Result {
                 return false;
             }
 
-            if (castSessionRef.current) return true;
+            if (castSessionRef.current) {
+                const cur = (activeRoomRef.current || "").trim();
+                if (cur && cur === rid) {
+                    // уже в нужной комнате
+                    return castSessionRef.current.state === SessionState.Established;
+                }
+                await disconnectFromRoom();
+            }
 
             const src = sourceStreamRef.current || getScreenSource();
             const origVideo = src?.getVideoTracks?.()[0] || null;
@@ -399,7 +495,6 @@ export function useScreenShareSender({ ua, onAccessLost }: Options): Result {
             }
 
             const attempt = async (mode: JoinMode): Promise<boolean> => {
-                // новый клон трека под попытку
                 const screenTrack = origVideo.clone();
                 if (screenTrack.readyState !== "live") {
                     try {
@@ -451,7 +546,6 @@ export function useScreenShareSender({ ua, onAccessLost }: Options): Result {
                         attachIceDebug(pc, `sender:${mode}`);
                     }
 
-                    // на всякий — гасим дефолтные треки
                     try {
                         pc.getTransceivers().forEach((tr) => {
                             try {
@@ -510,7 +604,15 @@ export function useScreenShareSender({ ua, onAccessLost }: Options): Result {
 
                 try {
                     await inviter.invite();
-                    return true;
+
+                    const ok = await waitUntilEstablishedOrFail(inviter, 20000);
+                    if (ok) return true;
+
+                    try {
+                        await safeEndSession(inviter);
+                    } catch {}
+
+                    return false;
                 } catch (e: any) {
                     console.error(`[screenShare] invite() error (${mode})`, e);
                     setError(e?.message || String(e));
@@ -537,46 +639,18 @@ export function useScreenShareSender({ ua, onAccessLost }: Options): Result {
                 }
             };
 
-            // 1) сначала relay
             const okRelay = await attempt("relay");
             if (okRelay) return true;
 
-            // 2) fallback: пробуем all один раз
             if (process.env.NODE_ENV !== "production") {
                 console.warn("[screenShare] relay attempt failed, trying all…");
             }
             const okAll = await attempt("all");
             return okAll;
         },
-        [ua, handleAccessLost, setPreviewStream, startKeyframeBurst, stopKeyframeTimers]
+        [ua, handleAccessLost, setPreviewStream, startKeyframeBurst, stopKeyframeTimers, disconnectFromRoom]
     );
 
-    const disconnectFromRoom = useCallback(async () => {
-        stopKeyframeTimers();
-
-        const s = castSessionRef.current;
-        if (!s) return;
-
-        try {
-            await s.bye();
-        } catch {
-            /* no-op */
-        } finally {
-            castSessionRef.current = null;
-            activeRoomRef.current = null;
-
-            const pc = pcRef.current;
-            hardClosePc(pc);
-            pcRef.current = null;
-
-            const stillHaveAccess = isLiveScreenStream(sourceStreamRef.current);
-            setHasAccess(stillHaveAccess);
-            setStatus(stillHaveAccess ? "access-ready" : "idle");
-            setPreviewStream(stillHaveAccess ? sourceStreamRef.current : null);
-        }
-    }, [setPreviewStream, stopKeyframeTimers]);
-
-    // ✅ Если UA был и исчез — НЕ стопаем экран, только дропаем publish
     const prevUaRef = useRef<UserAgent | null>(null);
     useEffect(() => {
         if (prevUaRef.current && !ua) {
@@ -586,7 +660,7 @@ export function useScreenShareSender({ ua, onAccessLost }: Options): Result {
             castSessionRef.current = null;
             if (s) {
                 try {
-                    void s.bye();
+                    void safeEndSession(s);
                 } catch {}
             }
             activeRoomRef.current = null;

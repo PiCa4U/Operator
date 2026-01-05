@@ -1,4 +1,3 @@
-// src/features/signals/useManagerSignals.ts
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getSignals, markSignalsRead, SignalItem } from "./api";
@@ -18,7 +17,7 @@ export function useManagerSignals(managerLogin?: string) {
         placeholderData: (prev)=>prev,
     });
 
-    const unreadCount = (query.data ?? []).length; // бэк отдаёт непрочитанные
+    const unreadCount = (query.data ?? []).length;
 
     const newForUi = useMemo(() => {
         if (!managerLogin) return [];

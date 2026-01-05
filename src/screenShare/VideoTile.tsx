@@ -1,4 +1,3 @@
-// src/screenShare/VideoTile.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type Props = {
@@ -27,12 +26,10 @@ export const VideoTile: React.FC<Props> = ({ stream, title }) => {
         setPhase("loading");
         hasEverPlayedRef.current = false;
 
-        // attach stream
         try {
             // @ts-ignore
             v.srcObject = stream;
         } catch {
-            // крайне редко
             v.src = URL.createObjectURL(stream as any);
         }
 
@@ -48,11 +45,8 @@ export const VideoTile: React.FC<Props> = ({ stream, title }) => {
         const onPlaying = () => setPlaying();
         const onLoadedData = () => setPlaying();
         const onLoadedMeta = () => {
-            // если метаданные есть — чаще всего скоро будут кадры
-            // но phase оставим loading до факта кадра/playing
         };
 
-        // ВАЖНО: waiting/stalled не должны “навечно” возвращать overlay после первого кадра
         const onWaiting = () => {
             if (!hasEverPlayedRef.current) setPhase("loading");
         };
@@ -69,9 +63,6 @@ export const VideoTile: React.FC<Props> = ({ stream, title }) => {
         v.addEventListener("stalled", onStalled);
         v.addEventListener("error", onError);
 
-        // Надёжный способ поймать “первый кадр” даже если playing не пришёл:
-        // 1) requestVideoFrameCallback (Chrome/Edge)
-        // 2) fallback: проверка videoWidth + currentTime
         const anyV = v as any;
         let stopFrameCb = false;
 
@@ -79,7 +70,6 @@ export const VideoTile: React.FC<Props> = ({ stream, title }) => {
             if (!v) return;
             if (stopFrameCb) return;
 
-            // если уже видим реальные размеры кадра — считаем “playing”
             if (!hasEverPlayedRef.current && (v.videoWidth > 0 || v.currentTime > 0)) {
                 setPlaying();
             }
@@ -97,7 +87,6 @@ export const VideoTile: React.FC<Props> = ({ stream, title }) => {
             tick();
         }
 
-        // play attempt
         void v.play().catch(() => {});
 
         return () => {

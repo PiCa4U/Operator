@@ -1,19 +1,16 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { RootState } from './store';
 
-// Единый стор для параметров подключения и сопутствующих конфигов
 export interface CredentialsState {
     sessionKey: string;
     sipLogin: string;
     fsServer: string;
     worker: string;
 
-    // Доп. значения из data-атрибутов
     chatServer?: string;
     codeServer?: string;
     glagolParent?: string;
 
-    // ВАЖНО: webrtc — это ССЫЛКА на WebSocket (или другой сокет), а не boolean
     webrtcUrl?: string;
 }
 
@@ -33,7 +30,6 @@ const credentialsSlice = createSlice({
     name: 'credentials',
     initialState,
     reducers: {
-        // точечные сеттеры (оставляем для совместимости/удобства)
         setSessionKey(state, action: PayloadAction<string>) {
             state.sessionKey = action.payload;
         },

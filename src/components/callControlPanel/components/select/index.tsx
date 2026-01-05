@@ -6,7 +6,6 @@ import Select, {
 } from 'react-select';
 import { ReasonItem, ResultItem } from '../../index';
 
-// Общий тип для опции
 interface Option {
     value: string;
     label: string;
@@ -120,13 +119,11 @@ const SearchableSelect: React.FC<Props> = ({
                                            }) => {
     const stringValue = value != null ? String(value) : '';
 
-    // 1) статические опции
     const staticOpts: Option[] = options.map((o) => ({
         value: String(o.id),
         label: o.name,
     }));
 
-    // 2) дозаписываем сохранённое значение, если его нет в списке
     const finalOpts: Option[] =
         augmentSaved && stringValue
             ? staticOpts.some((o) => o.value === stringValue)
@@ -134,10 +131,8 @@ const SearchableSelect: React.FC<Props> = ({
                 : [{ value: stringValue, label: stringValue }, ...staticOpts]
             : staticOpts;
 
-    // 3) выбранный
     const selected: Option | null = finalOpts.find((o) => o.value === stringValue) ?? null;
 
-    // SSR-guard для portal target
     const portalTarget: HTMLElement | undefined =
         typeof document !== 'undefined' ? document.body : undefined;
 

@@ -20,7 +20,6 @@ export function makeCallBus(namespace: string) {
     const chName = `glagol-call-bus::${namespace}`;
     const bc = new BroadcastChannel(chName);
 
-    // единый диспетчер и собственный реестр подписок
     const subs = new Set<(m: Msg) => void>();
     bc.onmessage = (e) => {
         const m = e.data as Msg;
@@ -29,7 +28,6 @@ export function makeCallBus(namespace: string) {
 
     function onMessage(fn: (m: Msg) => void): () => void {
         subs.add(fn);
-        // ⬇️ ВАЖНО: возвращаем void, а не boolean
         return () => { subs.delete(fn); };
     }
 

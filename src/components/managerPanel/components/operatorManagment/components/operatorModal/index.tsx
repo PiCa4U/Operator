@@ -1,4 +1,3 @@
-// src/features/operators/OperatorModal.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import Swal from "sweetalert2";
 import type {
@@ -87,10 +86,8 @@ export function toGlagolLogin(raw?: string | null): string {
     if (!raw) return "";
     const s = String(raw).trim();
 
-    // Если уже в нужном формате — ничего не делаем
     if (s.includes("@")) return s;
 
-    // Заменяем ровно один раз ".at." на "@"
     return s.replace(/\.at\./i, "@");
 }
 
@@ -115,9 +112,7 @@ export const OperatorModal: React.FC<Props> = ({
     const [department, setDepartment] = useState<string>("");
     const [postobrabotka, setPostobrabotka] = useState<boolean>(false);
 
-    // локальное отображение проектов оператора (коды)
     const [localProjects, setLocalProjects] = useState<string[]>([]);
-    // выбранная опция в селекте добавления (лейбл!)
     const [projectToAddLabel, setProjectToAddLabel] = useState<string | null>(null);
     console.log("initial: ", initial)
     useEffect(() => {
@@ -141,7 +136,6 @@ export const OperatorModal: React.FC<Props> = ({
         }
     }, [open, mode, initial]);
 
-    // Закрытие по Esc
     useEffect(() => {
         if (!open) return;
         const onKey = (e: KeyboardEvent) => {
@@ -159,7 +153,6 @@ export const OperatorModal: React.FC<Props> = ({
         return m;
     }, [projectMap]);
 
-    // список лейблов, которые ещё не привязаны к оператору
     const selectableLabels = useMemo(() => {
         return Object.entries(projectMap)
             .filter(([code]) => !localProjects.includes(code))
@@ -169,7 +162,6 @@ export const OperatorModal: React.FC<Props> = ({
     const title = mode === "create" ? "Создать оператора" : `Редактировать: ${initial?.login}`;
     if (!open) return null;
 
-    // обратная мапа: label -> code
 
     return (
         <div
@@ -178,7 +170,6 @@ export const OperatorModal: React.FC<Props> = ({
             role="dialog"
             aria-modal="true"
             style={{ background: "rgba(0,0,0,.5)" }}
-            // закрытие кликом по бэкдропу
             onMouseDown={(e) => {
                 if (e.target === e.currentTarget) onClose();
             }}
@@ -302,7 +293,6 @@ export const OperatorModal: React.FC<Props> = ({
                                 </div>
 
 
-                                {/* селект добавления проекта */}
                                 <div style={{display: "flex", flexDirection: "row", gap: 10}}>
                                     <div style={{ flex: 1, minWidth: 220 }}>
                                         <OperatorsSelect

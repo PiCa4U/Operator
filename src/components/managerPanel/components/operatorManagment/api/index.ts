@@ -25,7 +25,6 @@ type ApiUser = {
     state: string | null;
     post: boolean | null;
 
-    // 👇 а не string
     talk: null | {
         phone?: string;
         project?: string;
@@ -47,7 +46,7 @@ type ActivityLogApiResponse = {
 
 export async function getActivityLog(params: {
     users: string | number | Array<string | number>;
-    from_dt: string;  // 'YYYY-MM-DD HH:mm:ss' или ISO
+    from_dt: string;
     to_dt: string;
     glagol_parent?: string;
 }): Promise<ActivityLogPerUser> {
@@ -73,7 +72,6 @@ export async function getActivityLog(params: {
 
     const data: any = resp.data ?? {};
 
-    // Вариант 1: { status, result }
     if ("status" in data || "result" in data) {
         if (data.status && data.status !== "success") {
             throw new Error(data.message || "activity request failed");
@@ -81,7 +79,6 @@ export async function getActivityLog(params: {
         return (data.result ?? {}) as ActivityLogPerUser;
     }
 
-    // Вариант 2: сразу login -> ActivityItem[]
     return data as ActivityLogPerUser;
 }
 
@@ -95,14 +92,13 @@ export async function getAgents(): Promise<Agent[]> {
     const usersObj = resp.data?.users ?? {};
 
     const agents: Agent[] = Object.entries(usersObj).map(([login, u]) => {
-        // аккуратно нормализуем talk: {} | null | объект
         const talk =
             u?.talk && typeof u.talk === "object" ? (u.talk as ApiUser["talk"]) : null;
 
         return {
             login,
-            ...u,                 // тут может прийти talk из u…
-            talk,                 // …но мы его перезапишем нормализованным объектом
+            ...u,
+            talk,
             role: (u?.type ?? "operator") as Role,
             postobrabotka:
                 typeof u?.post === "boolean" ? u.post : Boolean(u?.post_obrabotka),
@@ -171,9 +167,9 @@ type LogApiResponse = {
 
 export async function getOperatorLog(params: {
     users: string | number | Array<string | number>;
-    date_start: string; // YYYY-MM-DD
-    date_end: string;   // YYYY-MM-DD
-    glagol_parent?: string; // опционально, по умолчанию возьмём из стора
+    date_start: string;
+    date_end: string;
+    glagol_parent?: string;
 }): Promise<Record<string, OperatorLogEntry[]>> {
     const glagol_parent = params.glagol_parent ?? getGlagolParent();
     const { users, date_start, date_end } = params;
@@ -183,7 +179,6 @@ export async function getOperatorLog(params: {
         {
             params: { glagol_parent, users, date_start, date_end },
             paramsSerializer: (p) => {
-                // корректно сериализуем users как повторяющийся query (?users=1&users=2)
                 const usp = new URLSearchParams();
                 usp.set("glagol_parent", glagol_parent);
                 (Array.isArray(users) ? users : [users]).forEach((u) =>

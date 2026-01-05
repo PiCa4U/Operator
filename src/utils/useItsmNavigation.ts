@@ -1,4 +1,3 @@
-// src/features/itsm/useItsmNavigation.ts
 import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { buildItsmPath, buildItsmUrl, type ItsmLinkOpts } from "./itsmLink";

@@ -5,23 +5,20 @@ import { OperatorLogEntry } from "../../types";
 
 type Props = {
     open: boolean;
-    userId: string;          // a.login
-    loginForTitle?: string;  // можно ФИО
+    userId: string;
+    loginForTitle?: string;
     onClose: () => void;
 };
 
-/* ================= TZ & parsing utils ================= */
 const APP_TZ: string = (() => {
     const root = document.getElementById("root") as HTMLElement | null;
     const fromData = root?.dataset?.tz?.trim();
     return fromData || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 })();
 
-// распознаём наивные строки "YYYY-MM-DD HH:mm:ss" / "YYYY-MM-DDTHH:mm:ss"
 const NAIVE_RE =
     /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$/;
 
-// нормализуем строку к ISO: если наивная — считаем её UTC и добавляем "Z"
 function normalizeToISO(input: string): string {
     if (NAIVE_RE.test(input)) {
         const iso = input.replace(" ", "T");
@@ -30,7 +27,6 @@ function normalizeToISO(input: string): string {
     return input;
 }
 
-// YYYY-MM-DD в нужном поясе
 function toYMD(dLike: Date | number | string, tz: string = APP_TZ): string {
     const d = new Date(dLike);
     const parts = new Intl.DateTimeFormat("en-CA", {
@@ -45,7 +41,6 @@ function toYMD(dLike: Date | number | string, tz: string = APP_TZ): string {
     return `${y}-${m}-${day}`;
 }
 
-// из любого входа -> миллисекунды
 function toMillis(dLike: Date | number | string): number {
     if (dLike instanceof Date) return dLike.getTime();
     if (typeof dLike === "number") return dLike < 1e12 ? dLike * 1000 : dLike;
@@ -57,7 +52,6 @@ function toMillis(dLike: Date | number | string): number {
     return NaN;
 }
 
-// DD.MM.YYYY HH:mm:ss в нужном поясе
 function formatTz(dLike: Date | number | string, tz: string = APP_TZ): string {
     // сначала жёстко парсим как описано выше (учитывая наивные строки)
     const ms = toMillis(dLike);
@@ -75,7 +69,6 @@ function formatTz(dLike: Date | number | string, tz: string = APP_TZ): string {
     return new Intl.DateTimeFormat("ru-RU", opts).format(d).replace(",", "");
 }
 
-/* ================= Словари ================= */
 const STATUS_RU: Record<string, string> = {
     available: "На линии",
     available_on_demand: "На линии",
@@ -105,13 +98,10 @@ const REASON_RU: Record<string, string> = {
 
 const t = (map: Record<string, string>, v?: string | null) => (v ? map[v] ?? v : "—");
 
-/* ================= Компонент ================= */
 export const OperatorLogModal: React.FC<Props> = ({ open, userId, loginForTitle, onClose }) => {
-    // по умолчанию — сегодня в твоём TZ
     const [start, setStart] = useState<string>(() => toYMD(Date.now()));
     const [end, setEnd] = useState<string>(() => toYMD(Date.now()));
 
-    // при каждом открытии сбрасываем на «сегодня»
     useEffect(() => {
         if (open) {
             const today = toYMD(Date.now());
@@ -129,7 +119,7 @@ export const OperatorLogModal: React.FC<Props> = ({ open, userId, loginForTitle,
                 users: userId,
                 date_start: start,
                 date_end: end,
-                tz: APP_TZ, // если бэк не ждёт — игнорирует
+                tz: APP_TZ,
             } as any);
             return (data?.[userId] ?? []) as OperatorLogEntry[];
         },
@@ -140,7 +130,6 @@ export const OperatorLogModal: React.FC<Props> = ({ open, userId, loginForTitle,
 
     const rows = query.data ?? [];
 
-    // новые сверху
     const sortedRows = useMemo(
         () =>
             rows

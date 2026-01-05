@@ -1,4 +1,3 @@
-// src/features/signals/local.ts
 import type { SignalItem } from "./api";
 
 const shownKey = (login: string) => `mgr_signal_shown_${login}`;

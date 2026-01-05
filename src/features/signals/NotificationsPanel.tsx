@@ -1,4 +1,3 @@
-// src/features/signals/NotificationsPanel.tsx
 import React, { useEffect, useMemo, useRef } from "react";
 import { useManagerSignals } from "./useManagerSignals";
 import { readHistory } from "./local";
@@ -15,7 +14,6 @@ export const NotificationsPanel: React.FC<{ managerLogin?: string; open: boolean
     const { data: opDir } = useOperatorsDirectory();           // ← добавили
     const enteredUnread = useRef<number[] | null>(null);
 
-    // при открытии один раз фиксируем «кто непрочитан» и шлём массовую прочитку
     useEffect(() => {
         if (!open) return;
         const ids = (query.data ?? []).map(n=>n.id);
@@ -25,7 +23,6 @@ export const NotificationsPanel: React.FC<{ managerLogin?: string; open: boolean
         }
     }, [open, query.data]);
 
-    // «полный список» = локальная история (то, что уже всплывало в тостах/сессии) + текущие непрочитанные
     const all: SignalItem[] = useMemo(() => {
         const hist = managerLogin ? readHistory(managerLogin) : [];
         const unread = (query.data ?? []);
@@ -34,7 +31,6 @@ export const NotificationsPanel: React.FC<{ managerLogin?: string; open: boolean
         for (const i of hist)   map.set(i.id, i);
         for (const i of unread) map.set(i.id, i);
 
-        // было: [...map.values()].sort(...)
         return Array.from(map.values()).sort((a, b) => b.id - a.id);
     }, [managerLogin, query.data]);
 

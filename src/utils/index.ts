@@ -20,18 +20,15 @@ export const makeId = (length: number) => {
 interface Project {
     project_name: string;
     glagol_name: string;
-    // Другие поля проекта, если нужно
 }
 
 interface CallcenterEntry {
     agent_name: string;
     project_name: string;
-    // Другие поля, если нужно
 }
 
 interface User {
     login: string;
-    // Другие поля пользователя
 }
 
 interface MonitorData {
@@ -48,19 +45,16 @@ export function parseMonitorData(data: MonitorData) {
         return acc;
     }, {} as Record<string, User>);
 
-    // Формируем объект monitorProjects: ключ – project_name, значение – glagol_name
     const monitorProjects = data.projects.reduce((acc, project) => {
         acc[project.project_name] = project.glagol_name;
         return acc;
     }, {} as Record<string, string>);
 
-    // Формируем объект allProjects: ключ – project_name, значение – объект проекта целиком
     const allProjects = data.projects.reduce((acc, project) => {
         acc[project.project_name] = project;
         return acc;
     }, {} as Record<string, Project>);
 
-    // Формируем объект monitorCallcenter: ключ – agent_name, значение – массив project_name
     const monitorCallcenter = data.callcenter.reduce((acc, entry) => {
         if (acc[entry.agent_name]) {
             // Если проект ещё не добавлен для этого агента – добавляем

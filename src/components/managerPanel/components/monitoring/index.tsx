@@ -1,4 +1,3 @@
-// src/components/managerPanel/tabs/monitoring/index.tsx
 import React, {
     useEffect,
     useMemo,
@@ -22,7 +21,6 @@ import { socket, stopScreenShareSession } from "../../../../socket";
 import { useSip } from "../../../../context/SipContext";
 import { useScreenShareViewer } from "../../../../screenShare/useScreenShareViewer";
 
-/** сериализация массивов без []: projects=a&projects=b */
 const serializeRepeat = (params: Record<string, any>) => {
     const usp = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => {
@@ -32,7 +30,6 @@ const serializeRepeat = (params: Record<string, any>) => {
     return usp.toString();
 };
 
-/** как отображать имя проекта */
 const pickProjectName = (p: any, idFallback: string) =>
     String(
         p?.glagol_name ??
@@ -45,7 +42,6 @@ const pickProjectName = (p: any, idFallback: string) =>
         idFallback
     );
 
-/** канонический id: предпочитаем slug (project_name), иначе числовой id */
 const pickCanonicalId = (p: any) =>
     String(p?.project_name ?? p?.project ?? p?.id ?? "").trim();
 
@@ -118,7 +114,6 @@ function useProjectDirectory(glagolParent: string, sipLogin: string) {
     return { projectMap, canonicalMap, projectOptions };
 }
 
-/** эврика по uuid: для исходящих берём uuid, для входящих — b_uuid */
 const resolveJoinUuid = (
     row: Row,
     type: ConnectionType
@@ -157,8 +152,8 @@ const resolveJoinUuid = (
 };
 
 type JoinInfo = {
-    type: ConnectionType; // выбранный тип (слушать / шёпот / ... )
-    managerUuid?: string; // uuid ноги менеджера для uuid_break
+    type: ConnectionType;
+    managerUuid?: string;
 };
 
 export const MonitoringTab: React.FC = () => {
@@ -174,7 +169,6 @@ export const MonitoringTab: React.FC = () => {
         sipLogin
     );
 
-    // === WebRTC + просмотр экрана менеджером ===
     const { userAgent, enabled: webrtcEnabled } = useSip();
     const {
         status: screenStatus,
@@ -184,15 +178,12 @@ export const MonitoringTab: React.FC = () => {
         leaveRoom,
     } = useScreenShareViewer({ ua: userAgent });
 
-    /** логин оператора, чей экран сейчас показываем (если есть) */
     const [activeScreenOperator, setActiveScreenOperator] = useState<
         string | null
     >(null);
 
-    /** последняя комната, к которой подключился менеджер (для stop) */
     const lastRoomRef = useRef<string | null>(null);
 
-    // Подписка на события screen_share:start/stop, чтобы джойнить/покидать SIP-комнату
     useEffect(() => {
         if (!webrtcEnabled) return;
         if (!sipLogin || !sessionKey) return;
@@ -238,7 +229,6 @@ export const MonitoringTab: React.FC = () => {
         };
     }, [webrtcEnabled, sipLogin, sessionKey, joinRoom, leaveRoom]);
 
-    // Явное завершение просмотра по кнопке в UI
     const handleScreenShareStop = useCallback(() => {
         stopScreenShareSession(); // шлём на бек screen_share:stop с текущей room_id
         setActiveScreenOperator(null);
@@ -262,7 +252,6 @@ export const MonitoringTab: React.FC = () => {
 
     const [pending, setPending] = useState<Record<string, boolean>>({});
 
-    /** локально выбранный тип подключения по uuid исходного вызова */
     const [joinTypeByTargetUuid, setJoinTypeByTargetUuid] = useState<
         Record<string, ConnectionType>
     >({});
@@ -277,7 +266,6 @@ export const MonitoringTab: React.FC = () => {
             : Object.values(rawActiveCalls);
     }, [rawActiveCalls]);
 
-    /** uuid исходного звонка -> { type (из UI), managerUuid (из activeCalls) } */
     const joinsByTargetUuid = useMemo<Record<string, JoinInfo>>(() => {
         const map: Record<string, JoinInfo> = {};
         const calls = activeCalls || [];
@@ -463,7 +451,6 @@ export const MonitoringTab: React.FC = () => {
         })();
     };
 
-    /** подключение / отключение менеджера к диалогу */
     const handleJoinCall = (row: Row, connection_type: ConnectionType) => {
         if (!sessionKey || !worker || !sipLogin) {
             Swal.fire({
@@ -488,7 +475,6 @@ export const MonitoringTab: React.FC = () => {
         const currentLocalType = joinTypeByTargetUuid[joinUuid];
         const currentJoin = joinsByTargetUuid[joinUuid];
 
-        // уже этот тип активен — значит "закончить"
         if (currentLocalType === connection_type) {
             const currentUUID = currentJoin?.managerUuid;
 
@@ -524,7 +510,6 @@ export const MonitoringTab: React.FC = () => {
             return;
         }
 
-        // новый "созвон" с выбранным типом
         setJoinTypeByTargetUuid((prev) => ({
             ...prev,
             [joinUuid]: connection_type,
@@ -550,7 +535,6 @@ export const MonitoringTab: React.FC = () => {
         setTimeout(() => markPending(joinUuid, false), 1000);
     };
 
-    /** Тоггл экрана оператора по кнопке в таблице */
     const handleScreenShareClick = (operatorLogin: string) => {
         if (!sessionKey || !worker || !sipLogin) {
             Swal.fire({
@@ -561,13 +545,11 @@ export const MonitoringTab: React.FC = () => {
             return;
         }
 
-        // если уже смотрим именно этого оператора — выключаем
         if (activeScreenOperator === operatorLogin) {
             handleScreenShareStop();
             return;
         }
 
-        // если смотрим кого-то другого — сначала выключим предыдущего
         if (activeScreenOperator && activeScreenOperator !== operatorLogin) {
             handleScreenShareStop();
         }

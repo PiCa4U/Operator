@@ -1,4 +1,3 @@
-// src/socket.ts
 import io from "socket.io-client";
 import Swal from "sweetalert2";
 import { RootState, store } from "../redux/store";
@@ -34,10 +33,6 @@ function isManagerClient(): boolean {
     return detectRole() === "manager";
 }
 
-/**
- * Если бэк шлёт manager_login / operator_login / sip_login — фильтруем.
- * Если не шлёт — пропускаем (backward compat).
- */
 function isScreenShareEventForMe(p: any): boolean {
     const myLogin = String(getCreds().sipLogin || "").trim();
     if (!myLogin) return true;
@@ -47,20 +42,17 @@ function isScreenShareEventForMe(p: any): boolean {
     const op  = String(p?.operator_login ?? "").trim();
     const sip = String(p?.sip_login ?? "").trim();
 
-    // Если есть явные таргеты — используем их.
     if (role === "manager") {
         if (mgr) return mgr === myLogin;
         if (sip && !op) return sip === myLogin;
-        return true; // нет manager target — не рискуем отфильтровать нужное
+        return true;
     }
 
-    // operator/unknown
     if (op) return op === myLogin;
     if (sip && !mgr) return sip === myLogin;
     return true;
 }
 
-/* === чтение fsServer из data-* + нормализация хоста === */
 function sanitizeHost(raw?: string | null): string | undefined {
     if (!raw) return;
     let s = String(raw).trim();
@@ -112,16 +104,14 @@ function makeSocket(): IOSocket {
 
 export const socket: IOSocket = makeSocket();
 
-// ===== флаги состояния =====
 let webrtcEnabled = false;
 let statusIntervalId: number | undefined;
 let ha1IntervalId: number | undefined;
 let turnIntervalId: number | undefined;
 let initialAuthTimerId: number | undefined;
 
-// интервалы (можешь подстроить)
-const HA1_REFRESH_MS = 160_000; // ~2:40 (у тебя так и было)
-const TURN_REFRESH_MS = 3_300_000; // 55 минут (при TTL 1 час безопаснее обновлять раньше)
+const HA1_REFRESH_MS = 160_000;
+const TURN_REFRESH_MS = 3_300_000;
 
 function isReadyForConnect() {
     const { sessionKey } = getOp();
@@ -270,7 +260,6 @@ function requestTurn() {
     // socket.emit('login', {worker})
 }
 
-// стартовая подкачка (и HA1, и TURN) — одним таймером
 function scheduleInitialAuth(delayMs: number) {
     if (initialAuthTimerId) {
         clearTimeout(initialAuthTimerId);
@@ -287,10 +276,8 @@ function scheduleInitialAuth(delayMs: number) {
 function startAuthIntervals() {
     stopAuthIntervals();
 
-    // HA1 часто
     ha1IntervalId = window.setInterval(() => requestHa1(), HA1_REFRESH_MS);
 
-    // TURN редко (раз в ~55 мин, TTL=60 мин)
     turnIntervalId = window.setInterval(() => requestTurn(), TURN_REFRESH_MS);
 }
 
@@ -305,7 +292,6 @@ function stopAuthIntervals() {
     }
 }
 
-// чтобы не дергать redux одинаковыми TURN, если бэк шлёт то же самое
 let lastTurnSignature = "";
 function makeTurnSignature(data: any): string {
     try {
@@ -338,7 +324,6 @@ export function enableWebRTC() {
     socket.on("fs_ha1", onHa1);
     socket.on("fs_turn", onTurn);
 
-    // стартовая подкачка чуть позже (как было)
     scheduleInitialAuth(graceDelayMs());
     startAuthIntervals();
 
@@ -381,7 +366,6 @@ socket.on("screen_share:error", (data: any) => {
 
     const rid = pickRoomId(data);
 
-    // 🔒 если ошибка по старой комнате — не ломаем текущую
     if (rid && screenShareRoomId && rid !== screenShareRoomId) {
         if (process.env.NODE_ENV !== "production") {
             console.log("[screen_share:error] ignore stale error", { rid, current: screenShareRoomId, data });
@@ -391,7 +375,6 @@ socket.on("screen_share:error", (data: any) => {
 
     stopScreenSharePing();
 
-    // ✅ оператору никаких попапов
     if (!isManagerClient()) return;
 
     const message =
@@ -412,7 +395,6 @@ socket.on("screen_share:stop", (data: any) => {
 
     const rid = pickRoomId(data);
 
-    // 🔒 поздний stop по старому room_id не должен ронять новую сессию
     if (rid && screenShareRoomId && rid !== screenShareRoomId) {
         if (process.env.NODE_ENV !== "production") {
             console.log("[screen_share:stop] ignore stale stop", { rid, current: screenShareRoomId, data });
@@ -455,7 +437,6 @@ let reconnectEnabled = false;
 export function setReconnectEnabled(v: boolean) {
     reconnectEnabled = Boolean(v);
 
-    // если включили и мы уже подключены — можно сразу отправить reconnect
     if (reconnectEnabled && socket.connected) {
         emitReconnectEvent();
     }
@@ -465,10 +446,8 @@ export function setReconnectEnabled(v: boolean) {
 socket.on("connect", () => {
     console.log("Socket connected:", socket.id);
 
-    // ✅ reconnect только в звонковой вкладке
     if (reconnectEnabled) emitReconnectEvent();
 
-    // ✅ статусы нужны везде — оставляем как было
     if (getOp().sessionKey) {
         startStatusInterval();
 
@@ -507,10 +486,8 @@ store.subscribe(() => {
         hadSessionKey = true;
 
         if (isConnected()) {
-            // ✅ всем вкладкам нужны статусы
             startStatusInterval();
 
-            // ✅ reconnect — только звонковой
             if (reconnectEnabled) emitReconnectEvent();
 
             if (webrtcEnabled) {

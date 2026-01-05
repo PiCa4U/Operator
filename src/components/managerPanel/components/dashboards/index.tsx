@@ -4,11 +4,7 @@ import ManagerDashboards from "./components/ManagerDashboards";
 import type { RootState } from "../../../../redux/store";
 import { store } from "../../../../redux/store";
 
-/** Нормализация worker → glagol-логин:
- * - если уже содержит ".at." — оставляем как есть
- * - если содержит "@", меняем ПЕРВОЕ вхождение на ".at."
- * - иначе возвращаем как есть
- */
+
 function normalizeWorkerLogin(raw: string): string {
     const s = String(raw ?? "").trim();
     if (!s) return "";
@@ -21,10 +17,6 @@ function normalizeWorkerLogin(raw: string): string {
     return s;
 }
 
-/**
- * Хук окружения: достаём glagolParent (fs_server) и userLogin (worker)
- * приоритет: Redux → data-* на #root → дефолты.
- */
 function getCreds() {
     const { credentials } = store.getState();
     const { worker = "", glagolParent = "" } = credentials || {};

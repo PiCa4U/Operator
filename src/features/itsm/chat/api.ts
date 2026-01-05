@@ -20,7 +20,6 @@ export const chatApi = axios.create({
     headers: { Accept: "application/json" },
 });
 
-// ✅ каждый запрос сам подставит актуальный baseURL
 chatApi.interceptors.request.use((config) => {
     config.baseURL = readChatBaseURL();
 

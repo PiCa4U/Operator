@@ -15,7 +15,6 @@ import { makeSelectFullProjectPool } from "../../../../../redux/operatorSlice";
 
 type KVRow = { id: string; key: string; values: string };
 
-/* ---- метаданные модуля ---- */
 type ModuleKwargMeta = {
     name?: string;
     type?: string;
@@ -25,11 +24,11 @@ type ModuleKwargMeta = {
 };
 type ModuleInfo = {
     id: number;
-    filename: string; // логическое имя модуля: "complete", "gp_1", ...
+    filename: string;
     python_version?: string;
     kwargs?: Record<string, ModuleKwargMeta>;
     return_structure?: Record<string, any>;
-    button_name?: string | null; // <— добавлено
+    button_name?: string | null;
 };
 
 const emptyFilters: LogFilters = {
@@ -43,7 +42,6 @@ const emptyFilters: LogFilters = {
     offset: 0,
 };
 
-/* ---------- Детали лога ---------- */
 function LogDetails({ raw }: { raw: string }) {
     const [showRaw, setShowRaw] = React.useState(false);
     const [showReturnStruct, setShowReturnStruct] = React.useState(false);
@@ -261,10 +259,8 @@ export const LogsTab: React.FC = () => {
     const [detailsLoading, setDetailsLoading] = useState(false);
     const [detailsError, setDetailsError] = useState<string | null>(null);
 
-    // Больше не отрезаем .py — работаем с именами модулей как есть
     const filenameValueForSelect = (filters.filename ?? "").trim();
 
-    // ===== проекты из redux =====
     const {
         sipLogin   = '',
         worker     = '',
@@ -282,11 +278,9 @@ export const LogsTab: React.FC = () => {
         [projectPool]
     );
 
-    // ===== модули по проектам =====
     const [modulesByProject, setModulesByProject] = useState<Record<string, ModuleInfo[]>>({});
     const [modulesLoading, setModulesLoading] = useState(false);
 
-    // грузим модули выбранного проекта
     useEffect(() => {
         const proj = filters.project?.trim();
         if (!proj) return;
@@ -317,7 +311,6 @@ export const LogsTab: React.FC = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [filters.project]);
 
-    // если сменили проект и выбранного filename нет — сбрасываем
     useEffect(() => {
         const proj = filters.project ?? "";
         const list = modulesByProject[proj] || [];
@@ -340,7 +333,6 @@ export const LogsTab: React.FC = () => {
         [currentModule]
     );
 
-    // при смене модуля — валидируем строки условий
     useEffect(() => {
         const allowed = new Set(kwKeys);
         setKwRows((rows) => rows.map((r) => (allowed.has(r.key) ? r : { ...r, key: "" })));
@@ -436,7 +428,6 @@ export const LogsTab: React.FC = () => {
 
     const selectedText = selected?.id ? detailsById[selected.id] ?? "" : "";
 
-    // человекочитаемое имя модуля по filename
     const displayModuleName = (fn?: string) => {
         if (!fn) return "";
         const proj = filters.project ?? "";
@@ -456,7 +447,6 @@ export const LogsTab: React.FC = () => {
 
     return (
         <div className="container-fluid">
-            {/* Фильтры */}
             <div className="row g-2 align-items-end mb-3">
                 <div className="col-md-3" style={{ position: "relative", zIndex: 10 }}>
                     <label className="form-label">Проект</label>

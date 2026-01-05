@@ -1,4 +1,3 @@
-// src/features/signals/SignalsToaster.tsx
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { SignalItem } from "./api";
@@ -10,7 +9,7 @@ const icon: Record<string,string> = { info:"ℹ️", warning:"⚠️", error:"�
 
 export const SignalsToaster: React.FC<{ managerLogin?: string }> = ({ managerLogin }) => {
     const { newForUi, markOneAsRead } = useManagerSignals(managerLogin);
-    const { data: opDir } = useOperatorsDirectory();           // ← добавили
+    const { data: opDir } = useOperatorsDirectory();
     const [stack, setStack] = useState<SignalItem[]>([]);
 
     useEffect(() => {
@@ -41,7 +40,6 @@ export const SignalsToaster: React.FC<{ managerLogin?: string }> = ({ managerLog
                     </div>
                     <div style={{fontSize:13,color:"#374151",whiteSpace:"pre-wrap"}}>{n.message}</div>
 
-                    {/* Новая строка: имя оператора по логину */}
                     <div style={{fontSize:12,color:"#6b7280",marginTop:6}}>
                         Оператор: {formatOperatorLine(n.login, opDir, n.department, /*showLogin*/ true)}
                     </div>

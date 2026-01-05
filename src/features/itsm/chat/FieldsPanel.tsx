@@ -1,4 +1,3 @@
-/* ======= общий список файлов по GUID’ам контактов (всегда открываемый по желанию) ======= */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Swal from "sweetalert2";
@@ -8,7 +7,6 @@ import ReactDOM from "react-dom";
 
 const DOWNLOAD_HOST_CC = "https://my.glagol.ai";
 
-/** host[:port]/chat из data-атрибутов (без протокола), ровно один раз */
 function readSocketHostForDownloads(): string {
     const el = document.getElementById("root") as HTMLElement | null;
     let raw =
@@ -32,7 +30,6 @@ function readSocketHostForDownloads(): string {
     }
 }
 
-/** https://my.glagol.ai/get_cc_files/{ENCODED_CHAT_BASE}/{guid}/{filename} */
 function buildContactDownloadUrl(chatBaseUrl: string, guid: string, filename: string) {
     const encBase = encodeURIComponent((chatBaseUrl || "").replace(/\/+$/, ""));
     const encGuid = encodeURIComponent(guid);
@@ -40,7 +37,6 @@ function buildContactDownloadUrl(chatBaseUrl: string, guid: string, filename: st
     return `${DOWNLOAD_HOST_CC}/get_cc_files/${encBase}/${encGuid}/${encFile}`;
 }
 
-/* ===== Превью через fs_server ===== */
 
 function readFilesApiBaseFallback(): string {
     const el = document.getElementById("root") as HTMLElement | null;
@@ -61,14 +57,12 @@ function trimRightSlashes(s: string) {
     return s.replace(/\/+$/, "");
 }
 
-/** /api/v1/download/<guid>/<filename> — inline с корректным Content-Type */
 function buildPreviewUrl(filesApiBase: string, guid: string, filename: string) {
     return `${trimRightSlashes(filesApiBase)}/api/v1/download/${encodeURIComponent(
         guid
     )}/${encodeURIComponent(filename)}`;
 }
 
-/* ===== Типы файлов и утилиты ===== */
 
 function fileEmojiByExt(name: string) {
     const ext = (name.split(".").pop() || "").toLowerCase();
@@ -88,7 +82,6 @@ const extOf = (n: string) => (n.split(".").pop() || "").toLowerCase();
 const isImage = (n: string) => IMAGE_EXTS.includes(extOf(n));
 const isPdf = (n: string) => extOf(n) === "pdf";
 
-/** GUID строго из строки контакта */
 function getContactGuid(c: any): string | null {
     return (
         (c?.guid && String(c.guid)) ||
@@ -99,7 +92,6 @@ function getContactGuid(c: any): string | null {
     );
 }
 
-/** Нормализуем storage: ["a.txt"] или [{name:"a.txt"}] */
 function normalizeStorage(storage: any): string[] {
     if (!Array.isArray(storage)) return [];
     return storage
@@ -107,7 +99,6 @@ function normalizeStorage(storage: any): string[] {
         .filter((s: string) => !!s);
 }
 
-/** PDF превью без куков; фолбэк — старое скачивание */
 async function openPdfPreview(urlPreview: string, urlDownload: string) {
     try {
         const resp = await fetch(urlPreview, { credentials: "omit" });
@@ -122,7 +113,6 @@ async function openPdfPreview(urlPreview: string, urlDownload: string) {
     }
 }
 
-/* ===== Лайтбокс для картинок ===== */
 
 type LightboxItem = { url: string; title?: string };
 
@@ -250,14 +240,12 @@ function Lightbox({
     return ReactDOM.createPortal(node, document.body);
 }
 
-/* ===== Основной компонент ===== */
 
 type FlatFile = { guid: string; fname: string };
 
 export function ContactFilesPanel({
                                       contacts,
                                       serverFilesByGuid,
-                                      /** если true — панель всегда открыта, без кнопки-стрелки и без анимации */
                                       alwaysOpen = false,
                                   }: {
     contacts: any[];
@@ -269,10 +257,8 @@ export function ContactFilesPanel({
     const [isOpen, setIsOpen] = useState(false);
     const contentRef = useRef<HTMLDivElement | null>(null);
 
-    // host[:port]/chat
     const SOCKET_HOST_CC = readSocketHostForDownloads();
 
-    // fs_server из Redux (покрываем типичные ветки)
     const fsServerFromRedux = useSelector((state: any) =>
         state?.common?.fs_server ?? state?.common?.fsServer ??
         state?.app?.fs_server ?? state?.app?.fsServer ??
@@ -286,10 +272,8 @@ export function ContactFilesPanel({
         return base ? base.replace(/\/+$/, "") : "";
     }, [fsServerFromRedux]);
 
-    // Лайтбокс
     const [lb, setLb] = useState<{ items: LightboxItem[]; index: number } | null>(null);
 
-    // пересобираем список файлов
     useEffect(() => {
         const out: FlatFile[] = [];
         const seen = new Set<string>();
@@ -312,7 +296,6 @@ export function ContactFilesPanel({
         setFilesFlat(out);
     }, [contacts, serverFilesByGuid]);
 
-    // список картинок для лайтбокса
     const imageItems = useMemo<LightboxItem[]>(
            () => filesFlat
          .filter((f) => isImage(f.fname))
@@ -322,7 +305,6 @@ export function ContactFilesPanel({
              })),
        [filesFlat, SOCKET_HOST_CC]
      );
-    // плавная анимация высоты (если не alwaysOpen)
     useEffect(() => {
         if (alwaysOpen) return;
         const el = contentRef.current;

@@ -5,6 +5,7 @@ import { socket } from "../socket";
 import { clearError, setError, setGrantedOnce, setStatus } from "../redux/screenShareSlice";
 import { useSip } from "../context/SipContext";
 import { useScreenShareSender } from "./useScreenShareSender";
+import { consumeIfViewerInitiated } from "./screenShareLocalIntent";
 
 type StartPayload = {
     room_id?: string;
@@ -37,9 +38,7 @@ export const OperatorScreenSharePanel: React.FC = () => {
         (s: RootState) => (s as any).credentials as any
     );
 
-    const opSessionKey = useSelector((s: RootState) => (s as any).operator?.sessionKey) as
-        | string
-        | undefined;
+    const opSessionKey = useSelector((s: RootState) => (s as any).operator?.sessionKey) as string | undefined;
 
     const session_key = String(opSessionKey || credsSessionKey || "").trim();
     const { userAgent } = useSip();
@@ -102,7 +101,7 @@ export const OperatorScreenSharePanel: React.FC = () => {
 
                 const ok = await sender.connectToRoom(room_id);
                 if (ok) {
-                    currentRoomRef.current = room_id;   // ✅ ВАЖНО
+                    currentRoomRef.current = room_id;
                     dispatch(setStatus("sharing"));
                     pendingRoomRef.current = null;
                 } else {
@@ -149,12 +148,19 @@ export const OperatorScreenSharePanel: React.FC = () => {
             const rid = pickRoomId(payload);
             if (!rid) return;
 
+            if (consumeIfViewerInitiated()) {
+                if (process.env.NODE_ENV !== "production") {
+                    console.log("[operator] ignore start because viewer-initiated (same tab)", payload);
+                }
+                return;
+            }
+
             pendingRoomRef.current = rid;
 
-            // 1) accept сразу
+            // accept сразу
             emitAccept(rid);
 
-            // 2) если уже кастим — перезапустим publish, чтобы менеджер попал на keyframe
+            // если уже кастим — перезапустим publish, чтобы менеджер попал на keyframe
             try {
                 if (sender.status === "casting" || sender.status === "connecting") {
                     currentRoomRef.current = null;
@@ -163,7 +169,7 @@ export const OperatorScreenSharePanel: React.FC = () => {
                 }
             } catch {}
 
-            // 3) если armed + UA ready — publish
+            // если armed + UA ready — publish
             if (sender.hasAccess && userAgent) {
                 await tryPublish(rid);
             } else {
@@ -173,7 +179,7 @@ export const OperatorScreenSharePanel: React.FC = () => {
 
         socket.on("screen_share:start", onStart);
         return () => {
-            socket.off("screen_share:start", onStart)
+            socket.off("screen_share:start", onStart);
         };
     }, [emitAccept, sender, userAgent, tryPublish, dispatch]);
 
@@ -184,7 +190,6 @@ export const OperatorScreenSharePanel: React.FC = () => {
             const cur = (currentRoomRef.current || "").trim();
             const pend = (pendingRoomRef.current || "").trim();
 
-            // 🔒 если стоп пришёл по старой комнате — игнор
             if (rid && cur && rid !== cur && rid !== pend) {
                 if (process.env.NODE_ENV !== "production") {
                     console.log("[operator] ignore stale stop", { rid, cur, pend, payload });
@@ -192,7 +197,6 @@ export const OperatorScreenSharePanel: React.FC = () => {
                 return;
             }
 
-            // если стоп по pending — просто отменяем ожидание
             if (rid && pend && rid === pend && (!cur || cur !== rid)) {
                 pendingRoomRef.current = null;
                 dispatch(setStatus("idle"));
@@ -212,7 +216,7 @@ export const OperatorScreenSharePanel: React.FC = () => {
         socket.on("screen_share:stop", onStop);
         return () => {
             socket.off("screen_share:stop", onStop);
-        }
+        };
     }, [sender, dispatch]);
 
     React.useEffect(() => {
@@ -223,8 +227,7 @@ export const OperatorScreenSharePanel: React.FC = () => {
         void tryPublish(rid);
     }, [sender.hasAccess, userAgent, tryPublish]);
 
-    const showUi =
-        !sender.hasAccess || status === "requesting" || Boolean(error) || Boolean(sender.error);
+    const showUi = !sender.hasAccess || status === "requesting" || Boolean(error) || Boolean(sender.error);
 
     if (!showUi) return null;
 
@@ -244,14 +247,12 @@ export const OperatorScreenSharePanel: React.FC = () => {
             <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 800 }}>Нужна демонстрация экрана</div>
                 <div style={{ fontSize: 13 }}>
-                    Без разрешённой демонстрации экрана <b>WebRTC-телефония не включится</b>. Нажмите кнопку и
-                    выберите экран/окно в браузере.
+                    Без разрешённой демонстрации экрана <b>WebRTC-телефония не включится</b>. Нажмите кнопку и выберите
+                    экран/окно в браузере.
                 </div>
 
                 {(error || sender.error) && (
-                    <div style={{ marginTop: 6, color: "#b42318", fontSize: 12 }}>
-                        {error || sender.error}
-                    </div>
+                    <div style={{ marginTop: 6, color: "#b42318", fontSize: 12 }}>{error || sender.error}</div>
                 )}
             </div>
 

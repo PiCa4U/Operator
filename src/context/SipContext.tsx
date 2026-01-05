@@ -1,4 +1,3 @@
-// src/context/SipContext.tsx
 import React, {createContext, createRef, useContext} from 'react';
 import type { RefObject } from 'react';
 import type { Invitation } from 'sip.js';

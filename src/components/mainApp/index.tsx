@@ -51,36 +51,34 @@ function mapRow(r: RawChatMessage): UiMessage {
     };
 }
 
-// === makeCardUrl: собрать ссылку на текущую карточку ===
-// matchedPreset: объект твоего выбранного пресета (OptionType | null), у него есть .preset.group_by и .preset.group_table
+
 function makeCardUrl(openedPhones: any[], matchedPreset: OptionType | null) {
     const u = new URL(window.location.href);
     u.searchParams.set("card", "1");
 
-    // ids выбранных телефонов
+
     const ids = (openedPhones ?? [])
         .map((p: any) => p?.id)
         .filter((id: any) => Number.isFinite(id));
     if (ids.length) u.searchParams.set("ids", ids.join(","));
 
-    // Параметры группировки из пресета
+
     const gb = matchedPreset?.preset?.group_by ?? [];
     const gt = matchedPreset?.preset?.group_table ?? "";
     if (Array.isArray(gb) && gb.length) u.searchParams.set("gb", gb.join(","));
     if (gt) u.searchParams.set("gt", gt);
 
-    // (опционально) если есть guid — поможет сразу поднять чат
+
     const firstGuid = (openedPhones ?? []).find((p: any) => p?.guid)?.guid;
     if (firstGuid) u.searchParams.set("guid", String(firstGuid));
 
-    // (опционально) пометить, что это карточка из задачного режима
+
     u.searchParams.set("tusk", "1");
 
     return u.toString();
 }
 
-// === fetchGroupPhonesByIdsUsingPreset: забрать телефоны через get_grouped_phones по ids + gb/gt ===
-// Требуется, чтобы бэкенд поддерживал фильтр ids в get_grouped_phones
+
 async function fetchGroupPhonesByIdsUsingPreset(
     ids: number[],
     group_table: string,
@@ -91,11 +89,11 @@ async function fetchGroupPhonesByIdsUsingPreset(
     const params: any = {
         glagol_parent: glagolParent,
         page: 1,
-        limit: Math.max(ids.length, 50), // можно подстраховаться
+        limit: Math.max(ids.length, 50),
         group_table,
         group_by: group_by.join(","),
 
-        // NEW: сервер должен уметь распознать этот фильтр
+
         ids: ids.join(","),
     };
 
@@ -103,7 +101,6 @@ async function fetchGroupPhonesByIdsUsingPreset(
 
     const rows = Array.isArray(data?.data) ? data.data : [];
 
-    // Нужный минимум структуры под твою карточку
     return rows.map((r: any, i: number) => ({
         id: r?.id ?? r?.phone_id ?? i + 1,
         phone: r?.phone ?? r?.contact_info?.phone ?? "",
@@ -401,8 +398,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         if (hasSipLogin) {
             const mine = Number(resp?.unwatched?.[login] ?? 0);
             const responsible = Number(resp?.unwatched?.responsible ?? 0);
-            // если «ответственный» должен тоже видеть эти непрочитанные — раскоммень ниже:
-            // return mine + responsible;
             return mine;
         }
 
@@ -475,7 +470,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             );
         },
 
-        // входящие статусы прочтения — только отмечаем локально, БЕЗ дополнительных эмитов
         onRead: (ids: number[]) => {
             if (!ids?.length) return;
             setHistory(prev => markReadMany(prev, ids));
@@ -506,7 +500,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         }
     });
 
-    // === hydrate openedPhones из URL при первом рендере ===
     useEffect(() => {
         const sp = new URLSearchParams(window.location.search);
         if (sp.get("card") !== "1") return;
@@ -517,13 +510,9 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         const guid   = sp.get("guid");
         const tusk   = sp.get("tusk") === "1";
 
-        // Показать панель задач/режим карточки, если нужно
         setShowTasksDashboard(true);
-        // Если у тебя есть отдельный флаг tuskMode — включи:
-        // setTuskMode?.(tusk);
 
         (async () => {
-            // 1) идеальный путь: ids + gb + gt → восстановим ровно ту же выборку
             if (idsCsv && gbCsv && gt) {
                 const ids = idsCsv.split(",").map(n => +n).filter(Boolean);
                 const group_by = gbCsv.split(",").filter(Boolean);
@@ -531,7 +520,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                     const rows = await fetchGroupPhonesByIdsUsingPreset(ids, gt, group_by);
                     setOpenedPhones(rows);
 
-                    // если есть guid в ответе или в ссылке — активируем чат
                     const g = rows.find((r: any) => r.guid)?.guid || guid;
                     if (g) setActiveGuid(String(g));
                 } catch (e) {
@@ -540,7 +528,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 return;
             }
 
-            // 2) запасной вариант: только guid → поднимем контакты для карточки/чата
             if (guid) {
                 try {
                     const { data } = await chatApi.get(`/api/v1/contacts/${encodeURIComponent(guid)}`);
@@ -561,13 +548,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 return;
             }
 
-            // 3) если ничего нет — просто выходим (ничего не открываем)
         })();
     }, []);
 
     useEffect(() => {
         if (!isOwner || !enabled) {
-            // Старая вкладка перестала быть «звонковой» — гасим локальный UI и стор
             dispatch(setActiveCalls([]));
             setPostActive(false);
         }
@@ -584,22 +569,20 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         const idsToMark: number[] = [];
         for (const m of messages) {
             const numId = Number(m.id);
-            if (!Number.isFinite(numId)) continue;          // пропускаем временные id
-            if (!isIncomingForMe(m)) continue;              // исходящие мне не нужны
-            if (m.isRead) continue;                         // уже отмечены локально
-            if (sentReadRef.current.has(numId)) continue;   // уже слали ранее
+            if (!Number.isFinite(numId)) continue;
+            if (!isIncomingForMe(m)) continue;
+            if (m.isRead) continue;
+            if (sentReadRef.current.has(numId)) continue;
             idsToMark.push(numId);
         }
         if (!idsToMark.length) return;
 
-        // локально сразу отметим
         setHistory(prev => markReadMany(prev, idsToMark));
         setLive(prev => markReadMany(prev, idsToMark));
         setOptimistic(prev => markReadMany(prev, idsToMark));
 
-        // отправим батчем (с дебаунсом)
         enqueueReads(idsToMark);
-    }, [connected, messages, sipLogin]); // ВАЖНО: без readMap в зависимостях
+    }, [connected, messages, sipLogin]);
 
     const flushReads = () => {
         if (queueRef.current.size === 0) return;
@@ -613,14 +596,13 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         ids.forEach(id => {
             if (!sentReadRef.current.has(id)) queueRef.current.add(id);
         });
-        if (timerRef.current) return; // уже ждём
+        if (timerRef.current) return;
         timerRef.current = window.setTimeout(() => {
             timerRef.current = null;
             flushReads();
         }, 200);
     };
 
-    // список GUID для табов (включая текущий из URL)
     const guidsFromOpened = useMemo(() => {
         if (openedGuids.length === 0) return
         const arr = Array.from(new Set(
@@ -701,7 +683,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             try {
                 const { start, end, saved } = JSON.parse(raw) as {
                     start: string;
-                    end?: string; // может отсутствовать
+                    end?: string;
                     saved: string;
                 };
 
@@ -763,17 +745,13 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             })
         );
     }, [startDate, endDate]);
-    // 1) showTasksDashboard
     useEffect(() => {
         localStorage.setItem('showTasksDashboard', JSON.stringify(showTasksDashboard));
     }, [showTasksDashboard]);
 
-// 2) currentPage
     useEffect(() => {
         localStorage.setItem('tasksCurrentPage', currentPresetPage.toString());
     }, [currentPresetPage]);
-
-// 3) selectedPreset
 
 
     useEffect(() => {
@@ -886,7 +864,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     },[showTasksDashboard])
 
     const selectFullProjectPool3 = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
-    // Вызываем useSelector для получения «полных» проектов
     const projectPool2 = useSelector(selectFullProjectPool3) || [];
     const projectPoolForCall = useMemo(() => {
         return projectPool2
@@ -952,7 +929,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     //     }
     // },[showTasksDashboard])
     useEffect(() => {
-        // 🗂 Работает только если TasksDashboard активен И нет активного outbound вызова И нет выбранного outboundID
         if (showTasksDashboard && !outboundCall && !outboundID) {
             if (openedGroup.length > 0 && phonesData.length > 0) {
                 const matched = phonesData.filter(phone =>
@@ -974,7 +950,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             }
         }
 
-        // В остальных случаях — НЕ ТРОГАТЬ
     }, [openedGroup, phonesData, outboundID, GroupIDs, outboundCall, showTasksDashboard]);
 
 
@@ -1090,10 +1065,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
     useEffect(() => {
         const handleFsDiaDes = (msg: any) => {
-            // ✅ Ставим активный проект
             setActiveProjectName(msg.project_name);
 
-            // ✅ Проверяем express по активному номеру
             if (activeCalls[0]?.cid_num) {
                 socket.emit('check_express', {
                     phone: activeCalls[0].cid_num,
@@ -1103,7 +1076,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 });
             }
 
-            // ✅ Запрашиваем FS причины
             socket.emit('get_fs_reasons', {
                 project_name: msg.project_name,
                 session_key: sessionKey,
@@ -1123,7 +1095,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 setAssignedKey(check.assigned_key);
                 setExpressCall(check.express)
                 setOutActiveProjectName(activeProjectName)
-                // ✅ Запрашиваем phone_line
                 setOutActivePhone(activeCalls[0].cid_num)
                 socket.emit('get_phone_line', {
                     worker,
@@ -1137,7 +1108,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
         const handleGetPhoneLine = (msg: any) => {
 
-            // ✅ Если приходит массив phone_line, берем special_key
             if (msg.phone_line[0]?.special_key) {
                 setSpecialKey(msg.phone_line[0].special_key);
                 if (assignedKey && msg.phone_line[0].special_key) {
@@ -1179,7 +1149,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         function recurse(node: any) {
             if (Array.isArray(node)) {
                 if (node.length && typeof node[0] === 'object' && 'phone' in node[0]) {
-                    groups.push(node); // нашли массив телефонов
+                    groups.push(node);
                 }
             } else if (typeof node === 'object' && node !== null) {
                 Object.values(node).forEach(recurse);
@@ -1206,7 +1176,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
                 if (presets.length === 0) {
                     const resp = await axios.post<Preset[]>("/api/v1/get_preset_list", {
-                        glagol_parent: "fs.at.glagol.ai",
+                        glagol_parent: glagolParent,
                         worker,
                         projects: projectPoolForCall,
                         role,
@@ -1225,16 +1195,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                     setSelectedPreset(matchedPreset);
                 }
 
-                // 🔎 Пытаемся найти «контакт-источник» для group_by:
-                // 1) currentPhoneData (если есть у тебя такой объект с полной строкой phones)
-                // 2) пробуем найти по phoneID в phonesData (если есть)
-                // 3) fallback — собираем минимум из selectedCall
                 const currentPhoneData =
                     // @ts-ignore — если у тебя уже есть такой стейт/проп, подставь реальный
                     (typeof getCurrentPhoneData === "function" ? getCurrentPhoneData(phoneID) : undefined) ||
                     // @ts-ignore — если хранишь массив phonesData
                     (Array.isArray(phonesData) ? phonesData.find((p: any) => p?.id === phoneID) : undefined) ||
-                    // минимальный объект из selectedCall (добавь сюда нужные alias-поля под свои group_by)
                     {
                         phone: selectedCall?.b_line_num,
                         b_line_num: selectedCall?.b_line_num,
@@ -1242,7 +1207,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                         project: projNamesSaved?.[0],
                     };
 
-                // 🧩 Строим расширенный filter_by из group_by + проект
                 const groupFilter = buildGroupByFilter(matchedPreset.preset.group_by, currentPhoneData || {});
                 const filter_by: Record<string, any> = {
                     project: ["IN", matchedPreset.preset.projects],
@@ -1297,12 +1261,9 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     }, [selectedCall, phoneID, presets, projectPool, worker, projectPoolForCall, role]);
 
     useEffect(() => {
-        // колбэки объявляем внутри эффекта, чтобы off() снял ровно их же
         const handleFsStatus = (msg: any) => {
-            // общая часть может обновлять состояние статуса
             dispatch(setFsStatus(msg));
 
-            // всё «послезвонковое» только у владельца
             if (!isOwner || !enabled) return;
 
             if (msg.status === "Available (On Demand)" && msg.state === "Idle") {
@@ -1323,7 +1284,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             dispatch(setUserStatuses(msg));
         };
 
-        // если вкладка не владелец — гарантированно снимаем прошлые подписки и выходим
         if (!isOwner || !enabled) {
             socket.off('fs_status', handleFsStatus);
             socket.off('fs_calls', handleFsCalls);
@@ -1331,12 +1291,10 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             return;
         }
 
-        // владелец — подписываемся
         socket.on('fs_status', handleFsStatus);
         socket.on('fs_calls', handleFsCalls);
         socket.on('other_users', handleOtherUsers);
 
-        // аккуратная отписка при любом изменении deps/размонтировании
         return () => {
             socket.off('fs_status', handleFsStatus);
             socket.off('fs_calls', handleFsCalls);
@@ -1373,14 +1331,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const onAccept = () => {
         if (!incoming) return;
         answerCall().then(() => {
-            // TODO: dispatch/fs/socket.emit о принятии
         });
         // clearIncoming();
     };
     const onReject = () => {
         if (!incoming) return;
         hangUp()
-        // TODO: dispatch/fs/socket.emit об отклонении
         clearIncoming();
     };
 

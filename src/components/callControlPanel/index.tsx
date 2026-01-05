@@ -18,22 +18,18 @@ import { chatApi } from '../../features/itsm/chat/api';
 import {makeId} from "../../utils";
 import {OperatorScreenSharePanel} from "../../screenShare/OperatorScreenSharePanel";
 
-// --- ALERT helpers ---
 type AlertMsg = {
     title?: string;
     text?: string;
     type?: 'success' | 'error' | 'warning' | 'info';
 };
 export function normalizeUrl(path?: string) {
-    // если нужен конкретный путь — можно передать его в path
     const next = path ?? window.location.pathname;
     window.history.replaceState(null, '', next);
 }
 
-// на случай бегущего счётчика — держим его в ref
 const runningModulesCountRef = { current: 0 } as React.MutableRefObject<number>;
 
-// очередь алертов, чтобы не конфликтовало с «Выполняются модули»
 const alertsQueueRef = { current: [] as AlertMsg[] } as React.MutableRefObject<AlertMsg[]>;
 const isShowingAlertRef = { current: false } as React.MutableRefObject<boolean>;
 
@@ -45,7 +41,6 @@ const mapIcon = (t?: string): 'success'|'error'|'warning'|'info' => {
     return 'info';
 };
 
-// достаём ВСЕ алерты из любого места payload'а
 function collectAlerts(payload: any): AlertMsg[] {
     const out: AlertMsg[] = [];
     const seen = new Set<string>();
@@ -70,17 +65,14 @@ function collectAlerts(payload: any): AlertMsg[] {
     const walk = (node: any) => {
         if (!node || typeof node !== 'object') return;
 
-        // 1) destination/msg-формат
         if (node.destination === 'alert' && node.msg && typeof node.msg === 'object') {
             push({ title: node.msg.title, text: node.msg.text, type: mapIcon(node.msg.type) });
         }
 
-        // 2) alert-объект как поле
         if (node.alert && looksLikeAlertObj(node.alert)) {
             push({ title: node.alert.title, text: node.alert.text, type: mapIcon(node.alert.type) });
         }
 
-        // рекурсивно
         for (const k in node) {
             if (!Object.prototype.hasOwnProperty.call(node, k)) continue;
             const v = (node as any)[k];
@@ -92,7 +84,6 @@ function collectAlerts(payload: any): AlertMsg[] {
     return out;
 }
 
-// показать один алерт (ставится в очередь, не конфликтует со «спиннером»)
 function enqueueAlert(m: AlertMsg, swalRef: React.MutableRefObject<any>) {
     alertsQueueRef.current.push(m);
     processAlerts(swalRef);
@@ -105,7 +96,6 @@ function processAlerts(swalRef: React.MutableRefObject<any>) {
 
     isShowingAlertRef.current = true;
 
-    // если сейчас показывается «Выполняются модули», временно закроем
     if (swalRef.current) {
         Swal.close();
         swalRef.current = null;
@@ -120,7 +110,6 @@ function processAlerts(swalRef: React.MutableRefObject<any>) {
     }).then(() => {
         isShowingAlertRef.current = false;
 
-        // если ещё что-то крутится — вернём прогресс-диалог
         if (runningModulesCountRef.current > 0 && !swalRef.current) {
             swalRef.current = Swal.fire({
                 title: 'Выполняются модули',
@@ -130,17 +119,15 @@ function processAlerts(swalRef: React.MutableRefObject<any>) {
             });
         }
 
-        // показать следующий алерт из очереди
         processAlerts(swalRef);
     });
 }
 
-// Типы (упрощённые — оставьте свои)
 interface PhoneCombo {
-    id: string;           // "<phone>|<comma-separated values>"
-    phone: string;        // сам телефон
-    values: string[];     // массив значений
-    projects: string[];   // **новое** — список проектов, в которых найдены эти значения
+    id: string;
+    phone: string;
+    values: string[];
+    projects: string[];
 }
 export interface PhoneOption {
     id: string;
@@ -160,7 +147,6 @@ interface Project {
     base_fields: {
         [field: string]: any;
     };
-    // …any other props on each project
 }
 
 type ProjectsMap = Record<string, Project>;
@@ -204,7 +190,7 @@ export interface CallData {
     a_line_num: string;
     b_line_num: string;
     datetime_start: string;
-    direction: string;           // 'inbound' | 'outbound'
+    direction: string;
     record_name?: string;
     base_fields?: { [key: string]: string };
     call_reason?: string | number;
@@ -304,7 +290,7 @@ interface MergedField {
 }
 
 type GroupFieldValues = Record<
-    string,                     // project_name
+    string,
     Record<string/*field_id*/, string/*value*/>
 >;
 
@@ -422,15 +408,12 @@ const sortTabKeys = (a: string, b: string) => {
 
 const norm = (s?: any) => String(s ?? '').trim().toLowerCase();
 
-// если visible пустой/отсутствует — показываем поле (обратная
-// совместимость). поддерживаем рус/eng варианты.
 const isVisibleForRole = (visible: any, role?: string): boolean => {
     // нормализация роли
     const r = norm(role)
         .replace('оператор', 'operator')
         .replace('менеджер', 'manager');
 
-    // приведём visible к массиву строк (если был строкой)
     const arr = visible == null
         ? null                    // отсутствует → считаем «не задано»
         : (Array.isArray(visible) ? visible : [visible])
@@ -439,27 +422,21 @@ const isVisibleForRole = (visible: any, role?: string): boolean => {
                 .replace('менеджер', 'manager'))
             .filter(Boolean);
 
-    // НОВОЕ ПОВЕДЕНИЕ:
-    // 1) visible отсутствует (null/undefined) → показываем (обратная совместимость)
     if (arr === null) return true;
 
-    // 2) visible есть, но пустой массив/пустые строки → ЯВНО скрыть из UI
     if (arr.length === 0) return false;
 
-    // 3) '*' или 'all' → показываем всем
     if (arr.includes('*') || arr.includes('all')) return true;
 
-    // 4) если роли нет — по умолчанию не скрываем
     if (!r) return true;
 
-    // 5) показываем, если роль перечислена
     return arr.includes(r);
 };
 
-type ActivityLabel = string; // если у тебя там объект — заменишь тип
+type ActivityLabel = string;
 
 function useActivityPing(params: {
-    enabled: boolean;              // включать только когда мы реально "в карточке"
+    enabled: boolean;
     glagolParent: string;
     userName: string;
     activityLabels: ActivityLabel[];
@@ -502,7 +479,7 @@ function useActivityPing(params: {
         let scrollActiveMs = 0;
         let inputActiveMs  = 0;
 
-        const INTERVAL_MS        = 30_000; // длина интервала (30 сек, как в примере)
+        const INTERVAL_MS        = 30_000; // длина интервала (30 сек)
         const TICK_MS            = 1_000;  // шаг таймера
         const ACTIVE_TTL_SCROLL  = 2_000;  // считаем скролл "активным" 2 сек после события
         const ACTIVE_TTL_INPUT   = 2_000;  // и ввод тоже
@@ -537,7 +514,6 @@ function useActivityPing(params: {
         document.addEventListener("input", handleInput as any);
 
         const sendPing = (endTs: number) => {
-            // ❗ требования: не слать интервалы с window_active = 0
             if (windowActiveMs <= 0) {
                 windowActiveMs = scrollActiveMs = inputActiveMs = 0;
                 intervalStart = endTs;
@@ -557,13 +533,11 @@ function useActivityPing(params: {
                 activity_labels: labelsRef.current ?? [],
             };
 
-            // Если бэк повешен под /api/v1, просто поменяй путь на "/api/v1/activity/ping"
             axios.post("/api/v1/activity/ping", payload)
                 .catch(err => {
                     console.warn("activity/ping failed", err);
                 });
 
-            // сбрасываем счётчики на следующий интервал
             windowActiveMs = scrollActiveMs = inputActiveMs = 0;
             intervalStart = endTs;
         };
@@ -601,7 +575,6 @@ function useActivityPing(params: {
             document.removeEventListener("touchstart", handleInput);
             document.removeEventListener("input", handleInput as any);
 
-            // при размонтировании дольём остаток интервала
             if (enabled) {
                 const delta = endTs - lastTick;
                 const scrollActive = endTs - lastScrollTs < ACTIVE_TTL_SCROLL;
@@ -734,10 +707,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             }
         };
     }, []);
-// Универсальный поиск модулей по имени.
-// Ищем по filename (приоритет) или по button_name.
-// Сначала смотрим модуль конкретного проекта (если передан),
-// затем — во всех проектах monoModules, затем — в fallback `modules`.
     function findModulesForNames(names: string[], preferredProject?: string): ModuleData[] {
         const out: ModuleData[] = [];
         const seen = new Set<string>();
@@ -775,14 +744,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return out;
     }
 
-// Запуск модулей, указанных в onchange поля. С дебаунсом, чтобы не стрелять на каждый keypress.
     const ONCHANGE_DEBOUNCE_MS = 400;
 
     function triggerOnchangeModulesForField(
         proj: string,
         fieldId: string,
         f: MergedField,
-        nextValue: string // ⬅️ новое
+        nextValue: string
     ) {
         const names = f.onchangeByProject?.[proj] || [];
         if (!names.length) return;
@@ -796,7 +764,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             const mods = findModulesForNames(names, proj);
             if (!mods.length) return;
 
-            // ⬇️ «снимок» актуальных values + патч свежего значения поля
             const override: GroupFieldValues = {
                 [proj]: {
                     ...(valuesRef.current?.[proj] || {}),
@@ -841,18 +808,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
 
     function extractUploadedNames(up: any): string[] {
-        // 1) чаще всего сервер отдаёт массив объектов
         if (Array.isArray(up)) {
             return up.map((o: any) => o?.filename || o?.name || o?.storage_name).filter(Boolean);
         }
-        // 2) иногда заворачивают в поле data / result / uploaded
         const candidates = [up?.data, up?.result, up?.uploaded, up?.files, up?.storage];
         for (const c of candidates) {
             if (Array.isArray(c)) {
                 return c.map((o: any) => o?.filename || o?.name || o?.storage_name).filter(Boolean);
             }
         }
-        // 3) fallback: одиночный объект
         if (typeof up === 'object' && up?.filename) return [up.filename];
         return [];
     }
@@ -868,7 +832,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 try {
                     // upload
                     const fd = new FormData();
-                    bin.forEach(f => fd.append('files', f, f.name)); // имя файла не обязательно, но полезно
+                    bin.forEach(f => fd.append('files', f, f.name));
                     const { data: up } = await chatApi.post(
                         `/api/v1/storage/upload/${encodeURIComponent(guid)}`,
                         fd
@@ -876,16 +840,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     const storage = extractUploadedNames(up);
                     if (!storage.length) {
                         console.warn('upload ok, but no filenames in response:', up);
-                        // если бэк сам сразу привязывает — просто пинганём рефреш
                         window.dispatchEvent(new CustomEvent('contact-files:refresh', { detail: { guid } }));
                         return;
                     }
 
-                    // attach (если требуется явная привязка)
                     try {
                         await chatApi.post(`/api/v1/contacts/storage/add`, { guid, storage });
                     } catch (e: any) {
-                        // если файл уже привязан и бэк даёт 409/400 — не роняем цепочку
                         const code = e?.response?.status;
                         if (code !== 409 && code !== 400) throw e;
                     }
@@ -944,14 +905,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
     }, [activeTab, guidsFromOpened]);
 
-// 2) Лёгкий поллинг, пока открыта вкладка "Файлы" (например, раз в 60с)
     useEffect(() => {
         if (activeTab !== TAB_FILES) return;
         const id = window.setInterval(() => void refreshAllOpenedFiles(), 60000);
         return () => window.clearInterval(id);
     }, [activeTab, guidsFromOpened]);
 
-// 3) Глобальное событие — чтобы чат (или любой другой компонент) мог пингануть обновление
     useEffect(() => {
         const handler = (e: Event) => {
             const ce = e as CustomEvent<{ guid?: string }>;
@@ -963,9 +922,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return () => window.removeEventListener('contact-files:refresh', handler as EventListener);
     }, [guidsFromOpened]);
 
-    // const [selectedPhoneByField, setSelectedPhoneByField] = useState<
-    //     Record<string, { phone: string; project: string }>
-    // >({});
     const [selectedPhoneByField, setSelectedPhoneByField] = useState<Record<string,string>>({});
 
     const [runningModulesCount, setRunningModulesCount] = useState(0);
@@ -996,7 +952,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
 
     const activityLabels = useMemo(() => {
-        // какие поля вообще хотим использовать (обычно ["group_factor_1", "group_factor_2"])
         const keys = new Set<string>();
 
         projectPool.forEach((p: any) => {
@@ -1012,7 +967,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         const firstContact = openedPhones && openedPhones.length ? openedPhones[0] : null;
         const values = new Set<string>();
 
-        // если нет контактов — просто ничего не шлём
         if (!firstContact) {
             return [];
         }
@@ -1023,7 +977,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
             let value: any = (firstContact as any)[key];
 
-            // пробуем ещё и в contact_info
             if (
                 (value === undefined || value === null || value === '') &&
                 firstContact.contact_info &&
@@ -1032,7 +985,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 value = firstContact.contact_info[key];
             }
 
-            // если значение есть — кладём в labels только его
             const str = String(value ?? '').trim();
             if (str) {
                 values.add(str);
@@ -1042,42 +994,34 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return Array.from(values);
     }, [projectPool, selectedProjects, openedPhones]);
 
-    // считаем, что "мы в карточке", когда:
-    //  - есть активный звонок, или
-    //  - идёт постобработка, или
-    //  - открыт tuskMode с openedPhones
     const activityEnabled =
         Boolean(hasActiveCall || postActive || (tuskMode && openedPhones && openedPhones.length));
 
     useActivityPing({
         enabled: activityEnabled,
         glagolParent,
-        // тут как раз "1000" — чаще всего это sipLogin
         userName: sipLogin || worker,
         activityLabels: activityLabels,
     });
 
-    // у поля есть таб для конкретного проекта?
     function fieldHasTabForProject(f: MergedField, proj: string): boolean {
         const tk = f.tabsByProject?.[proj];
         return tk != null && String(tk).trim() !== '';
     }
 
-// поле — «остаток», если для НИ ОДНОГО из выбранных проектов таб не задан
     function isFieldLeftover(f: MergedField): boolean {
         let hasAnySelected = false;
         for (const p of f.projects) {
             if (!selectedProjects.includes(p)) continue;
             hasAnySelected = true;
-            if (fieldHasTabForProject(f, p)) return false; // есть вкладка — уже не остаток
+            if (fieldHasTabForProject(f, p)) return false;
         }
-        return hasAnySelected; // есть пересечение с выбранными, но ни одного таба
+        return hasAnySelected;
     }
     useEffect(() => {
         runningModulesCountRef.current = runningModulesCount;
     }, [runningModulesCount]);
 
-// есть ли вообще поля-остатки для текущих selectedProjects
     const hasLeftovers = useMemo(
         () => mergedFields.some(isFieldLeftover),
         [mergedFields, selectedProjects]
@@ -1102,7 +1046,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             setSelectedProjects(groupProjects)
         }
     },[activeProject, call, groupProjects])
-// ---- Стабильная сортировка модулей ----
     function moduleComparator(a: ModuleData, b: ModuleData) {
         // 1) сначала manual, потом всё остальное
         const aManual = a.start_modes?.includes('manual') ? 0 : 1;
@@ -1114,7 +1057,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         const bCommon = b.common_code ? 0 : 1;
         if (aCommon !== bCommon) return aCommon - bCommon;
 
-        // 3) явная позиция, если есть (чем меньше — тем раньше)
+        // 3) явная позиция, если есть
         const aPos = Number.isFinite((a as any).position) ? Number((a as any).position) : Number.POSITIVE_INFINITY;
         const bPos = Number.isFinite((b as any).position) ? Number((b as any).position) : Number.POSITIVE_INFINITY;
         if (aPos !== bPos) return aPos - bPos;
@@ -1125,7 +1068,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return aName.localeCompare(bName, 'ru');
     }
 
-    /** Нормализация monoModules: всегда отдаём объект и сортируем модули в каждом проекте */
     function normalizeMono(mm?: MonoProjectsModuleData): MonoProjectsModuleData {
         if (!mm || typeof mm !== 'object') return {};
         const out: MonoProjectsModuleData = {};
@@ -1174,10 +1116,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return projectPool.filter(project => (project.out_active && project.active)).map(project => project.project_name);
     }, [projectPool]);
 
-    // Активные звонки (из redux)
+    // Активные звонки
     // const hasActiveCall = Array.isArray(activeCalls) ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
 
-    // Логика «постобработки»
     const POST_LIMIT = worker.includes('fs@akc24.ru') ? 12000 : 1200;
     const [postSeconds, setPostSeconds] = useState(POST_LIMIT);
 
@@ -1187,7 +1128,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const prevCallRef = useRef<ActiveCall | null>(null);
 
-// useEffect для openedPhones в tuskMode
     useEffect(() => {
         if (openedPhones && openedPhones.length) {
             const projects = Array.from(new Set(openedPhones.map(p => p.project)));
@@ -1218,7 +1158,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     }, [openedPhones, tuskMode, sessionKey, worker, isClient, selectedProjects]);
 
 
-// useEffect для входящего звонка
     useEffect(() => {
         if (activeCalls[0]?.direction === "inbound" && activeProject) {
             socket.emit("get_project_fields", {
@@ -1229,7 +1168,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
     }, [activeCalls, activeProject, sessionKey, worker]);
 
-// useEffect для постобработки или завершённого звонка
     useEffect(() => {
         if (!hasActiveCall && !postActive && call?.project_name) {
             const projectNames = Object.keys(call.projects).map((proj => cleanProjectName(proj)));
@@ -1318,10 +1256,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             if ((selectedProjects.length && !selectedProjects.includes(projName)) || !selectedProjects.length) return;
 
             fields.forEach(f => {
-                // ВСЕГДА добавляем в "все поля"
                 push(mapAll, projName, f);
 
-                // В UI добавляем только если поле видно для роли
                 if (isVisibleForRole((f as any).visible, role)) {
                     push(mapUi, projName, f);
                 }
@@ -1331,11 +1267,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         const all = Array.from(mapAll.values());
         const ui  = Array.from(mapUi.values());
 
-        setMergedFieldsAll(all);  // «под капотом» для модулей/сохранения
-        setMergedFields(ui);      // только то, что рендерим
+        setMergedFieldsAll(all);
+        setMergedFields(ui);
 
-            // Инициализируем пустые значения сразу для всех выбранных проектов
-            const init: GroupFieldValues = { ...values }; // не пустой, а текущий
+            const init: GroupFieldValues = { ...values };
             if (selectedProjects.length) {
                 selectedProjects.forEach(p => {
                     if (!init[p]) {
@@ -1345,7 +1280,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             }
 
             if (call && momoProjectRepo && momoProjectRepo.current) {
-                // 1) InitKwargs — копируем base_fields всех проектов
                 type InitKwargs = {
                     [K in keyof ProjectsMap]: ProjectsMap[K]['base_fields']
                 };
@@ -1356,19 +1290,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     },
                     {} as InitKwargs
                 );
-                // if (!manualCallRef.current) {
                     setValues(initKwargs);
-                // }
 
 
-                // 2) Берём первый проект, чтобы инициализировать причину/результат/комментарий
                 const firstProject   = Object.values(call.projects)[0];
                 const projNames = Object.keys(call.projects)
                 const rawReasonId    = firstProject.call_reason;
                 const rawResultId    = firstProject.call_result;
                 const rawComment     = firstProject.comment || '';
 
-                // 3) Находим в списках по id и project_name нужные объекты, достаём .name
                 const reasonItem = callReasons.find(r =>
                     String(r.id) === String(rawReasonId)
                 );
@@ -1394,14 +1324,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 );
             }
 
-            // При необходимости, мы также обновляем basicFields, чтобы в tuskMode
-            // можно было опираться на них, если вам нужны оба набора полей:
         }
 
-// ✅ Правильная инициализация значений:
 
     useEffect(() => {
-        // if (!tuskMode) return;
 
         socket.on("project_fields", handleProjectFields);
         return () => {
@@ -1425,7 +1351,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     useEffect(() => {
         if (hasActiveCall) {
-            // Очистка полей формы, как и раньше
             setCallReason('');
             setCallResult('');
             setComment('');
@@ -1469,7 +1394,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     function cleanProjectName(name?: string | null): string {
         const _name = name ?? '';
         return _name
-            // убираем скобки "(…)" и суффикс "@default"
             .replace(/(\s*\(.*?\)|@default)\s*$/g, '')
             .trim();
     }
@@ -1496,13 +1420,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
     }, [call, hasActiveCall, postActive]);
 
-    // Обработка ответа сервера для "get_modules"
     useEffect(() => {
-        // setModules([]);
-        // startModulesRanRef.current = false;
         const handleModules = (data: any) => {
             if (data && typeof data === 'object' && setMonoModules) {
-                setMonoModules(normalizeMono(data)); // <— было: setMonoModules(data)
+                setMonoModules(normalizeMono(data));
             }
         };
 
@@ -1539,7 +1460,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     useEffect(() => {
         if (runningModulesCount > 0) {
             if (!swalRef.current) {
-                // Открываем новый Swal и сохраняем промис в ref
                 swalRef.current = Swal.fire({
                     title: 'Выполняются модули',
                     html: `Осталось <strong>${runningModulesCount}</strong> модулей`,
@@ -1566,7 +1486,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
     }, [runningModulesCount]);
 
-// добавил четвёртый аргумент options с флагом manual
     const handleModuleRun = (
         mod: ModuleData,
         common_code?: false,
@@ -1580,7 +1499,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         const manual = Boolean(options?.manual);
 
-        // 1) Определяем список проектов (как было)
         const projectList: string[] = mod.common_code || tuskMode
             ? Object.entries(monoModules)
                 .filter(([_, mods]) => mods.some(m => m.filename === mod.filename))
@@ -1603,7 +1521,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             const projectMod = monoModules[project].find(m => m.filename === mod.filename) || mod;
             const specKwargs = projectMod.kwargs || {};
 
-            // ⬇️ берём актуальные values с учётом override
             const fieldMap =
                 (options?.overrideValues?.[project]) ||
                 (valuesRef.current?.[project]) ||
@@ -1663,7 +1580,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         value = commentRef.current || '';
                         break;
                     default:
-                        // ⬇️ главное: берём из актуальной карты полей
                         value = fieldMap[key] || '';
                 }
 
@@ -1696,18 +1612,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     };
 
 
-    //
-// Слушаем ответы от run_module и распределяем значения по проектам
     useEffect(() => {
         const handleModuleResult = (...args: any[]) => {
-            // 1) вытаскиваем первый объектный аргумент
             const raw: Record<string, any> | undefined = args.find(a => typeof a === 'object' && a !== null);
             if (!raw) return;
 
-            // 2) сразу собираем алерты из всех мест (корень + spec + вложенности)
             const alerts = collectAlerts(raw);
             alerts.forEach(a => enqueueAlert(a, swalRef));
-            // 2.1) целевая "дырка" через destination
             const dst = String((raw as any)?.destination ?? (raw as any)?.spec?.destination ?? '').toLowerCase();
             if (dst === 'comment' || dst === 'call_result' || dst === 'call_reason') {
                 const v =
@@ -1720,20 +1631,17 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 else if (dst === 'call_reason') setCallReasonByAny(v);
 
                 setRunningModulesCount(prev => Math.max(0, prev - 1));
-                return; // дальше не маппим поля — целевое назначение уже обработали
+                return;
             }
 
 
-            // 3) тикаем счётчик прогресса
             setRunningModulesCount(prev => Math.max(0, prev - 1));
 
-            // 4) для применения значений по полям работаем в первую очередь со spec (если он есть)
             const dataObj = raw;
             const core = (dataObj && typeof dataObj === 'object' && typeof dataObj.spec === 'object')
                 ? dataObj.spec
                 : dataObj;
 
-            // несколько различных форматов, которые уже были — оставляем, но кормим их "core"
             if ('project_name' in dataObj && 'result' in dataObj && tuskMode) {
                 const project = dataObj.project_name as string;
                 const result  = dataObj.result || {};
@@ -1748,7 +1656,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 return;
             }
 
-            // карта проектов → объекты — (когда приходит множество проектов)
             if (core && typeof core === 'object' &&
                 Object.values(core).length > 0 &&
                 Object.values(core).every(v => typeof v === 'object' && v !== null && !Array.isArray(v))) {
@@ -1765,7 +1672,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 return;
             }
 
-            // плоский ответ с полями (теперь — чаще это core === spec)
             let project = activeProject;
             if (tuskMode) {
                 const fieldKeys = Object.keys(core || {});
@@ -1779,7 +1685,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             }
 
             Object.entries(core || {}).forEach(([fieldKey, value]) => {
-                // игнорируем служебные ключи, чтобы не портить значения
                 if (fieldKey === 'msg' || fieldKey === 'alert' || fieldKey === 'title' || fieldKey === 'text' || fieldKey === 'type' || fieldKey === 'destination') return;
 
                 let v: string;
@@ -1808,7 +1713,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
 
     function applyFieldUpdate(project: string, fieldKey: string, v: string) {
-        // не заливаем служебные ключи в базовые поля
         if (fieldKey === 'alert' || fieldKey === 'title' || fieldKey === 'text' || fieldKey === 'type' || fieldKey === 'destination') {
             return;
         }
@@ -1840,7 +1744,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const startModules = useMemo<ModuleData[]>(() => {
         if (monoModules) {
-            // flatten всех модулей из monoModules
             return Object.values(monoModules)
                 .flat()
                 .filter(mod =>
@@ -1874,10 +1777,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
     }, [monoModules, modules]);
     useEffect(() => {
-        // если уже запустили — не запускаем снова
         if (startModulesRanRef.current) return;
 
-        // 1) активный звонок
         if (startModules.length && (hasActiveCall || call)) {
             setRunningModulesCount(startModules.length)
             startModules.forEach(mod => handleModuleRun(mod, false, undefined, { manual: true }));
@@ -1885,7 +1786,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             return;
         }
 
-        // 2) таск-мод: карточка открыта (есть openedPhones), но колл не активен и не в пост-моде
         const countPhones = openedPhones?.length ?? 0;
         if (startModules.length && tuskMode && countPhones > 0 && !postActive) {
             setRunningModulesCount(startModules.length)
@@ -1895,21 +1795,18 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     }, [
         hasActiveCall,
         tuskMode,
-        // смотрим на сам массив, а не на length — тогда зависимость сработает и при смене проекта
         openedPhones,
         postActive,
         startModules,
         handleModuleRun,
     ]);
 
-// когда звонок кончается — сбрасываем флаг, чтобы при следующем звонке стартеры снова сработали
 //     useEffect(() => {
 //         if (!hasActiveCall) {
 //             startModulesRanRef.current = false;
 //         }
 //     }, [hasActiveCall]);
 
-    // Логика постобработки (если звонок завершён)
     useEffect(() => {
         const prevCall = prevCallRef.current;
         const thisCall = hasActiveCall ? activeCalls[0] : null;
@@ -1966,7 +1863,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         setBaseFieldValues({});
     };
 
-    // Функции управления активным вызовом: удержание и завершение
     const handleHold = (activeCall: ActiveCall) => {
         const currentUUID = activeCall?.call_uuid;
         if (!currentUUID) return;
@@ -2375,12 +2271,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         openedPhones: Array<{ phone: string; project: string }>
     ): string[] => {
         if (!openedPhones?.length) return [];
-        // Извлекаем все project и убираем дубликаты
         const projectsSet = new Set(openedPhones.map(p => p.project));
         return Array.from(projectsSet);
     };
 
-    // Группируем телефоны: phoneGroups
     const phoneGroups = useMemo(() => {
         const map = new Map<
             string,
@@ -2400,7 +2294,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             }
 
             map.get(ph.phone)!.entries.push({
-                id: ph.id, // добавляем id
+                id: ph.id,
                 project: ph.project,
                 contact_info: ph.contact_info || {},
             });
@@ -2409,7 +2303,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return Array.from(map.values());
     }, [openedPhones]);
 
-// Строим карту вариантов для каждого поля
     const contactInfoVariants = useMemo(() => {
         const result: Record<string, Set<string>> = {};
         phoneGroups.forEach(group => {
@@ -2516,7 +2409,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const manualCallRef = useRef<boolean>(false)
     const handleCloseCard = () => {
-        // ровно то же поведение, что у твоих крестиков в карточках
         setOpenedPhones?.([]);
         setOpenedGroup?.([]);
         setPhonesData?.([]);
@@ -2528,7 +2420,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             setTuskMode(false);
         }
 
-        // на случай выбранного звонка
         setSelectedCall(null);
 
         normalizeUrl();
@@ -2579,7 +2470,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                   </span>
                 </button>
 
-                {/* Первая карточка: свободный ввод номера */}
                 <div
                     key="manual-entry"
                     style={{
@@ -2794,7 +2684,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             const isHeld = sc.callstate === 'HELD' || sc.b_callstate === 'HELD';
             const iconName = isHeld ? 'play_arrow' : 'pause';
             const iconColor = sc.direction === 'outbound' ? '#f26666' : '#7cd420';
-            // Вычисляем длительность второго звонка (в секундах)
             // const secondCallDuration = Math.floor(
             //     (Date.now() - new Date(sc.b_created).getTime()) / 1000
             // );
@@ -2918,7 +2807,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         //     return null;
         // }
 
-        // если совсем нет модулей
         const allCount =
             // tuskMode ?
                 Object.values(monoModules || {}).flat().length
@@ -3022,7 +2910,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     };
 
     const renderActionDock = () => {
-        // показываем док, если вообще есть что нажимать
         const manualCommon = commonModules.filter(m => m.start_modes?.includes('manual'));
         const manualByProject = Object.fromEntries(
             Object.entries(projectModules).map(([proj, mods]) => [
@@ -3063,7 +2950,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'flex-end',
-            pointerEvents: 'none', // кликабельно только то, что внутри с 'auto'
+            pointerEvents: 'none',
         };
         const fab: React.CSSProperties = {
             pointerEvents: 'auto',
@@ -3080,7 +2967,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             transition: 'transform .15s ease',
         };
         const panel: React.CSSProperties = {
-            pointerEvents: dockOpen ? 'auto' : 'none', // <-- ключевая правка
+            pointerEvents: dockOpen ? 'auto' : 'none',
             width: 360,
             maxWidth: '90vw',
             maxHeight: '60vh',
@@ -3183,7 +3070,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 delayedClose();
                             }}
                             title="Получить следующую задачу"
-                            // если хочешь, можно блокировать при активном звонке:
                             // disabled={hasActiveCall}
                         >
                             <span
@@ -3380,8 +3266,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             </div>
         )
     }
-// в начале компонента
-// map: fieldId → массив всех найденных { phone, project, value }
     const contactInfoOptions = useMemo(() => {
         const result: Record<string, Array<{ phone: string; project: string; value: string }>> = {};
         (openedPhones || []).forEach(ph => {
@@ -3396,27 +3280,20 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         });
         return result;
     }, [openedPhones]);
-    useEffect(() => console.log("contactInfoOptions: ", contactInfoOptions),[contactInfoOptions])
-// вот этот эффект надо добавить **после** объявления contactInfoOptions и перед return(...)
+
     useEffect(() => {
-        // 1) сброс
         // setValues({});
 
-        // если ничего не открыто — дальше не инициализируем
         if (!openedPhones?.length) return;
 
-        // 2) заполняем заново
         const next: GroupFieldValues = {};
-        // у нас selectedProjects уже содержит нужный набор проектов
         selectedProjects.forEach(proj => {
             next[proj] = {};
         });
 
-        // для каждого поля смотрим, есть ли ровно одна уникальная value
         Object.entries(contactInfoOptions).forEach(([fieldId, opts]) => {
             const uniq = Array.from(new Set(opts.map(o => o.value).filter(v => v !== '')));
             if (uniq.length === 1) {
-                // единственный вариант — распихиваем по всем проектам
                 selectedProjects.forEach(proj => {
                     next[proj][fieldId] = uniq[0];
                 });
@@ -3430,11 +3307,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     useEffect(() => {
         if (!openedPhones?.length) return;
 
-        // значения считаем по ВСЕМ полям
         const nextValues: GroupFieldValues = {};
         selectedProjects.forEach(proj => { nextValues[proj] = { ...(values[proj] || {}) }; });
 
-        // выбранные опции для дропдаунов — только для видимых полей
         const nextSelected: Record<string, string> = {};
 
         mergedFieldsAll.forEach(f => {
@@ -3470,26 +3345,18 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         setSelectedPhoneByField(nextSelected);
     }, [contactInfoOptions, selectedProjects, openedPhones, mergedFieldsAll, mergedFields]);
 
-    // Делаем ТОЛЬКО если у нас уже есть openedPhones и выбранные проекты
-// вверху компонента, рядом с другими useEffects
     useEffect(() => {
-        // если нет телефонов – ничего не делаем
         if (!openedPhones?.length) return;
 
-        // клонируем текущее состояние, чтобы не затирать старые данные
         const nextValues: GroupFieldValues = { ...values };
 
-        // пройдём по всем полям, для которых есть contact_info
         Object.entries(contactInfoOptions).forEach(([fieldId, opts]) => {
-            // отфильтруем только те варианты, у которых value непустая строка
             const vals = opts.map(o => o.value).filter(v => v !== '');
             const uniq = Array.from(new Set(vals));
 
-            // если для этого fieldId ровно 1 вариант – подставляем его во все проекты
             if (uniq.length === 1) {
                 const single = uniq[0];
                 selectedProjects.forEach(proj => {
-                    // инициализируем подпроект, если ещё нет
                     if (!nextValues[proj]) nextValues[proj] = {};
                     nextValues[proj][fieldId] = single;
                 });
@@ -3513,24 +3380,19 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 //         return arr;
 //     }, [mergedFields, selectedProjects, hasFiles]);
 
-// TABS: корректно переключаемся, учитывая «Остатки»
     useEffect(() => {
         const defaultTab = computeDefaultTab();
 
-        // 1) текущая вкладка исчезла (и это не Остатки/Файлы) — идём на дефолт
         if (activeTab !== TAB_ALL && activeTab !== TAB_FILES && !availableTabs.includes(activeTab)) {
             setActiveTab(defaultTab);
             return;
         }
 
-        // 2) были «Остатки», но их больше нет — идём на дефолт
         if (activeTab === TAB_ALL && !hasLeftovers) {
             setActiveTab(defaultTab);
             return;
         }
 
-        // 3) сейчас открыты ФАЙЛЫ, но появилась «левая» вкладка — переключаемся,
-        //    НО только если пользователь сам ещё не выбирал вкладку.
         if (!userPickedTab.current && activeTab === TAB_FILES && defaultTab !== TAB_FILES) {
             setActiveTab(defaultTab);
         }
@@ -3543,8 +3405,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     }, [availableTabs, hasLeftovers]);
     const tabLabel = (key: string) => key === TAB_ALL ? TAB_ALL_LABEL : key === TAB_FILES ? TAB_FILES_LABEL : key;
 
-// TABS: проверка, входит ли поле в активную вкладку (учитывая проект)
-// TABS: проверка, входит ли поле в активную вкладку (учитывая проект)
     const fieldInActiveTab = (f: MergedField, proj?: string) => {
         if (activeTab === TAB_FILES) return false;
 
@@ -3566,14 +3426,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         );
     };
 
-// TABS: отфильтрованный список полей
     const filteredMergedFields = useMemo(() => {
         if (activeTab === TAB_FILES) return [];
         if (activeTab === TAB_ALL) return mergedFields.filter(isFieldLeftover);
         return mergedFields.filter(f => fieldInActiveTab(f));
     }, [mergedFields, activeTab, selectedProjects]);
 
-// ⬇️ И САМЫЕ ВАЖНЫЕ заменители старых вычислений:
     const commonFields = filteredMergedFields.filter(f => f.projects.length > 1);
 
     const uniqueFieldsByProject: Record<string, MergedField[]> = {};
@@ -3599,7 +3457,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         distinctValueSets: string[];
         combos: PhoneCombo[];
     } {
-        // 1) забираем все тройки {phone,project,value}
         const items = f.projects.flatMap(proj => {
             const id = f.fieldIds[proj];
             return (contactInfoOptions[id] || [])
@@ -3607,7 +3464,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 .filter(x => x.value);
         });
 
-        // 2) группируем по телефону
         const byPhone: Record<string, { values: string[]; projects: string[] }> = {};
         items.forEach(({ phone, project, value }) => {
             if (!byPhone[phone]) {
@@ -3617,7 +3473,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             byPhone[phone].projects.push(project);
         });
 
-        // 3) собираем combos уже с projects
         const combos: PhoneCombo[] = Object.entries(byPhone).map(
             ([phone, { values, projects }]) => {
                 const uniqVals = Array.from(new Set(values));
@@ -3631,7 +3486,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             }
         );
 
-        // 4) distinctValueSets
         const distinctValueSets = Array.from(
             new Set(combos.map(c => c.values.join(', ')))
         );
@@ -3796,7 +3650,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                                 });
                                                                                 return next;
                                                                             });
-                                                                            // ← onchange-триггеры
                                                                             f.projects.forEach(proj => {
                                                                                 const fid = f.fieldIds[proj];
                                                                                 triggerOnchangeModulesForField(proj, fid, f, joinedValues);
@@ -4024,20 +3877,16 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                 key="__orphans__"
                                                                 style={{
                                                                     gridColumn: 'span 12',
-                                                                    border: '1px solid #ccc',          // как у групп (можешь поменять на dashed)
+                                                                    border: '1px solid #ccc',
                                                                     borderRadius: 4,
                                                                     padding: 8,
                                                                     display: 'grid',
                                                                     gridTemplateColumns: 'repeat(12, minmax(0,1fr))',
                                                                     alignItems: 'start',
-                                                                    gap: '0 16px',                      // такой же горизонтальный шаг
+                                                                    gap: '0 16px',
                                                                     marginBottom: 16,
                                                                 }}
                                                             >
-                                                                {/*/!* Заголовок блока (если не нужен — удали этот div) *!/*/}
-                                                                {/*<div style={{ gridColumn: '1 / -1', fontWeight: 600, marginBottom: 8 }}>*/}
-                                                                {/*    Без группы*/}
-                                                                {/*</div>*/}
 
                                                                 {orphanFields.map((f: MergedField) => {
                                                                     const fieldId = f.fieldIds[proj];
@@ -4126,7 +3975,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                             options: sortedCallResults
                                         }
                                     ]
-                                        // Оставляем только те, у которых есть опции
                                         .filter(({ options }) => options && options.length > 0)
                                         .map(({ label, value, onChange, options }, idx) => (
                                             <div

@@ -13,10 +13,8 @@ import styles from "./style.module.css";
 
 export type Role = "client" | "operator" | "manager";
 
-/* ===== ЛЕГАСИ-СКАЧИВАНИЕ через my.glagol.ai/get_cc_files ===== */
 const DOWNLOAD_HOST = "https://my.glagol.ai";
 
-/** host[:port]/chat из data-* (без протокола), чтобы собрать get_cc_files */
 function readSocketHostForDownloads(): string {
     const el = document.getElementById("root") as HTMLElement | null;
     let raw =
@@ -32,7 +30,6 @@ function readSocketHostForDownloads(): string {
 
     try {
         const u = new URL(raw);
-        // берём только host и приклеиваем /chat ровно один раз
         return `${u.host}/chat`;
     } catch {
         const noProto = raw.replace(/^[a-zA-Z][\w+.-]*:\/\//, "");
@@ -42,14 +39,12 @@ function readSocketHostForDownloads(): string {
 }
 const SOCKET_HOST = readSocketHostForDownloads();
 
-/** https://my.glagol.ai/get_cc_files/{SOCKET_HOST}/{guid}/{filename} */
 function buildDownloadUrl(hostOnly: string, guid: string, filename: string) {
     const encFile = encodeURIComponent(filename);
     const encGuid = encodeURIComponent(guid);
     return `${DOWNLOAD_HOST}/get_cc_files/${hostOnly}/${encGuid}/${encFile}`;
 }
 
-/* ===== НОВОЕ ПРЕВЬЮ через fs_server (Redux + data-fs-server) ===== */
 function readFilesApiBaseFallback(): string {
     const el = document.getElementById("root") as HTMLElement | null;
     let raw = (
@@ -69,7 +64,6 @@ function trimRightSlashes(s: string) {
     return s.replace(/\/+$/, "");
 }
 
-/** /api/v1/download/<guid>/<filename> — inline с корректным Content-Type */
 function buildPreviewUrl(filesApiBase: string, guid: string, filename: string) {
     return `${trimRightSlashes(filesApiBase)}/api/v1/download/${encodeURIComponent(
         guid
@@ -88,12 +82,11 @@ async function openPdfPreview(urlPreview: string, urlDownload: string) {
         window.open(blobUrl, "_blank", "noopener,noreferrer");
         setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
     } catch {
-        // Фолбэк — старое скачивание
+
         window.open(urlDownload, "_blank", "noopener,noreferrer");
     }
 }
 
-/* ===== Хелперы ===== */
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif"];
 const extOf = (name: string) => (name.split(".").pop() || "").toLowerCase();
 const isImageName = (name: string) => IMAGE_EXTS.includes(extOf(name));
@@ -194,7 +187,6 @@ function displayReader(login: string, dict?: Record<string, string>) {
     return dict?.[login] || login;
 }
 
-/* ===== Лайтбокс для картинок ===== */
 type LightboxItem = { url: string; title?: string };
 
 function Lightbox({
@@ -348,7 +340,6 @@ export default function LocalChat({
     const isControlled = Array.isArray(messages);
     const [internal, setInternal] = useState<UiMessage[]>(initialMessages);
 
-    // Берём fs_server из Redux (snake_case + camelCase во всех типичных ветках)
     const fsServerFromRedux = useSelector((state: any) =>
         state?.common?.fs_server ?? state?.common?.fsServer ??
         state?.app?.fs_server ?? state?.app?.fsServer ??
@@ -356,7 +347,6 @@ export default function LocalChat({
         state?.settings?.fs_server ?? state?.settings?.fsServer
     ) as string | undefined;
 
-    // Нормализуем базу; если её нет — превью отключим и вернёмся к старому скачиванию.
     const filesApiBase = useMemo(() => {
         const fromRedux = typeof fsServerFromRedux === "string" ? fsServerFromRedux.trim() : "";
         const base = fromRedux || readFilesApiBaseFallback();
@@ -444,7 +434,7 @@ export default function LocalChat({
         () => () => {
             pendingUrls.forEach((u) => URL.revokeObjectURL(u));
         },
-        [] // cleanup on unmount
+        []
     );
 
     async function sendNow() {
@@ -545,7 +535,6 @@ export default function LocalChat({
                                             ? `Прочитано: ${readersExceptAuthor.map((r) => displayReader(r, operatorDict)).join(", ")}`
                                             : "";
 
-                                        // список картинок для лайтбокса
                                         const messageImageItems: LightboxItem[] = (m.attachments || [])
                                             .filter((att) => (att.file?.type ? att.file.type.startsWith("image/") : isImageName(att.name)))
                                             .map((att) => ({
@@ -569,9 +558,9 @@ export default function LocalChat({
                                                 >
                                                     {direction === "incoming" && name && (
                                                         <Message.Header>
-                              <span className="small" style={{ fontWeight: 600 }}>
-                                {name}
-                              </span>
+                                                            <span className="small" style={{ fontWeight: 600 }}>
+                                                                {name}
+                                                            </span>
                                                         </Message.Header>
                                                     )}
 
@@ -609,22 +598,22 @@ export default function LocalChat({
                                                                                         key={a.id}
                                                                                         style={{ display: "inline-flex", gap: 6, alignItems: "center" }}
                                                                                     >
-                                            <button
-                                                type="button"
-                                                className={`${styles.fileChip} badge bg-secondary`}
-                                                title={`Просмотр: ${a.name}`}
-                                                onClick={() =>
-                                                    setLb({
-                                                        items: messageImageItems.length
-                                                            ? messageImageItems
-                                                            : [{ url: urlPreview, title: a.name }],
-                                                        index: idx >= 0 ? idx : 0,
-                                                    })
-                                                }
-                                                style={{ cursor: "zoom-in" }}
-                                            >
-                                              <span className={styles.fileChipText}>{a.name}</span>
-                                            </button>
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            className={`${styles.fileChip} badge bg-secondary`}
+                                                                                            title={`Просмотр: ${a.name}`}
+                                                                                            onClick={() =>
+                                                                                                setLb({
+                                                                                                    items: messageImageItems.length
+                                                                                                        ? messageImageItems
+                                                                                                        : [{ url: urlPreview, title: a.name }],
+                                                                                                    index: idx >= 0 ? idx : 0,
+                                                                                                })
+                                                                                            }
+                                                                                            style={{ cursor: "zoom-in" }}
+                                                                                        >
+                                                                                          <span className={styles.fileChipText}>{a.name}</span>
+                                                                                        </button>
 
                                                                                         {!isLocal && (
                                                                                             <a
@@ -639,7 +628,7 @@ export default function LocalChat({
                                                                                                 ⬇
                                                                                             </a>
                                                                                         )}
-                                          </span>
+                                                                                    </span>
                                                                                 );
                                                                             }
 
@@ -671,11 +660,10 @@ export default function LocalChat({
                                                                                                 ⬇
                                                                                             </a>
                                                                                         )}
-                                          </span>
+                                                                                    </span>
                                                                                 );
                                                                             }
 
-                                                                            // всё остальное — сразу скачивание старым способом
                                                                             return (
                                                                                 <a
                                                                                     key={a.id}
@@ -697,14 +685,14 @@ export default function LocalChat({
                                                     )}
 
                                                     <Message.Footer>
-                            <span
-                                className="text-muted small"
-                                style={{ display: "inline-block", marginLeft: "auto" }}
-                                title={readTooltip || undefined}
-                            >
-                              {ruTime(cur)}
-                                {direction === "outgoing" && isReadByOthers ? " · ✓" : ""}
-                            </span>
+                                                        <span
+                                                            className="text-muted small"
+                                                            style={{ display: "inline-block", marginLeft: "auto" }}
+                                                            title={readTooltip || undefined}
+                                                        >
+                                                          {ruTime(cur)}
+                                                            {direction === "outgoing" && isReadByOthers ? " · ✓" : ""}
+                                                        </span>
                                                     </Message.Footer>
                                                 </Message>
                                             </div>
@@ -715,7 +703,6 @@ export default function LocalChat({
                         </MainContainer>
                     </div>
 
-                    {/* инпут */}
                     <div className={`p-2 border-top ${styles.inputRow} ${isDragging ? styles.inputRowDragging : ""}`}>
                         <input
                             ref={fileRef}

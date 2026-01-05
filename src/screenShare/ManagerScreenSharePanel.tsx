@@ -1,10 +1,10 @@
-// src/screenShare/ManagerScreenSharePanel.tsx
 import React, { useEffect, useRef, useCallback } from "react";
+import { useSelector } from "react-redux";
+import type { RootState } from "../redux/store";
 import { useSip } from "../context/SipContext";
 import { useScreenShareViewer } from "./useScreenShareViewer";
 import { VideoTile } from "./VideoTile";
 import { socket } from "../socket";
-import { store } from "../redux/store";
 
 const LoadingTile: React.FC<{ text: string; sub?: string }> = ({ text, sub }) => {
     return (
@@ -49,9 +49,10 @@ export const ManagerScreenSharePanel: React.FC = () => {
     const { userAgent, enabled } = useSip();
     const { status, error, videoStreams, joinRoom, leaveRoom } = useScreenShareViewer({ ua: userAgent });
 
-    const { sipLogin, sessionKey, worker } = (store.getState() as any).credentials || {};
+    const { sipLogin, sessionKey, worker } = useSelector((s: RootState) => (s as any).credentials || {});
 
     const lastRoomRef = useRef<string | null>(null);
+
     const pickRoomId = (p?: any): string =>
         String(p?.room_id || p?.room || p?.roomId || p?.session_uuid || p?.uuid || "").trim();
 
@@ -80,6 +81,9 @@ export const ManagerScreenSharePanel: React.FC = () => {
 
             const normRoom = room.trim();
             lastRoomRef.current = normRoom;
+
+            if (!userAgent) return;
+
             void joinRoom(normRoom);
         };
 
@@ -97,7 +101,16 @@ export const ManagerScreenSharePanel: React.FC = () => {
             socket.off("screen_share:start", onStart);
             socket.off("screen_share:stop", onStop);
         };
-    }, [sipLogin, sessionKey, joinRoom, leaveRoom, enabled]);
+    }, [sipLogin, sessionKey, joinRoom, leaveRoom, enabled, userAgent]);
+
+    useEffect(() => {
+        if (!enabled) return;
+        if (!userAgent) return;
+        const rid = (lastRoomRef.current || "").trim();
+        if (!rid) return;
+        if (status !== "idle" && videoStreams.length) return;
+        void joinRoom(rid);
+    }, [enabled, userAgent, joinRoom, status, videoStreams.length]);
 
     const handleManualStop = useCallback(() => {
         const room = lastRoomRef.current;
@@ -112,8 +125,7 @@ export const ManagerScreenSharePanel: React.FC = () => {
 
     const hasVideo = videoStreams.length > 0;
 
-    const showWaitingTile =
-        status === "connecting" || (status === "connected" && !hasVideo);
+    const showWaitingTile = status === "connecting" || (status === "connected" && !hasVideo);
 
     return (
         <div className="card mt-3">
@@ -121,11 +133,11 @@ export const ManagerScreenSharePanel: React.FC = () => {
                 <div className="d-flex justify-content-between align-items-center mb-2">
                     <h6 className="mb-0">Просмотр экранов операторов</h6>
                     <div className="d-flex align-items-center gap-2">
-            <span className="badge bg-secondary">
-              {status === "idle" && "нет подключения"}
-                {status === "connecting" && "подключение…"}
-                {status === "connected" && (hasVideo ? "видео получено" : "ожидаем видео…")}
-            </span>
+                        <span className="badge bg-secondary">
+                            {status === "idle" && "нет подключения"}
+                            {status === "connecting" && "подключение…"}
+                            {status === "connected" && (hasVideo ? "видео получено" : "ожидаем видео…")}
+                        </span>
 
                         {status !== "idle" && (
                             <button type="button" className="btn btn-sm btn-outline-danger" onClick={handleManualStop}>
@@ -137,7 +149,6 @@ export const ManagerScreenSharePanel: React.FC = () => {
 
                 {error && <div className="text-danger small mb-2">{error}</div>}
 
-                {/* Важно: даже если стрима нет — показываем “живую” загрузку вместо чёрного экрана */}
                 {showWaitingTile && (
                     <div
                         style={{
@@ -151,7 +162,9 @@ export const ManagerScreenSharePanel: React.FC = () => {
                             sub={
                                 status === "connected"
                                     ? "Соединение установлено, но кадров ещё нет (часто ждём keyframe)."
-                                    : "Устанавливаем SIP/WebRTC-сессию."
+                                    : !userAgent
+                                        ? "Ждём инициализацию SIP/WebRTC (UA ещё не готов)."
+                                        : "Устанавливаем SIP/WebRTC-сессию."
                             }
                         />
                     </div>
@@ -159,8 +172,8 @@ export const ManagerScreenSharePanel: React.FC = () => {
 
                 {!hasVideo && status === "idle" && (
                     <div className="text-muted small">
-                        Сейчас нет активной трансляции экрана. Нажмите кнопку «Экран» в таблице диалогов — бэкенд отправит событие{" "}
-                        <code>screen_share:start</code>, оператор подключится, и вы автоматически присоединитесь к комнате.
+                        Сейчас нет активной трансляции экрана. Нажмите кнопку «Экран» в таблице диалогов — бэкенд отправит
+                        событие <code>screen_share:start</code>, оператор подключится, и вы автоматически присоединитесь к комнате.
                     </div>
                 )}
 

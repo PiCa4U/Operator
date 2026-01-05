@@ -1,4 +1,3 @@
-// src/features/itsm/useChatCollapsed.ts
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 export function useChatCollapsed(guid: string) {

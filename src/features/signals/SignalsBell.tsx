@@ -1,4 +1,3 @@
-// src/features/signals/SignalsBell.tsx
 import React from "react";
 import { useManagerSignals } from "./useManagerSignals";
 

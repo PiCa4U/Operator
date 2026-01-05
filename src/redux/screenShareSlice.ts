@@ -1,4 +1,3 @@
-// src/redux/screenShareSlice.ts
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 
 export type ScreenShareStatus = "idle" | "requesting" | "sharing" | "denied" | "error";
@@ -6,7 +5,7 @@ export type ScreenShareStatus = "idle" | "requesting" | "sharing" | "denied" | "
 type ScreenShareState = {
     status: ScreenShareStatus;
     error: string | null;
-    grantedOnce: boolean; // ✅ важно
+    grantedOnce: boolean;
 };
 
 const initialState: ScreenShareState = {

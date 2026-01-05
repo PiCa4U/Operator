@@ -15,7 +15,6 @@ import {useScreenShareViewer} from "../../../../screenShare/useScreenShareViewer
 import {VideoTile} from "../../../../screenShare/VideoTile";
 import {markViewerInitiated} from "../../../../screenShare/screenShareLocalIntent";
 
-/* =================== типы и вспомогалки =================== */
 type Metrics = {
     count?: number | string;
     talk?: number | string;
@@ -96,7 +95,6 @@ const CAT_SUBCOLS: Record<Category, readonly Subcol[]> = {
     ],
 };
 
-// какие «времена» показываем в отчёте (строки HH:MM:SS из total)
 const TIME_KEYS = ["online", "post_time", "break", "logged_out", "ui_activity"] as const;
 const TIME_TITLES: Record<(typeof TIME_KEYS)[number], string> = {
     online: "Онлайн",
@@ -106,7 +104,6 @@ const TIME_TITLES: Record<(typeof TIME_KEYS)[number], string> = {
     ui_activity: "Активность в UI",
 };
 
-/* Сериализация users[]=... в query */
 const usersParamsSerializer = (
     glagol_parent: string,
     users: (string | number)[],
@@ -121,7 +118,6 @@ const usersParamsSerializer = (
     return usp.toString();
 };
 
-/* =================== Компонент =================== */
 
 export const OperatorsTab: React.FC = () => {
     const {
@@ -144,11 +140,9 @@ export const OperatorsTab: React.FC = () => {
         glagolParent = '',
     } = store.getState().credentials;
 
-    // ---- выбор операторов
     const [selected, setSelected] = useState<Record<Agent["login"], boolean>>({});
     const selectedLogins = useMemo(() => Object.keys(selected).filter((l) => selected[l]), [selected]);
 
-    // --- Пагинация
     const OPERATORS_ROWS_PER_PAGE_KEY = "operatorsRowsPerPage";
     const DEFAULT_ROWS_PER_PAGE = 10;
 
@@ -183,7 +177,6 @@ export const OperatorsTab: React.FC = () => {
         [pageItems, selected]
     );
 
-    // modal
     const [modalOpen, setModalOpen] = useState(false);
     const [modalMode, setModalMode] = useState<"create" | "edit">("create");
     const [editing, setEditing] = useState<Agent | null>(null);
@@ -203,19 +196,16 @@ export const OperatorsTab: React.FC = () => {
     const [reportCollapsed, setReportCollapsed] = useState(false);
 
     const pageBeforeSearchRef = useRef<number>(1);
-// чтобы отслеживать переходы "" -> "что-то" -> ""
     const prevSearchRef = useRef<string>("");
 
     useEffect(() => {
         const cur = (filters.name ?? "").trim();
         const prev = prevSearchRef.current;
 
-        // поиск включили: запоминаем текущую страницу
         if (prev === "" && cur !== "") {
             pageBeforeSearchRef.current = page;
         }
 
-        // поиск выключили: возвращаемся на сохранённую страницу (с учётом новых границ)
         if (prev !== "" && cur === "") {
             const desired = pageBeforeSearchRef.current;
             const target = Math.max(1, Math.min(pageCount, desired));
@@ -225,7 +215,6 @@ export const OperatorsTab: React.FC = () => {
         prevSearchRef.current = cur;
     }, [filters.name, pageCount, page]);
 
-    // === WebRTC + просмотр экрана менеджером ===
     const { userAgent, enabled: webrtcEnabled } = useSip();
     const {
         status: screenStatus,
@@ -235,13 +224,10 @@ export const OperatorsTab: React.FC = () => {
         leaveRoom,
     } = useScreenShareViewer({ ua: userAgent });
 
-    /** логин оператора, чей экран сейчас показываем */
     const [activeScreenOperator, setActiveScreenOperator] = useState<string | null>(null);
 
-    /** последняя комната, к которой подключился менеджер (для stop) */
     const lastRoomRef = useRef<string | null>(null);
 
-// Подписка на события screen_share:start/stop, чтобы джойнить/покидать SIP-комнату
     useEffect(() => {
         if (!webrtcEnabled) return;
         if (!sipLogin || !sessionKey) return;
@@ -266,7 +252,6 @@ export const OperatorsTab: React.FC = () => {
 
             const rid = pickRoomId(p);
 
-            // 🔒 если стоп по другой комнате — игнор
             if (rid && lastRoomRef.current && rid !== lastRoomRef.current) {
                 if (process.env.NODE_ENV !== "production") {
                     console.log("[manager] ignore stale stop", { rid, current: lastRoomRef.current, p });
@@ -289,7 +274,6 @@ export const OperatorsTab: React.FC = () => {
     }, [webrtcEnabled, sipLogin, sessionKey, joinRoom, leaveRoom]);
 
     const tableH = activeScreenOperator ? "75vh" : "50vh";
-// Явное завершение просмотра по кнопке в UI
     const handleScreenShareStop = useCallback(() => {
         stopScreenShareSession(lastRoomRef.current); // ✅ важно
         setActiveScreenOperator(null);
@@ -297,7 +281,6 @@ export const OperatorsTab: React.FC = () => {
         leaveRoom();
     }, [leaveRoom]);
 
-// Тоггл экрана оператора по кнопке в таблице
     const handleScreenShareClick = useCallback((operatorLogin: string) => {
         if (!sessionKey || !worker || !sipLogin) {
             Swal.fire({
@@ -308,13 +291,11 @@ export const OperatorsTab: React.FC = () => {
             return;
         }
 
-        // если уже смотрим именно этого оператора — выключаем
         if (activeScreenOperator === operatorLogin) {
             handleScreenShareStop();
             return;
         }
 
-        // если смотрим кого-то другого — сначала выключим предыдущего
         if (activeScreenOperator && activeScreenOperator !== operatorLogin) {
             handleScreenShareStop();
         }
@@ -517,7 +498,6 @@ export const OperatorsTab: React.FC = () => {
         boxShadow: "inset 0 -1px 0 rgba(0,0,0,0.08)",
     };
 
-    /* =================== Отчёт: состояние и запрос =================== */
     const todayISO = new Date().toISOString().slice(0, 10);
     const [dateStart, setDateStart] = useState<string>(todayISO);
     const [dateEnd, setDateEnd]   = useState<string>(todayISO);
@@ -525,18 +505,16 @@ export const OperatorsTab: React.FC = () => {
     type Row = {
         __login: string;
         __name: string;
-        // времена
         time__online: string;
         time__post_time: string;
         time__break: string;
         time__logged_out: string;
         time__ui_activity: string;
-        // динамические ключи метрик, напр. "outbound__total__count" или "inbound__akc24__talk"
         [k: string]: any;
     };
 
     type ReportState = {
-        projects: Record<Category, string[]>; // порядок колонок по каждому типу
+        projects: Record<Category, string[]>;
         rows: Row[];
     } | null;
 
@@ -559,7 +537,6 @@ export const OperatorsTab: React.FC = () => {
             if (resp.data?.status !== "success") throw new Error(resp.data?.message || "request failed");
             const result = resp.data?.result || {};
 
-            // Множества проектов по каждой категории
             const projSets: Record<Category, Set<string>> = {
                 outbound: new Set<string>(),
                 inbound: new Set<string>(),
@@ -567,7 +544,6 @@ export const OperatorsTab: React.FC = () => {
                 missed: new Set<string>(),
             };
 
-            // наполняем множества проектами, встречающимися у выбранных
             for (const login of Object.keys(result)) {
                 const u = result[login] || {};
                 (["outbound", "inbound", "express", "missed"] as Category[]).forEach((cat) => {
@@ -578,7 +554,6 @@ export const OperatorsTab: React.FC = () => {
                 });
             }
 
-            // приводим к отсортированным массивам с отображением имён проектов
             const projects: Record<Category, string[]> = {
                 outbound: Array.from(projSets.outbound).sort((a, b) => (projMap[a] || a).localeCompare(projMap[b] || b, "ru")),
                 inbound: Array.from(projSets.inbound).sort((a, b) => (projMap[a] || a).localeCompare(projMap[b] || b, "ru")),
@@ -586,7 +561,6 @@ export const OperatorsTab: React.FC = () => {
                 missed: Array.from(projSets.missed).sort((a, b) => (projMap[a] || a).localeCompare(projMap[b] || b, "ru")),
             };
 
-            // соберём строки
             const byLogin: Record<string, RespPerUser> = result as any;
             const rows: Row[] = selectedLogins.map((login) => {
                 const agent = filtered.find((x) => x.login === login);
@@ -606,12 +580,10 @@ export const OperatorsTab: React.FC = () => {
                     const perCat = (perUser as any)[cat] || {};
                     const total: Metrics = (perCat["__total__"] || {}) as Metrics;
 
-                    // total по категории
                     for (const sc of CAT_SUBCOLS[cat]) {
                         row[`${cat}__total__${sc.key}`] = total[sc.key] ?? 0;
                     }
 
-                    // по проектам
                     for (const p of projects[cat]) {
                         const m = (perCat[p] || {}) as Metrics;
                         for (const sc of CAT_SUBCOLS[cat]) {
@@ -638,16 +610,12 @@ export const OperatorsTab: React.FC = () => {
         const catOrder: Category[] = ["outbound", "inbound", "express", "missed"];
         const { projects, rows } = report;
 
-        // ===== Заголовки (3 строки) =====
-        // Row 0: "Оператор" | "Время" | Cat1 | Cat2 | ...
         const timeCols = TIME_KEYS.length;
         const topRow: any[] = ["Оператор"];
 
-        // Время (группа)
         topRow.push("Время");
         for (let i = 0; i < timeCols - 1; i++) topRow.push("");
 
-        // Категории
         for (const cat of catOrder) {
             const subcols = CAT_SUBCOLS[cat].length;
             const groupCols = (1 + projects[cat].length) * subcols;
@@ -655,24 +623,19 @@ export const OperatorsTab: React.FC = () => {
             for (let i = 0; i < groupCols - 1; i++) topRow.push("");
         }
 
-        // Row 1: пусто под оператором | список time-колонок | Итого (колспан subcols) | каждый проект (колспан subcols)
         const secondRow: any[] = [""];
-        // time labels
         for (const tk of TIME_KEYS) secondRow.push(TIME_TITLES[tk]);
 
         for (const cat of catOrder) {
             const subcols = CAT_SUBCOLS[cat].length;
-            // Итого
             secondRow.push("Итого");
             for (let i = 0; i < subcols - 1; i++) secondRow.push("");
-            // Проекты
             for (const p of projects[cat]) {
                 secondRow.push(projMap[p] || p);
                 for (let i = 0; i < subcols - 1; i++) secondRow.push("");
             }
         }
 
-        // Row 2: пусто под оператором + пустые под временем | подкатегории (SUBCOLS) для total и каждого проекта
         const thirdRow: any[] = [""];
         for (let i = 0; i < timeCols; i++) thirdRow.push("");
         for (const cat of catOrder) {
@@ -681,21 +644,16 @@ export const OperatorsTab: React.FC = () => {
             }
         }
 
-        // ===== Данные =====
         const dataRows = rows.map((r) => {
             const arr: any[] = [r.__name];
 
-            // time
             for (const tk of TIME_KEYS) {
                 arr.push((r as any)[`time__${tk}`]);
             }
 
-            // categories
             for (const cat of catOrder) {
                 const subcols = CAT_SUBCOLS[cat];
-                // total
                 for (const sc of subcols) arr.push(sc.fmt(r[`${cat}__total__${sc.key}`]));
-                // projects
                 for (const p of projects[cat]) {
                     for (const sc of subcols) arr.push(sc.fmt(r[`${cat}__${p}__${sc.key}`]));
                 }
@@ -707,24 +665,17 @@ export const OperatorsTab: React.FC = () => {
         const aoa = [topRow, secondRow, thirdRow, ...dataRows];
         const ws = XLSX.utils.aoa_to_sheet(aoa);
 
-        // merges
         const merges: XLSX.Range[] = [];
-        // "Оператор" вертикально на 3 строки
         merges.push({ s: { r: 0, c: 0 }, e: { r: 2, c: 0 } });
 
-        // "Время"
         merges.push({ s: { r: 0, c: 1 }, e: { r: 0, c: 1 + timeCols - 1 } });
 
-        // Категории (верхняя полоса)
         let colStart = 1 + timeCols;
         for (const cat of ["outbound", "inbound", "express", "missed"] as Category[]) {
             const subcols = CAT_SUBCOLS[cat].length;
             const groupCols = (1 + projects[cat].length) * subcols;
             merges.push({ s: { r: 0, c: colStart }, e: { r: 0, c: colStart + groupCols - 1 } });
-            // Внутренние мёрджи "Итого" и "Проекты"
-            // Итого
             merges.push({ s: { r: 1, c: colStart }, e: { r: 1, c: colStart + subcols - 1 } });
-            // Проекты
             let pCol = colStart + subcols;
             for (let i = 0; i < projects[cat].length; i++) {
                 merges.push({ s: { r: 1, c: pCol }, e: { r: 1, c: pCol + subcols - 1 } });
@@ -735,7 +686,6 @@ export const OperatorsTab: React.FC = () => {
 
         (ws as any)["!merges"] = merges;
 
-        // ширины (примерно)
         const cols = [{ wch: 22 }]; // Оператор
         for (let i = 0; i < timeCols; i++) cols.push({ wch: 14 });
         for (const cat of ["outbound", "inbound", "express", "missed"] as Category[]) {
@@ -751,13 +701,10 @@ export const OperatorsTab: React.FC = () => {
     };
 
 
-    /* =================== UI =================== */
 
     return (
         <div className="d-flex flex-column gap-3">
-            {/* Фильтры + формирование отчёта (две строки, фикс макс-ширины) */}
             <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 10 }}>
-                {/* === Ряд 1: обычные фильтры + создать (без растягивания) === */}
                 <div
                     style={{
                         display: "flex",
@@ -828,7 +775,6 @@ export const OperatorsTab: React.FC = () => {
                     </div>
                 </div>
 
-                {/* === Ряд 2: период + кнопка отчёта (слева) === */}
                 <div
                     style={{
                         display: "flex",
@@ -871,7 +817,6 @@ export const OperatorsTab: React.FC = () => {
                 </div>
             </div>
 
-            {/* Таблица операторов */}
             <div style={{ height: tableH, minHeight: 0 }}>
                 <div className="table-responsive" style={{ height: "100%", overflowY: "auto" }}>
                     <table className="table table-sm align-middle">
@@ -927,7 +872,6 @@ export const OperatorsTab: React.FC = () => {
                                 const canHaveScreen = isOperator && isHuman && isOnline;
                                 const isScreenActiveHere = activeScreenOperator === a.login;
 
-// disabled — только по тех. причинам (а не по роли)
                                 const screenBtnDisabled =
                                     !webrtcEnabled || !sessionKey || !worker || !sipLogin;
 
@@ -1011,7 +955,6 @@ export const OperatorsTab: React.FC = () => {
                                         })()}
                                     </td>
 
-                                    {/* 👉 НОВАЯ ЯЧЕЙКА “Вызов” — 3 строки: телефон, проект, время */}
                                     <td style={{ width: 240 }}>
                                         {(() => {
                                             const ac = getActiveCall(a);
@@ -1023,7 +966,6 @@ export const OperatorsTab: React.FC = () => {
 
                                             return (
                                                 <div style={{ display: "grid", gap: 2, lineHeight: 1.2 }}>
-                                                    {/* Телефон */}
                                                     <div className="d-flex align-items-center gap-1" style={{ minWidth: 0 }}>
                                                         <span className="material-icons" style={{ fontSize: 16 }}>call</span>
                                                         <strong className="text-truncate" title={phone} style={{ maxWidth: 180 }}>
@@ -1031,7 +973,6 @@ export const OperatorsTab: React.FC = () => {
                                                         </strong>
                                                     </div>
 
-                                                    {/* Проект */}
                                                     <div
                                                         className="text-muted small d-flex align-items-center gap-1"
                                                         title={project}
@@ -1043,7 +984,6 @@ export const OperatorsTab: React.FC = () => {
                                                         </span>
                                                     </div>
 
-                                                    {/* Время */}
                                                     <div className="d-flex align-items-center gap-1">
                                                         <span className="material-icons" style={{ fontSize: 16 }}>schedule</span>
                                                         <span className="badge bg-light text-dark">{duration}</span>
@@ -1141,7 +1081,7 @@ export const OperatorsTab: React.FC = () => {
                                     </td>
                                 </tr>{isScreenActiveHere && (
                                         <tr className="table-active">
-                                            <td colSpan={11 /* важно: у тебя 11 колонок */}>
+                                            <td colSpan={11}>
                                                 <div className="p-2 border-top">
                                                     <div className="d-flex justify-content-between align-items-center mb-2">
                                                         <div className="fw-semibold small">
@@ -1300,10 +1240,8 @@ export const OperatorsTab: React.FC = () => {
                 </small>
             </div>
 
-            {/* ====== Объединённый отчёт ====== */}
             {report && (
                 <div style={{ marginTop: 12 }}>
-                    {/* Шапка отчёта с кнопками действий */}
                     <div
                         className="d-flex align-items-center justify-content-between gap-2 mb-2"
                         style={{
@@ -1354,24 +1292,19 @@ export const OperatorsTab: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* Тело отчёта (условно сворачиваемое) */}
                     {!reportCollapsed && (
                         <div className="table-responsive" style={{ overflowX: "auto" }}>
                             <table className="table table-sm table-bordered">
-                                {/* ===== ШАПКА ===== */}
                                 <thead>
-                                {/* строка 1 */}
                                 <tr>
                                     <th rowSpan={3} className="text-center align-middle" style={stickyTh}>
                                         Оператор
                                     </th>
 
-                                    {/* Время */}
                                     <th colSpan={TIME_KEYS.length} className="text-center" style={stickyTh}>
                                         Время
                                     </th>
 
-                                    {/* Категории */}
                                     {(["outbound", "inbound", "express", "missed"] as const).map((cat) => {
                                         const span = (1 + report.projects[cat].length) * CAT_SUBCOLS[cat].length;
                                         return (
@@ -1382,7 +1315,6 @@ export const OperatorsTab: React.FC = () => {
                                     })}
                                 </tr>
 
-                                {/* строка 2 */}
                                 <tr>
                                     {TIME_KEYS.map((tk) => (
                                         <th key={tk} rowSpan={2} className="text-center align-middle" style={stickyTh}>
@@ -1409,7 +1341,6 @@ export const OperatorsTab: React.FC = () => {
                                     ))}
                                 </tr>
 
-                                {/* строка 3 */}
                                 <tr>
                                     {(["outbound", "inbound", "express", "missed"] as const).map((cat) =>
                                         [0, ...report.projects[cat]].flatMap((_) =>
@@ -1423,26 +1354,21 @@ export const OperatorsTab: React.FC = () => {
                                 </tr>
                                 </thead>
 
-                                {/* ===== ТЕЛО ===== */}
                                 <tbody>
                                 {report.rows.map((r) => (
                                     <tr key={r.__login}>
                                         <td>{r.__name}</td>
 
-                                        {/* Время */}
                                         {TIME_KEYS.map((tk) => (
                                             <td key={`${r.__login}_time_${tk}`}>{(r as any)[`time__${tk}`]}</td>
                                         ))}
 
-                                        {/* Категории */}
                                         {(["outbound", "inbound", "express", "missed"] as const).flatMap((cat) => {
                                             const sub = CAT_SUBCOLS[cat];
                                             const cells: React.ReactNode[] = [];
-                                            // total
                                             for (const sc of sub) cells.push(
                                                 <td key={`${r.__login}_${cat}_total_${sc.key}`}>{sc.fmt(r[`${cat}__total__${sc.key}`])}</td>
                                             );
-                                            // projects
                                             for (const p of report.projects[cat]) {
                                                 for (const sc of sub) {
                                                     cells.push(
@@ -1477,7 +1403,6 @@ export const OperatorsTab: React.FC = () => {
                     )}
                 </div>
             )}
-            {/* Модалки */}
             <OperatorModal
                 open={modalOpen}
                 mode={modalMode}

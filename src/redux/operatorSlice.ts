@@ -2,7 +2,6 @@ import { createSlice, PayloadAction, createSelector } from '@reduxjs/toolkit';
 import isEqual from 'lodash/isEqual';
 import { RootState } from "./store";
 
-// Типы для данных
 export interface ReasonItem {
     id: string;
     name: string;
@@ -25,7 +24,7 @@ export interface FieldDefinition {
     editable: boolean;
     must_have: boolean;
     project_name: string;
-    tab?: string | number; // TABS: вкладка
+    tab?: string | number;
     [key: string]: any;
 }
 
@@ -88,7 +87,6 @@ const initialState: OperatorState = {
 
 };
 
-// Мемоизированный селектор для полной коллекции проектов для оператора
 export const makeSelectFullProjectPool = (sipLogin: string) =>
     createSelector(
         (state: RootState) => state.operator.monitorData.allProjects,
@@ -101,7 +99,6 @@ export const makeSelectFullProjectPool = (sipLogin: string) =>
         }
     );
 
-// Другие селекторы, если нужно
 export const selectMyProjects = createSelector(
     [(state: RootState) => state.operator.monitorData.monitorCallcenter, (_: RootState, sipLogin: string) => sipLogin],
     (monitorCallcenter, sipLogin) => monitorCallcenter[sipLogin] || []

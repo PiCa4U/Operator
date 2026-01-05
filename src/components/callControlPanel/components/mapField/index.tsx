@@ -98,7 +98,6 @@ const SizeFix: React.FC = () => {
         ro.observe(map.getContainer());
         fix();
 
-        // если страница использует bootstrap/jQuery-аккордеоны/табы:
         const events = ["shown.bs.tab", "shown.bs.collapse"];
         events.forEach((ev) => document.addEventListener(ev, fix));
         window.addEventListener("resize", fix);

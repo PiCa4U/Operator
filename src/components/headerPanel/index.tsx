@@ -13,7 +13,6 @@ import {NotificationsPanel} from "../../features/signals/NotificationsPanel";
 import {SignalsBell} from "../../features/signals/SignalsBell";
 import {normalizeUrl} from "../callControlPanel";
 
-// === helpers ===
 function getByPath(obj: any, path: string) {
     if (!obj || !path) return undefined;
     return path.split(".").reduce((acc, key) => (acc != null ? acc[key] : undefined), obj);
@@ -22,7 +21,6 @@ function getByPath(obj: any, path: string) {
 function normalizeToArray(val: any): any[] {
     if (val == null) return [];
     if (Array.isArray(val)) return val.filter(v => v != null && v !== "");
-    // поддержка строк со списком через запятую
     if (typeof val === "string") {
         const trimmed = val.trim();
         if (!trimmed) return [];
@@ -39,23 +37,19 @@ function makeCardUrl(openedPhones: any[], matchedPreset: OptionType | null) {
     const u = new URL(window.location.href);
     u.searchParams.set("card", "1");
 
-    // ids выбранных телефонов
     const ids = (openedPhones ?? [])
         .map((p: any) => p?.id)
         .filter((id: any) => Number.isFinite(id));
     if (ids.length) u.searchParams.set("ids", ids.join(","));
 
-    // Параметры группировки из пресета
     const gb = matchedPreset?.preset?.group_by ?? [];
     const gt = matchedPreset?.preset?.group_table ?? "";
     if (Array.isArray(gb) && gb.length) u.searchParams.set("gb", gb.join(","));
     if (gt) u.searchParams.set("gt", gt);
 
-    // (опционально) если есть guid — поможет сразу поднять чат
     const firstGuid = (openedPhones ?? []).find((p: any) => p?.guid)?.guid;
     if (firstGuid) u.searchParams.set("guid", String(firstGuid));
 
-    // (опционально) пометить, что это карточка из задачного режима
     u.searchParams.set("tusk", "1");
 
     return u.toString();
@@ -65,7 +59,6 @@ function buildGroupByFilter(
     groupBy: unknown,
     contact: Record<string, any>
 ): Record<string, ["IN", any[]]> {
-    // groupBy может быть массивом или строкой "a,b,c"
     const fields: string[] = Array.isArray(groupBy)
         ? groupBy
         : typeof groupBy === "string"
@@ -82,7 +75,6 @@ function buildGroupByFilter(
     }
     return filter;
 }
-// types.ts
 export interface Project {
     active: boolean;
     created_date: string;
@@ -100,7 +92,7 @@ export interface Project {
     is_deleted: boolean;
     modified_date: string | null;
     out_active: boolean;
-    out_gateways: {extension_name: string, prefix: string}; // уточните тип, если есть подробности
+    out_gateways: {extension_name: string, prefix: string};
     out_priority: number | null;
     out_script: {
         comment_mode: string;
@@ -194,6 +186,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const {
         sipLogin   = '',
         worker     = '',
+        glagolParent = ''
     } = store.getState().credentials;
 
     const fallbackModulesRanRef = React.useRef(false);
@@ -216,7 +209,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     );
     const post = (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available") && fsStatus.state === "Idle";
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
-    // Вызываем useSelector для получения «полных» проектов
+
     const projectPool = useSelector(selectFullProjectPool) || [];
     const projectPoolForCall = useMemo(() => {
         return projectPool
@@ -225,7 +218,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     }, [projectPool]);
     // const projectGateawayPrefix = projectPool.length && projectPool.filter(project => (project.out_active && project.active))[0].out_gateways[2].prefix
 
-    // --- Преобразуем activeCalls к массиву, чтобы .some() не вызывал ошибку ---
+
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
     const activeCalls = useMemo(() => {
         return Array.isArray(rawActiveCalls)
@@ -234,17 +227,17 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     }, [rawActiveCalls]);
     const myCallCenter = monitorCallcenter[sipLogin]?.[0];
 
-    // Локальные стейты
+
     const [showStatuses, setShowStatuses] = useState(false);
     const [phone, setPhone] = useState('');
     const [callType, setCallType] = useState<'call' | 'redirect'>('call');
 
-    // Стейты для исходящих/автодозвона
+
     const [handleOutboundCall, setHandleOutboundCall] = useState<boolean>(false)
     const [outPreparation, setOutPreparation] = useState(false);
     const [hasActiveCall, setHasActiveCall] = useState<boolean>(false)
     const [postCallData, setPostCallData] = useState<any>({})
-    // Список операторов
+
     const [searchTerm, setSearchTerm] = useState('');
     const [typeFilter, setTypeFilter] = useState<'all' | 'operators' | 'robots'>('all');
     const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
@@ -348,7 +341,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     page: 'online',
                 });
             }
-            // TODO Вадим сделает POST_STARTED
+
             socket.emit("fs_post_started",{
                 session_key: sessionKey,
                 sip_login: sipLogin,
@@ -409,7 +402,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             }, 1000);
 
         } else {
-            // звонок закончен — сбрасываем
+
             setCallTimer('00:00');
         }
 
@@ -461,7 +454,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             });
     }
 
-// ⚡️ Функция для рекурсивного обхода и сбора всех массивов телефонов
+
     function extractPhoneGroups(obj: any): any[][] {
         const groups: any[][] = [];
         function recurse(node: any) {
@@ -477,7 +470,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         return groups;
     }
 
-// === эффект ===
+
     useEffect(() => {
         if (!outActiveProjectName) return;
 
@@ -486,7 +479,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 let myPresets = presets;
                 if (presets.length === 0) {
                     const response = await axios.post<Preset[]>('/api/v1/get_preset_list', {
-                        glagol_parent: 'fs.at.glagol.ai',
+                        glagol_parent: glagolParent,
                         worker,
                         projects: projectPoolForCall,
                         role,
@@ -601,7 +594,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             } else {
                 setAssignedKey("")
             }
-            // 👉 Сначала отправляем check_express
+
             socket.emit("check_express", {
                 phone,
                 project_name,
@@ -609,7 +602,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 worker,
             });
 
-            // 👉 Слушаем ответ
+
             const handleCheckExpress = (response: any) => {
                 if (response.express) return
 
@@ -812,7 +805,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             socket.off('get_out_start', handleGetOutStart);
         };
     }, [sipLogin, sessionKey, worker, hasActiveCall]);
-    // --- (B) Обработчик «Вызов по номеру» ---
+
     const handleCallByNumber = () => {
         if (!activeCalls[0].application) {
             setHandleOutboundCall(true)
@@ -832,7 +825,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             setCallType('call');
         }
 
-        // Если в итоге мы ничего не нашли, и это не redirect, показываем ошибку
+
         // if (!selectedExtension && callType !== 'redirect') {
         //     Swal.fire({
         //         title: "Вам не назначена линия для исходящих вызовов",
@@ -863,7 +856,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         // }
     };
 
-    // Кнопки управления статусом (как в старом)
+
     const handlePostStop = () => {
         socket.emit('change_state_fs', {
             sip_login: sipLogin,
@@ -1004,7 +997,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     const postColor = statusMapping['Post'].color;
 
-    // вычисляем, что показывать и каким цветом
+
     const displayStatusText = hasActiveCall
         ? `Активный вызов (${callTimer})`
         : (post
@@ -1016,7 +1009,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         ? postColor
         : callStatusMapped.color;
 
-    // В renderColleagueCards изменим разметку карточек, чтобы они выводились в виде сетки:
+
     const renderColleagueCards = () => {
         const allEntries = Object.entries(monitorUsers);
 

@@ -4,7 +4,6 @@ import { getActivityLog } from "../../api";
 import type { ActivityItem, ActivityInterval } from "../../types";
 import Swal from "sweetalert2";
 
-/* ================= TZ & parsing utils ================= */
 
 const APP_TZ: string = (() => {
     const root = document.getElementById("root") as HTMLElement | null;
@@ -112,7 +111,6 @@ function mean(arr: number[] | undefined | null): number | null {
 }
 
 const ACTIVITY_BASE_URL = "https://my.glagol.ai/operator_online";
-// const ACTIVITY_BASE_URL = "http://localhost:3000/";
 
 
 function buildHref(url: string): string {
@@ -120,22 +118,17 @@ function buildHref(url: string): string {
 
     const trimmed = url.trim();
 
-    // если уже полноценная ссылка — не трогаем
     if (/^https?:\/\//i.test(trimmed)) return trimmed;
 
     const base = ACTIVITY_BASE_URL.replace(/\/+$/, "");
 
-    // если бэк прислал что-то типа "/?card=1&..." или "/link_to_card"
     if (trimmed.startsWith("/")) {
-        // получится: https://my.glagol.ai/operator_online/?card=...  ИЛИ /link_to_card
         return base + trimmed;
     }
 
-    // если просто "link_to_card" — добавим как под-путь
     return `${base}/${trimmed}`;
 }
 
-/* ================= Flattening ================= */
 
 type ActivitySection = {
     id: string;
@@ -196,7 +189,6 @@ function flattenActivity(items: ActivityItem[]): ActivitySection[] {
         });
     });
 
-    // Самые свежие / длинные сверху
     sections.sort(
         (a, b) =>
             (b.lastEndMs || 0) - (a.lastEndMs || 0) ||
@@ -206,7 +198,6 @@ function flattenActivity(items: ActivityItem[]): ActivitySection[] {
     return sections;
 }
 
-/* ================= Компонент ================= */
 
 type Props = {
     open: boolean;
@@ -341,7 +332,6 @@ export const OperatorActivityModal: React.FC<Props> = ({
                     flexDirection: "column",
                 }}
             >
-                {/* header */}
                 <div
                     style={{
                         padding: "12px 16px",
@@ -349,7 +339,6 @@ export const OperatorActivityModal: React.FC<Props> = ({
                         background: "#f9fafb",
                     }}
                 >
-                    {/* верхняя строка: заголовок + крестик */}
                     <div className="d-flex align-items-center mb-2" style={{ justifyContent: "space-between" }}>
                         <div className="fw-semibold">
                             Активность оператора ·{" "}
@@ -361,7 +350,6 @@ export const OperatorActivityModal: React.FC<Props> = ({
                         </div>
                     </div>
 
-                    {/* нижняя строка: период */}
                     <div
                         className="d-flex align-items-center flex-wrap"
                         style={{ gap: 8 }}
@@ -385,7 +373,6 @@ export const OperatorActivityModal: React.FC<Props> = ({
                     </div>
                 </div>
 
-                {/* content */}
                 <div
                     style={{
                         flex: 1,
@@ -395,7 +382,6 @@ export const OperatorActivityModal: React.FC<Props> = ({
                         gap: 12,
                     }}
                 >
-                    {/* левая колонка — список сессий */}
                     <div
                         style={{
                             flex: "0 0 360px",
@@ -424,7 +410,6 @@ export const OperatorActivityModal: React.FC<Props> = ({
                             </div>
                         )}
 
-                        {/* если вообще нет секций (бэк ничего не вернул) */}
                         {!query.isLoading &&
                             !query.isError &&
                             sections.length === 0 && (
@@ -433,7 +418,6 @@ export const OperatorActivityModal: React.FC<Props> = ({
                                 </div>
                             )}
 
-                        {/* поиск по меткам — только если есть данные */}
                         {sections.length > 0 && (
                             <div className="mb-2">
                                 <input
@@ -451,7 +435,6 @@ export const OperatorActivityModal: React.FC<Props> = ({
                             </div>
                         )}
 
-                        {/* когда есть секции, но фильтр ничего не нашёл */}
                         {sections.length > 0 &&
                             !query.isLoading &&
                             !query.isError &&
@@ -666,7 +649,6 @@ export const OperatorActivityModal: React.FC<Props> = ({
                                     </div>
                                 </div>
 
-                                {/* таблица интервалов */}
                                 <div
                                     className="table-responsive"
                                     style={{ minHeight: 0, maxHeight: "50vh", overflowX: "auto" }}

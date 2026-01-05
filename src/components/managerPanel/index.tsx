@@ -1,12 +1,11 @@
-// src/components/managerPanel/index.tsx
 import React, { memo, useEffect, useMemo, useState } from "react";
 import { Filters } from "./components/filters";
 import { OperatorsTab } from "./components/operatorManagment";
 import { LogsTab } from "./components/integrations/components/LogsTab";
 import { ManagerDashboardsTab } from "./components/dashboards";
-import { MonitoringTab } from "./components/monitoring"; // ⬅️ NEW
+import { MonitoringTab } from "./components/monitoring";
 
-type TabKey = "dashboards" | "filters" | "operators" | "logs" | "monitoring"; // ⬅️ NEW
+type TabKey = "dashboards" | "filters" | "operators" | "logs" | "monitoring";
 
 const ManagerPanelInner: React.FC = () => {
     const [active, setActive] = useState<TabKey>(
@@ -22,7 +21,7 @@ const ManagerPanelInner: React.FC = () => {
             { key: "dashboards" as const, label: "Дашборды" },
             { key: "filters" as const, label: "Отчёты" },
             { key: "operators" as const, label: "Операторы" },
-            { key: "monitoring" as const, label: "Диалоги" }, // ⬅️ NEW
+            { key: "monitoring" as const, label: "Диалоги" },
             { key: "logs" as const, label: "Логи" },
         ],
         []
@@ -51,7 +50,7 @@ const ManagerPanelInner: React.FC = () => {
                 {active === "dashboards" && <ManagerDashboardsTab />}
                 {active === "filters" && <Filters />}
                 {active === "operators" && <OperatorsTab />}
-                {active === "monitoring" && <MonitoringTab />} {/* ⬅️ NEW */}
+                {active === "monitoring" && <MonitoringTab />}
                 {active === "logs" && <LogsTab />}
             </div>
         </div>

@@ -1,4 +1,3 @@
-// features/tasksTable/tasksTableSlice.ts
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
 export type FilterMethod = '=' | '!=' | 'LIKE' | 'NOT LIKE' | 'IN' | 'NOT IN' | 'DATES';
@@ -16,8 +15,8 @@ export interface TableFilters {
     searchTerm: string;
     selectedOperator: string | null;
     selectedStatus: string | null;
-    startDate: string | null; // ISO
-    endDate: string | null;   // ISO
+    startDate: string | null;
+    endDate: string | null;
     sortConfig: SortConfig;
     rowsPerPage: number;
     currentPage: number;

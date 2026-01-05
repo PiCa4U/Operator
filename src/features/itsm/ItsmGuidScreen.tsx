@@ -16,7 +16,6 @@ import styles from "./chat/style.module.css"
 
 type ContactRow = Record<string, any>;
 
-/* ===== типы для пресетов (минимально необходимые) ===== */
 type Action = { action_name: string; action_type: string; code_filename: string };
 type Preset = {
     id: number;
@@ -29,11 +28,9 @@ type Preset = {
 };
 type OptionType = { value: number; label: string; preset: Preset };
 
-/* ===== типы статусов прочтения ===== */
 type ReadStatus = { watched: string[]; responsible_watch: boolean };
 type ReadMap = Record<string, ReadStatus>;
 
-/* ===================== helpers ===================== */
 
 function sortMessages(a: UiMessage, b: UiMessage) {
     const ta = Date.parse(a.created_at);
@@ -82,7 +79,6 @@ function mapRow(r: RawChatMessage): UiMessage {
     };
 }
 
-/** Рекурсивно собираем массивы телефонов (листовые массивы объектов с полем id) */
 function extractPhoneGroups(input: any): any[][] {
     const result: any[][] = [];
     const walk = (node: any) => {
@@ -120,7 +116,6 @@ function FieldsPanel({ contacts }: { contacts: ContactRow[] }) {
     );
 }
 
-/* ===================== компонент ===================== */
 
 export default function ItsmGuidScreen() {
     // guid — ТОЛЬКО из URL
@@ -167,10 +162,8 @@ export default function ItsmGuidScreen() {
         return () => { alive = false; };
     }, [guid]);
 
-    /* ===== словарь проектов: project_name -> glagol_name ===== */
     const [projectsDict, setProjectsDict] = useState<Record<string, string>>({});
 
-    // грузим список проектов и строим словарь
     useEffect(() => {
         let alive = true;
         if (!glagolParent) return;
@@ -197,7 +190,6 @@ export default function ItsmGuidScreen() {
         return () => { alive = false; };
     }, [glagolParent]);
 
-    /* ===== мульти-GUID из openedPhones ===== */
     const [openedPhones, setOpenedPhones] = useState<any[]>([]);
     const [presets, setPresets] = useState<OptionType[]>([]);
     const [selectedPreset, setSelectedPreset] = useState<OptionType | null>(null);
@@ -210,7 +202,6 @@ export default function ItsmGuidScreen() {
     const [modules, setModules] = useState<ModuleData[]>([]);
     const [monoModules, setMonoModules] = useState<MonoProjectsModuleData>({});
 
-    // построение групп по первому контакту
     useEffect(() => {
         if (!data.length) return;
 
@@ -299,7 +290,6 @@ export default function ItsmGuidScreen() {
         return arr;
     }, [openedPhones, guid]);
 
-    // активный чат (GUID)
     const [activeGuid, setActiveGuid] = useState<string>(guid);
     useEffect(() => {
         if (!guidsFromOpened.length) return;
@@ -308,7 +298,6 @@ export default function ItsmGuidScreen() {
         }
     }, [guidsFromOpened]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // подпись вкладки/чата по GUID — подменяем project_name на glagol_name
     function labelForGuid(g: string): string {
         const rows = (openedPhones ?? []).filter((it: any) => {
             const v = it?.guid || it?.contact_info?.guid || it?.b_uuid || it?.uuid;
@@ -332,7 +321,6 @@ export default function ItsmGuidScreen() {
         return `GUID ${g.slice(0, 8)}…`;
     }
 
-    /* ===== история/лайв/оптимистик под activeGuid ===== */
     const [history, setHistory] = useState<UiMessage[]>([]);
     const [chatError, setChatError] = useState<string | null>(null);
     const [live, setLive] = useState<UiMessage[]>([]);
@@ -358,22 +346,18 @@ export default function ItsmGuidScreen() {
         return () => { alive = false; };
     }, [activeGuid]);
 
-    // Авторизация сокета: оператор → sipLogin, клиент → null
     const socketLogin = hasSip ? sipLogin : null;
 
     const markReadById = (arr: UiMessage[], id: string) =>
         arr.map(m => (m.id === id ? { ...m, isRead: true } : m));
 
-    // 🔹 массовая отметка прочитанными в локальном состоянии
     const markReadMany = (arr: UiMessage[], ids: number[]) => {
         const setIds = new Set(ids.map(String));
         return arr.map(m => (setIds.has(m.id) ? { ...m, isRead: true } : m));
     };
 
-    // 🔹 кэш файлов по GUID, НЕ влияющий на openedPhones
     const [serverFilesByGuid, setServerFilesByGuid] = useState<Record<string, string[]>>({});
 
-    // утилита: собрать файлы из ответа контактов данного GUID
     function extractFilesFromContacts(arr: any[]): string[] {
         const all: string[] = [];
         for (const c of arr ?? []) {
@@ -385,7 +369,6 @@ export default function ItsmGuidScreen() {
         return Array.from(new Set(all));
     }
 
-    // 🔹 запросить актуальный список файлов для конкретного GUID, не меняя openedPhones
     async function refreshContactFiles(g: string) {
         if (!g) return;
         try {
@@ -397,8 +380,6 @@ export default function ItsmGuidScreen() {
             console.warn("refreshContactFiles failed", e);
         }
     }
-
-    // подтягиваем актуальные файлы при смене активного GUID
     useEffect(() => {
         if (activeGuid) void refreshContactFiles(activeGuid);
     }, [activeGuid]);
@@ -454,7 +435,6 @@ export default function ItsmGuidScreen() {
         });
     }
 
-    // первичная загрузка + поллинг
     useEffect(() => {
         if (!guidsFromOpened.length) return;
         void refreshUnreadCounts(guidsFromOpened, hasSip, loginForUnread);
@@ -504,7 +484,6 @@ export default function ItsmGuidScreen() {
         }
     });
 
-    // страховочный рефреш счётчика для активной вкладки при изменении списка сообщений
 
     const messages = useMemo(() => {
         const merged = [...history, ...live, ...optimistic];
@@ -519,7 +498,6 @@ export default function ItsmGuidScreen() {
         return () => window.clearTimeout(t);
     }, [messages, activeGuid, hasSip, loginForUnread]);
 
-    /* ====== КАРТА ПРОЧИТАНИЯ (для UI) ====== */
     const [readMap, setReadMap] = useState<ReadMap>({});
     useEffect(() => {
         const ids = messages.map(m => Number(m.id)).filter(n => Number.isFinite(n)) as number[];
@@ -547,9 +525,6 @@ export default function ItsmGuidScreen() {
         return () => { clearTimeout(t); cancelled = true; };
     }, [messages, activeGuid]);
 
-    /* ===== АВТО-ПРОЧТЕНИЕ (единственный источник эмитов) ===== */
-
-    // предохранители и батч-дебаунс
     const sentReadRef = useRef<Set<number>>(new Set());   // уже отправляли в эту сессию
     const queueRef = useRef<Set<number>>(new Set());      // очередь на отправку
     const timerRef = useRef<number | null>(null);
@@ -563,7 +538,6 @@ export default function ItsmGuidScreen() {
         return Array.from(set);
     }, [openedPhones]);
 
-// палитра для кнопок проектов
     const projectColors = useMemo(() => {
         const palette = ['#4c78a8','#f58518','#54a24b','#e45756','#b279a2','#9d755d','#bab0ac','#72b7b2','#f2cf5b','#7b4173'];
         return groupProjects.reduce<Record<string,string>>((acc, proj, i) => {
@@ -572,7 +546,6 @@ export default function ItsmGuidScreen() {
         }, {});
     }, [groupProjects]);
 
-// выбранный проект для скрипта
     const [scriptProject, setScriptProject] = useState<string | null>(null);
     useEffect(() => {
         if (!groupProjects.length) { setScriptProject(null); return; }
@@ -593,7 +566,7 @@ export default function ItsmGuidScreen() {
         ids.forEach(id => {
             if (!sentReadRef.current.has(id)) queueRef.current.add(id);
         });
-        if (timerRef.current) return; // уже ждём
+        if (timerRef.current) return;
         timerRef.current = window.setTimeout(() => {
             timerRef.current = null;
             flushReads();
@@ -604,29 +577,27 @@ export default function ItsmGuidScreen() {
         if (!connected || !messages.length) return;
 
         const isIncomingForMe = (m: UiMessage) => {
-            if (socketLogin) return (m.authorLogin ?? null) !== socketLogin; // я оператор
-            return m.authorRole !== "client";                                 // я клиент
+            if (socketLogin) return (m.authorLogin ?? null) !== socketLogin;
+            return m.authorRole !== "client";
         };
 
         const idsToMark: number[] = [];
         for (const m of messages) {
             const numId = Number(m.id);
-            if (!Number.isFinite(numId)) continue;          // пропускаем временные id
-            if (!isIncomingForMe(m)) continue;              // исходящие мне не нужны
-            if (m.isRead) continue;                         // уже отмечены локально
-            if (sentReadRef.current.has(numId)) continue;   // уже слали ранее
+            if (!Number.isFinite(numId)) continue;
+            if (!isIncomingForMe(m)) continue;
+            if (m.isRead) continue;
+            if (sentReadRef.current.has(numId)) continue;
             idsToMark.push(numId);
         }
         if (!idsToMark.length) return;
 
-        // локально сразу отметим
         setHistory(prev => markReadMany(prev, idsToMark));
         setLive(prev => markReadMany(prev, idsToMark));
         setOptimistic(prev => markReadMany(prev, idsToMark));
 
-        // отправим батчем (с дебаунсом)
         enqueueReads(idsToMark);
-    }, [connected, messages, socketLogin]); // ВАЖНО: без readMap в зависимостях
+    }, [connected, messages, socketLogin]);
 
     async function handleSend(text: string, files: File[] = []) {
         if (!activeGuid) return;
@@ -661,13 +632,11 @@ export default function ItsmGuidScreen() {
     return (
         <div className="container-fluid py-3" style={{ height: "100vh" }}>
             <div className="row g-3 h-100">
-                {/* Левая колонка: мульти-чат */}
                 <div className="col-12 py-2 col-lg-6 d-flex flex-column min-h-0">
                     {chatError && <div className="alert alert-danger m-2">{chatError}</div>}
                     {socketErr && <div className="alert alert-warning m-2">Сокет: {socketErr}</div>}
                     {!connected && <div className="text-muted small ms-2">Подключение к чату…</div>}
 
-                    {/* Табы GUID */}
                     {guidsFromOpened.length > 0 && (
                         <div className="pb-2">
                             <ul className={styles.chatTabs}>
@@ -717,7 +686,6 @@ export default function ItsmGuidScreen() {
                     </div>
                 </div>
 
-                {/* Правая колонка */}
                 <div className="col-12 col-lg-6 min-h-0 overflow-auto">
                     {loading && <div className="p-3">Загрузка…</div>}
                     {error && <div className="alert alert-danger m-3">{error}</div>}

@@ -8,7 +8,6 @@ import Select, {
 
 type Option = { value: string; label: string };
 
-// ОДИН или МНОГО — совместимый API
 type PropsSingle = {
     isMulti?: false;
     value: string | null;

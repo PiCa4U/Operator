@@ -61,7 +61,6 @@ const NotificationPopup: React.FC<Props> = ({
         });
     };
 
-    // Автовоспроизведение рингтона + автофокус на "Принять"
     useEffect(() => {
         acceptRef.current?.focus();
 
@@ -69,7 +68,6 @@ const NotificationPopup: React.FC<Props> = ({
         const vol = cfgRef.current.volume ?? 0.6;
         startRingtone(url, vol);
 
-        // ✅ ЯВНО ТИПИЗИРУЕМ next
         const unsub = subscribeExternalConfig((next: AppExternalConfig): void => {
             cfgRef.current = {
                 assetsBase: next.assetsBase ?? cfgRef.current.assetsBase,

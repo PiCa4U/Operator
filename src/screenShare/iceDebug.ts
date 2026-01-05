@@ -1,10 +1,24 @@
-// src/screenShare/iceDebug.ts
 
 export function toUrlList(urls: any): string[] {
     if (!urls) return [];
-    if (Array.isArray(urls)) return urls.filter((u) => typeof u === "string");
+    if (Array.isArray(urls)) {
+        return urls
+            .map((u) => {
+                if (typeof u === "string") return u;
+                try {
+                    return String(u);
+                } catch {
+                    return "";
+                }
+            })
+            .filter((u) => typeof u === "string" && u.length > 0);
+    }
     if (typeof urls === "string") return [urls];
-    return [];
+    try {
+        return [String(urls)].filter(Boolean);
+    } catch {
+        return [];
+    }
 }
 
 export function isTurnUrl(u: string): boolean {
@@ -12,16 +26,14 @@ export function isTurnUrl(u: string): boolean {
     return s.startsWith("turn:") || s.startsWith("turns:");
 }
 
-/**
- * Оставляем ТОЛЬКО TURN/TURNS.
- * ВАЖНО: TCP НЕ режем — для теста TURN это критично.
- */
+
 export function onlyTurnServers(iceServers: RTCIceServer[] | undefined): RTCIceServer[] {
     const arr = (iceServers || []) as RTCIceServer[];
 
     return arr
         .map((s) => {
-            const urls = toUrlList((s as any).urls).filter(isTurnUrl);
+            const rawUrls = (s as any).urls ?? (s as any).url; // ✅ urls + legacy url
+            const urls = toUrlList(rawUrls).filter(isTurnUrl);
             if (!urls.length) return null;
             return { ...s, urls };
         })
@@ -65,12 +77,7 @@ export async function logSelectedIcePair(pc: RTCPeerConnection, tag: string) {
     }
 }
 
-/**
- * Вешаем максимально полезные логи:
- * - pc.getConfiguration() (проверим, что relay реально применился)
- * - onicecandidate: ищем "typ relay"
- * - icecandidateerror: если TURN auth/transport/allocate падает — увидим
- */
+
 export function attachIceDebug(pc: RTCPeerConnection, tag: string) {
     try {
         console.log(`[ICE ${tag}] pc.getConfiguration():`, pc.getConfiguration?.());

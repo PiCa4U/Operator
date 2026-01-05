@@ -6,7 +6,6 @@ import "../../callsDashboard/picker.css"
 import {ru} from "date-fns/locale";
 import MapField, {MapFieldMapping} from "./mapField";
 
-// сверху рядом с компонентом
 type MapDefaults = Partial<{
     lat:string|number; lon:string|number; q:string;
     country:string; state:string; city:string; city_district:string;
@@ -22,7 +21,7 @@ function parseMapConfig(raw: unknown): { mapping: MapFieldMapping; defaults: Map
                 if (p.mapping && typeof p.mapping === "object") mapping = p.mapping as MapFieldMapping;
                 if (p.defaults && typeof p.defaults === "object") defaults = p.defaults as MapDefaults;
             } else if (p && typeof p === "object") {
-                defaults = p as MapDefaults;       // простой объект дефолтов
+                defaults = p as MapDefaults;
             }
         } catch {}
     }
@@ -87,17 +86,14 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
 
 
     function toIsoDate(raw: string): string {
-        // если уже в формате YYYY-MM-DD — возвращаем как есть
         if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
             return raw;
         }
-        // пытаемся распарсить dd.MM.yyyy
         const m = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
         if (m) {
             const [, dd, mm, yyyy] = m;
             return `${yyyy}-${mm}-${dd}`;
         }
-        // иначе — пустая строка (или raw, если нужно)
         return "";
     }
 
@@ -216,7 +212,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                         compact={compact}
                                         onPatch={(patch) => {
                                             if (isDefaultsOnly) {
-                                                // собираем JSON {lat,lon,q,...} и сохраняем ЕГО в текущее поле карты
                                                 const result: Record<string,string> = {};
                                                 for (const [fid, v] of Object.entries(patch)) {
                                                     const k = keyByFid[fid];
@@ -226,12 +221,11 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
 
                                                 const nextAll = { ...fieldValues, [storeFieldId]: json };
                                                 setFieldValues(nextAll);
-                                                onChange?.(nextAll);                     // <-- ВСЕ значения, не патч
+                                                onChange?.(nextAll);
                                             } else {
-                                                // режим явного mapping — разносим по целевым полям
                                                 const nextAll = { ...fieldValues, ...patch };
                                                 setFieldValues(nextAll);
-                                                onChange?.(nextAll);                     // <-- ВСЕ значения, не патч
+                                                onChange?.(nextAll);
                                             }
                                         }}
                                     />
@@ -250,7 +244,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                         backgroundColor: '#e9ecef'
                                     }}
                                 >
-                                    {/* пункт 4 — см. ниже про разделители строк */}
                                     {currentValue.split(/\r?\n/).map((line, idx) => (
                                         <div key={idx} style={{ padding: '6px 0' }}>
                                             {idx > 0 && <div style={{ borderTop: '1px solid #9ca3af', marginBottom: 6 }} />}
@@ -262,7 +255,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         )}
 
                         {param.field_type === 'select' && (() => {
-                            // 1) Парсим дефолтные опции из param.field_vals
                             const rawVals = param.field_vals || "";
                             const splitVals = rawVals.includes("|_|_|")
                                 ? rawVals.split("|_|_|")
@@ -274,7 +266,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                 opts = baseOptionsRef.current
                             }
 
-                            // 2) Проверяем, что в fieldValues лежит JSON-объект
                             const rawField = fieldValues[param.field_id] || "";
                             const trimmed = rawField.trim();
                             let defaultValue = rawField;
@@ -285,12 +276,10 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             ) {
                                 try {
                                     const parsed = JSON.parse(trimmed);
-                                    // если в объекте есть options — перезаписываем список
                                     if (Array.isArray(parsed.options) && parsed.options.length > 0) {
                                         opts = parsed.options;
                                         baseOptionsRef.current = opts
                                     }
-                                    // если в объекте есть select — это наше выбранное значение
                                     if (parsed.select != null) {
                                         defaultValue = Array.isArray(parsed.select)
                                             ? parsed.select.join(",")
@@ -298,10 +287,8 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                         onChange({[param.field_id]: defaultValue})
                                     }
                                 } catch {
-                                    // невалидный JSON — игнорируем
                                 }
                             }
-                            // 3) Формируем final options и рендерим SearchableSelect
                             const options = [{ id: "", name: "" }, ...opts.map((o: any) => ({ id: o, name: o }))];
 
                             return (
@@ -363,11 +350,9 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         )}
 
                         {param.field_type === 'many' && (() => {
-                            // 1) Сначала дефолтные варианты из param.field_vals
                             const rawVals = param.field_vals || "";
                             const baseOpts = rawVals.split(",").map(s => s.trim()).filter(Boolean);
 
-                            // 2) Попробуем распарсить JSON из fieldValues
                             const rawField = fieldValues[param.field_id] || "";
                             const trimmed = rawField.trim();
                             let opts
@@ -387,12 +372,10 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             ) {
                                 try {
                                     const parsed = JSON.parse(trimmed);
-                                    // если есть options — используем их
                                     if (Array.isArray(parsed.options) && parsed.options.length) {
                                         opts = parsed.options;
                                         baseOptionsRef.current = opts
                                     }
-                                    // если есть select — берём массив
                                     if (parsed.select) {
                                         selectedArr = Array.isArray(parsed.select)
                                             ? parsed.select.map((v: any) => String(v))
@@ -401,7 +384,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                         onChange({[param.field_id]: selectedArr.join(",")})
                                     }
                                 } catch {
-                                    // не JSON — игнор
                                 }
                             }
 
@@ -441,7 +423,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
 
                             let links: Array<{ text: string; url: string }> = [];
 
-                            // аккуратный парсер ссылок
                             const parseLinks = (raw: unknown): Array<{ text: string; url: string }> => {
                                 if (!raw) return [];
 
@@ -456,28 +437,24 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                     );
                                 }
 
-                                // строка с JSON или двойной JSON
                                 if (typeof raw === "string") {
                                     let s = raw.trim();
                                     if (!s) return [];
 
-                                    // если это не похоже на JSON — вообще не трогаем
                                     if (!["{", "[", '"'].includes(s[0])) return [];
 
                                     try {
-                                        // случай "\"[]\"" — сначала снимаем внешние кавычки
                                         if (s.startsWith('"') && s.endsWith('"')) {
-                                            s = JSON.parse(s); // "\"[]\"" -> "[]", "\"{}\"" -> "{}"
+                                            s = JSON.parse(s);
                                         }
 
                                         const parsed = JSON.parse(s);
-                                        return parseLinks(parsed); // рекурсивно прогоняем ещё раз
+                                        return parseLinks(parsed);
                                     } catch {
                                         return [];
                                     }
                                 }
 
-                                // объект типа { links: [...] }
                                 if (typeof raw === "object") {
                                     const obj = raw as any;
                                     if (Array.isArray(obj.links)) {
@@ -488,21 +465,17 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                 return [];
                             };
 
-                            // 1) сначала пробуем взять из значения поля (то, что лежит в БД)
                             if (trimmedField) {
                                 links = parseLinks(trimmedField);
                             }
 
-                            // 2) если там пусто — пробуем дефолты из field_vals
                             if (!links.length && param.field_vals) {
                                 links = parseLinks(param.field_vals);
                             }
 
-                            // 3) кешируем (если тебе это реально нужно)
                             baseLinksRef.current = links;
 
                             if (!links.length) {
-                                // ничего просто не рисуем, но и не триггерим onChange
                                 return null;
                             }
 
@@ -540,7 +513,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         })()}
 
                         {param.field_type === 'dates_available' && (() => {
-                            // 1) default из param.field_vals (строка JSON или CSV)
                             let dates: string[] = [] ;
                             if(!baseOptionsRef.current.length) {
                                 if (Array.isArray(param.field_vals)) {
@@ -559,7 +531,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             }
 
 
-                            // 2) проверка JSON в fieldValues
                             const rawField = fieldValues[param.field_id] || '';
                             const trimmed = rawField.trim();
                             let selectDateStr: string | null = null;
@@ -569,14 +540,11 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             ) {
                                 try {
                                     const parsed = JSON.parse(trimmed);
-                                    // если есть options — заменяем
                                     if (Array.isArray(parsed.options) && parsed.options.length > 0) {
                                         dates = parsed.options;
                                         baseOptionsRef.current = dates
                                     }
-                                    // если есть select — запоминаем
                                     if (parsed.select != null) {
-                                        // 1) Получаем "сырую" дату из parsed.select
                                         const raw = Array.isArray(parsed.select)
                                             ? String(parsed.select[0])
                                             : String(parsed.select);
@@ -584,11 +552,9 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                         if (raw) {
                                             const [day, month, year] = raw.split('.');
 
-                                            // 3) Собираем ISO-строку "ГГГГ-ММ-ДД"
                                             selectDateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
 
 
-                                            // 4) Передаем в родительский onChange уже в нужном формате
                                             onChange({ [param.field_id]: selectDateStr });
                                         } else {
                                             onChange({ [param.field_id]: "" });
@@ -597,17 +563,15 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                         onChange({ [param.field_id]: "" });
                                     }
                                 } catch {
-                                    // не JSON — игнорируем
                                 }
                             }
 
 
                             const allowedDates = dates
                                 .map(d => {
-                                    // разбиваем строку "06.07.2025" на [ "06", "07", "2025" ]
                                     const [dayStr, monthStr, yearStr] = d.split('.');
                                     const day   = parseInt(dayStr,   10);
-                                    const month = parseInt(monthStr, 10) - 1; // месяцы в JS — от 0 до 11
+                                    const month = parseInt(monthStr, 10) - 1;
                                     const year  = parseInt(yearStr,  10);
 
                                     const dt = new Date(year, month, day);
@@ -615,7 +579,6 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                 })
                                 .filter((dt): dt is Date => dt !== null);
 
-                            // 4) выбранная дата: из selectDateStr или из currentValue
                             const baseValue = selectDateStr ?? (fieldValues[param.field_id] || '');
                             const selectedDate = (() => {
                                 const dt = new Date(baseValue);

@@ -1,5 +1,3 @@
-// src/api/agents.ts  (оставь свой реальный путь)
-// ВАЖНО: больше не читаем store.getState() на верхнем уровне модуля!
 
 import axios from "axios";
 import { store } from "../../../../../redux/store";
@@ -7,8 +5,8 @@ import { store } from "../../../../../redux/store";
 export type LogFilters = {
     project?: string;
     filename?: string;
-    dateFrom?: string | null; // ISO
-    dateTo?: string | null;   // ISO
+    dateFrom?: string | null;
+    dateTo?: string | null;
     kwargs?: Record<string, string[]>;
     returns?: Record<string, string[]>;
     limit?: number;
@@ -17,7 +15,7 @@ export type LogFilters = {
 
 export type LogItem = {
     id: string;
-    timestamp?: string; // ISO в UTC (c Z)
+    timestamp?: string;
     filename?: string;
     project?: string;
     text: string;
@@ -29,7 +27,6 @@ export type LogsResponse = { items: LogItem[]; total?: number } | string;
 
 /* ===================== helpers ===================== */
 
-/** Всегда берём актуальные значения из Redux на момент вызова */
 function getCreds() {
     const st = store.getState();
     const creds = st?.credentials ?? {};
@@ -38,42 +35,34 @@ function getCreds() {
     return { glagol_parent, codeServer };
 }
 
-/** Добавит https:// если забыли */
 function normalizeBase(u?: string): string | undefined {
     if (!u) return undefined;
     return /^https?:\/\//i.test(u) ? u : `https://${u}`;
 }
 
-/** Склеивает с учётом подпути (/code) */
 function buildUrl(base: string, path: string): string {
     const b = base.endsWith("/") ? base : base + "/";
     const p = path.replace(/^\//, "");
     return new URL(p, b).toString();
 }
 
-/** codeBase: Redux.credentials.codeServer → data-code-server → дефолт */
 function getCodeBase(): string {
-    // 1) Redux
     const { codeServer } = getCreds();
     const fromRedux = normalizeBase(codeServer);
     if (fromRedux) return fromRedux;
 
-    // 2) data-attr
     const root = document.getElementById("root") as HTMLElement | null;
     const fromData = normalizeBase(root?.dataset?.codeServer);
     if (fromData) return fromData;
 
-    // 3) дефолт
     return "https://wwstest.glagol.ai/code";
 }
 
-/** подготовка IN-массива для бэкенда */
 function toIn(values?: string[]) {
     if (!values || values.length === 0) return undefined;
     return ["IN", ...values];
 }
 
-/* ===================== API ===================== */
 
 export async function getIntegrationLogByKey(key: string): Promise<string> {
     const codeBase = getCodeBase();
@@ -97,7 +86,6 @@ export async function getIntegrationLogs(filters: LogFilters): Promise<LogsRespo
     const codeBase = getCodeBase();
     const { glagol_parent } = getCreds();
 
-    // добавляем .py к имени модуля для бэка
     const withPy = (name?: string) => {
         if (!name) return undefined;
         const v = name.trim();
@@ -105,7 +93,6 @@ export async function getIntegrationLogs(filters: LogFilters): Promise<LogsRespo
         return /\.py$/i.test(v) ? v : `${v}.py`;
     };
 
-    // kwargs
     const kwargs: Record<string, any> = {};
     if (filters.kwargs) {
         for (const [k, arr] of Object.entries(filters.kwargs)) {
@@ -114,7 +101,6 @@ export async function getIntegrationLogs(filters: LogFilters): Promise<LogsRespo
         }
     }
 
-    // integration_return
     const integration_return: Record<string, any> = {};
     if (filters.returns) {
         for (const [k, arr] of Object.entries(filters.returns)) {
@@ -123,9 +109,6 @@ export async function getIntegrationLogs(filters: LogFilters): Promise<LogsRespo
         }
     }
 
-    // базовый payload — без пустых полей
-    // Примечание: у тебя здесь было `login: glagolParent` — сохраняю семантику.
-    // Если код-сервис ожидает ключ 'glagol_parent', замени 'login' на 'glagol_parent'.
     const payload: Record<string, any> = {
         login: glagol_parent,
         directory: "main",
@@ -158,7 +141,6 @@ export async function getIntegrationLogs(filters: LogFilters): Promise<LogsRespo
         return text;
     }
 
-    // ожидаемый массив { datetime, integration_key } или { items: [...] }
     const json = await resp.json();
 
     if (json && typeof json === "object" && Array.isArray(json.items)) {
@@ -200,10 +182,6 @@ export function trySplitPlainTextIntoItems(raw: string): LogItem[] {
     return chunks.map((t, i) => ({ id: String(i + 1), text: t }));
 }
 
-/**
- * Возвращает массив подробных модулей:
- * [{ filename: "complete", button_name: "Синхронизировать", kwargs: {...}, return_structure: {...} }, ...]
- */
 export async function fetchProjectModules(params: {
     glagol_parent: string;
     project_name: string;
@@ -223,8 +201,6 @@ export async function fetchProjectModules(params: {
         params: { glagol_parent, project_name },
     });
 
-    // ожидаемый формат:
-    // { status: "success", modules: { <moduleName>: { button_name?: string, kwargs: {...}, return_structure: {...} }, ... } }
     const mods = data?.modules && typeof data.modules === "object" ? data.modules : {};
     const list: {
         id: number;
@@ -247,7 +223,7 @@ export async function fetchProjectModules(params: {
 
         list.push({
             id: i++,
-            filename: String(name), // ЛОГИЧЕСКОЕ ИМЯ МОДУЛЯ
+            filename: String(name),
             python_version: block.python_version,
             kwargs: block.kwargs || undefined,
             return_structure: block.return_structure || undefined,

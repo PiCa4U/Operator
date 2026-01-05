@@ -341,7 +341,6 @@ const RootHome: React.FC<RootHomeProps> = ({
                 onRequest={onRequestMic}
             />
 
-            {/* Баннер шаринга — только оператору в режиме webrtc (и только пока не было grantedOnce) */}
             {/*<ScreenSharePermissionBanner*/}
             {/*    show={wantWebrtc && role === "Оператор" && !screenGrantedOnce}*/}
             {/*    status={screenStatus}*/}
@@ -363,7 +362,6 @@ const RootHome: React.FC<RootHomeProps> = ({
                 </div>
             )}
 
-            {/* ✅ панель шаринга должна быть доступна ДО включения телефонии */}
             {role === "Оператор" && wantWebrtc && <OperatorScreenSharePanel />}
 
             {/* Верхняя панель */}
@@ -420,16 +418,16 @@ const RootHome: React.FC<RootHomeProps> = ({
                             boxShadow: "0 1px 2px rgba(0,0,0,.06)",
                         }}
                     >
-            <span
-                style={{
-                    maxWidth: 260,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                }}
-            >
-              {name}
-            </span>
+                        <span
+                            style={{
+                                maxWidth: 260,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                            }}
+                        >
+                          {name}
+                        </span>
                         <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
                             <circle cx="12" cy="12" r="10" fill="currentColor" opacity=".12" />
                             <path
@@ -570,7 +568,6 @@ export default function App() {
 
     const hasCreds = Boolean(ha1 && turnCreds);
 
-    // ===== ГЛАВНОЕ: телефония только после mic + screen =====
     const requireMic = role === "Оператор";
     const requireScreen = role === "Оператор";
 
@@ -579,7 +576,6 @@ export default function App() {
 
     const telephonyEnabled = wantWebrtc && hasCreds && micOk && screenOk;
 
-    // дергаем проверку шаринга через событие (чтобы баннер мог "попросить" панель)
     const onCheckScreenShare = React.useCallback(() => {
         window.dispatchEvent(new CustomEvent("screen_share:check_permission"));
     }, []);

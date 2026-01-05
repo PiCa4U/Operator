@@ -12,9 +12,7 @@ import {
     ResponsiveContainer,
 } from "recharts";
 
-/**
- * ManagerDashboards.tsx (axios edition, no cookies)
- */
+
 
 const EMPTY_TEXT = "За выбранный промежуток времени ничего не найдено";
 
@@ -48,14 +46,13 @@ export type DashCard = {
     data_sources: any;
     method: "GET" | "POST";
     endpoint: string;
-    params: any | null; // querystring
-    json: any | null;   // body
+    params: any | null;
+    json: any | null;
     headers: Record<string, string> | null;
 };
 
 export type DashBoardsResponse = { dash_boards: DashCard[] };
 
-// ===== Utils =====
 const COLORS = [
     "#F54927", "#64F000", "#008CFF", "#8B5CF6", "#FF9800",
     "#009688", "#795548", "#E91E63", "#9E9E9E", "#111111",
@@ -68,7 +65,6 @@ function formatDateYYYYMMDD(d: Date) {
     return `${y}-${m}-${day}`;
 }
 
-/** Рекурсивная подстановка {from_dt}/{to_dt} */
 function deepReplacePlaceholders(value: string, map: Record<string, string>): string;
 function deepReplacePlaceholders<T extends any[]>(value: T, map: Record<string, string>): T;
 function deepReplacePlaceholders<T extends Record<string, any>>(value: T, map: Record<string, string>): T;
@@ -90,7 +86,6 @@ function deepReplacePlaceholders<T>(value: T, map: Record<string, string>): T {
     return value;
 }
 
-/** Разбор PG-пути `'data'->>'spec'->>'inbound'->>'count'` */
 function resolvePgPath(data: any, path: string | null | undefined): any {
     if (!path || data == null) return undefined;
     const parts = String(path).split(/->>?/g).map((p) => p.trim());
@@ -120,7 +115,6 @@ function normalizeQueryParams(input: any): Record<string, any> {
 }
 
 
-/** Загрузка данных для карточки — axios, без cookies */
 async function fetchCardPayload(card: DashCard, fromISO: string, toISO: string) {
     const placeholders = { from_dt: fromISO, to_dt: toISO };
 
@@ -166,7 +160,6 @@ async function fetchCardPayload(card: DashCard, fromISO: string, toISO: string) 
     }
 }
 
-// ===== Card chrome =====
 function CardChrome({
                         icon, color, title, description, children,
                     }: {
@@ -215,7 +208,6 @@ function CardChrome({
     );
 }
 
-// ===== Renderers =====
 function NumberCard({ card, payload }: { card: DashCard; payload: any }) {
     const entries = useMemo(() => Object.entries(card.data_sources || {}), [card.data_sources]);
     return (
@@ -348,7 +340,6 @@ function useCardData(card: DashCard, fromISO: string, toISO: string) {
     });
 }
 
-/** Отдельная карточка — хук наверху компонента */
 function CardItem({
                       card, userLogin, fromISO, toISO,
                   }: { card: DashCard; userLogin: string; fromISO: string; toISO: string; }) {
@@ -385,7 +376,6 @@ function formatLocalDateTime(d: Date) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// ===== Main component =====
 export default function ManagerDashboards({
                                               listEndpoint = "https://tmpapi.glagol.ai/get_dash_boards",
                                               glagolParent,
@@ -447,7 +437,6 @@ export default function ManagerDashboards({
                     />
                 </div>
 
-                {/* Кнопка: узкая колонка, прижата вниз, с отступом слева на >= sm */}
                 <div className="col-auto align-self-end ms-sm-3">
                     <button className="btn btn-sm btn-outline-secondary" onClick={() => refetch()}>
                         Обновить список дашбордов
@@ -455,7 +444,6 @@ export default function ManagerDashboards({
                 </div>
             </div>
 
-            {/* Grid 5 cols */}
             <div
                 style={{
                     display: "grid",

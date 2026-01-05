@@ -27,7 +27,7 @@ export interface OperatorLogEntry {
     status: string | null;
     state: string | null;
     reason: string | null;
-    datetime: string; // 'YYYY-MM-DD HH:mm:ss'
+    datetime: string;
 }
 
 /* ========= Activity log ========= */

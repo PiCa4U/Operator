@@ -7,7 +7,6 @@ import { getCookies } from "../../utils";
 import {CallData} from "../callControlPanel";
 import {Project} from "../headerPanel";
 
-/** Упрощённая функция для рендера EditorJS-данных. */
 function renderEditorJsData(data: any) {
     if (!data || typeof data !== 'object' || !Array.isArray(data.blocks)) {
         if (typeof data === 'string') {
@@ -128,23 +127,16 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     const [openAnswers, setOpenAnswers] = useState<{ [id: string]: boolean }>({});
     const { sessionKey } = store.getState().operator
 
-    // Комментарий (если commentMode === 'true')
     const [comment, setComment] = useState('');
     const [selectedQuestion, setSelectedQuestion] = useState<ScriptQuestion | null>(null);
 
-// ❌ это больше не нужно, можно удалить
-// const [openAnswers, setOpenAnswers] = useState<{ [id: string]: boolean }>({});
-// const toggleAnswer = (id: string) => { ... };
 
-// --- ref на контейнер с FAQ для "клика снаружи"
     const faqRef = useRef<HTMLDivElement | null>(null);
 
-// --- клик по вопросу: теперь с тумблером
     const handleQuestionClick = (q: ScriptQuestion) => {
         setSelectedQuestion(prev => (prev?.id === q.id ? null : q));
     };
 
-// --- закрытие по клику вне FAQ
     useEffect(() => {
         const onDocClick = (e: MouseEvent) => {
             if (!faqRef.current) return;
@@ -156,7 +148,6 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
         return () => document.removeEventListener('mousedown', onDocClick);
     }, []);
 
-// --- закрытие по Esc
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape') setSelectedQuestion(null);
@@ -165,10 +156,8 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
         return () => document.removeEventListener('keydown', onKey);
     }, []);
 
-    // Из Redux — массив активных звонков
     const activeCalls: any[] = useSelector((state: RootState) => state.operator.activeCalls);
     const hasActiveCall = Array.isArray(activeCalls) && activeCalls.length ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
-    /** При монтировании: если есть активный звонок, запрашиваем start_script */
     useEffect(() => {
         if (hasActiveCall || tuskMode || selectedCall) {
 
@@ -190,7 +179,6 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     }, [projectName, direction, activeCalls, selectedCall]);
 
     useEffect(() => {
-        /** Событие "start_script" */
         function handleStartScript(msg: any) {
             setScriptId(msg.script_id || '');
             setScriptMode(msg.script_mode || '');
@@ -211,7 +199,6 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
             }
             setBlockButtons(buttonsArray);
 
-            // FAQ
             if (msg.questions) {
                 const arrQuestions: ScriptQuestion[] = Object.values(msg.questions).map((q: any) => ({
                     id: String(q.id),
@@ -250,7 +237,6 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
         };
     }, [direction, projectName]);
 
-    /** Клик по кнопке скрипта => move_script */
     const handleButtonClick = (btn: ScriptButton) => {
         if (Number(btn.NextNumber) === 0) {
             onClose();
@@ -283,7 +269,6 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
         setComment('');
     };
 
-    /** Фильтрация FAQ */
     const filteredQuestions = questions.filter((q) => {
         const str = searchText.toLowerCase();
         const inText = q.text.toLowerCase().includes(str);
@@ -298,12 +283,10 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
         return inText || inCategory || inAnswer;
     });
 
-    /** Показ/скрытие ответа FAQ */
     const toggleAnswer = (id: string) => {
         setOpenAnswers(prev => ({ ...prev, [id]: !prev[id] }));
     };
 
-    /** Если скрипт ещё не загрузился */
     if (!scriptId) {
         return (
             <div className="card border-info p-3 ml-3 text-center w-100">

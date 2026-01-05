@@ -1,4 +1,3 @@
-// src/features/itsm/itsmLink.ts
 export type ChatRole = "client" | "operator" | "manager";
 export type ItsmLinkOpts = { worker?: string | null; role?: ChatRole; name?: string; sipLogin?: string | null };
 

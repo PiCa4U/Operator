@@ -1,21 +1,17 @@
-/* ===== оформление чата ===== */
 .chat :global(.cs-conversation-header){
     position: sticky; top: 0; z-index: 5;
     border-bottom: 1px solid #e2e8f0;
 }
 .chat :global(.cs-message-list){ background:#f8fafc; }
 
-/* ===== ФИКСИРОВАННАЯ ШИРИНА ПУЗЫРЕЙ =====
-   Хочешь 70%? Замени 80% на 70% в двух местах ниже. */
 .chat :global(.cs-message__content-wrapper),
 .chat :global(.cs-message__custom-content){
-    width: min(80%, 820px) !important;     /* фикс ширина */
-    flex: 0 0 min(80%, 820px) !important;  /* фикс flex-basis */
+    width: min(80%, 820px) !important;
+    flex: 0 0 min(80%, 820px) !important;
     max-width: none !important;
     min-width: 0;
 }
 
-/* сам пузырёк занимает wrapper полностью */
 .chat :global(.cs-message__content){
     width: 100% !important;
     max-width: none !important;
@@ -28,7 +24,6 @@
 }
 .chat :global(.cs-message__content *) { overflow-wrap:anywhere; }
 
-/* входящие/исходящие цвета */
 .chat :global(.cs-message--incoming .cs-message__content){
     background: linear-gradient(0deg,#eaf3ff 0%,#f3f8ff 100%);
     color:#0f172a;
@@ -38,16 +33,13 @@
     color:#fff;
 }
 
-/* имя отправителя над входящими */
 .chat :global(.cs-message__sender-name){
     color:#475569; font-weight:600; font-size:12px; margin-bottom:2px;
 }
-/* время внизу пузырька */
 .chat :global(.cs-message__footer){
     opacity:.75; font-size:12px; margin-top:4px;
 }
 
-/* разделители дат — тонкие линии и спокойный цвет */
 .chat :global(.cs-message-separator){
     color:#64748b; font-weight:600; text-transform:lowercase;
     background: transparent;
@@ -60,16 +52,13 @@
     background:#e2e8f0; height:1px;
 }
 
-/* воздух между группами одного автора */
 .chat :global(.cs-message.cs-message--first){ margin-top:10px; }
 .chat :global(.cs-message.cs-message--last){  margin-bottom:10px; }
 
-/* принудительное выравнивание строк сообщений */
 .chat :global(.cs-message){ display:flex; }
 .chat :global(.cs-message--incoming){ justify-content:flex-start; }
 .chat :global(.cs-message--outgoing){ justify-content:flex-end; }
 
-/* выравниваем wrapper по сторонам */
 .chat :global(.cs-message--incoming .cs-message__content-wrapper),
 .chat :global(.cs-message--incoming .cs-message__custom-content){
     margin-left: 0; margin-right: auto;
@@ -79,7 +68,6 @@
     margin-right: 0; margin-left: auto;
 }
 
-/* ===== панель ввода ===== */
 .inputRow{
     display:flex; gap:8px; align-items:flex-end;
     background:#fff; position:relative; z-index:2;
@@ -92,23 +80,19 @@
     overflow-wrap:anywhere; word-break:break-word;
 }
 
-/* текст и файлы внутри сообщения */
 .msgText{ margin-bottom:8px; }
 .filesBlock{}
 .filesTitle{ font-size:12px; color:#64748b; margin-bottom:4px; display:flex; gap:6px; align-items:center; }
 .filesChips{ display:flex; flex-wrap:wrap; gap:6px; }
 
-/* кнопка-иконка слева от textarea */
 .iconBtn{ display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding:0; }
 .icon{ width:18px; height:18px; }
 .iconXs{ width:14px; height:14px; margin-right:6px; vertical-align:-2px; }
 
-/* ошибки */
 .errLine{ color:#dc3545; font-size:12px; margin-top:4px; padding:0 8px; }
 .rowRight{ display:flex; justify-content:flex-end; }
 .rowLeft{ display:flex; justify-content:flex-start; }
 
-/* drag&drop overlay */
 .dropZone{ position:relative; height:100%; }
 .dropZoneActive{ outline:2px dashed rgba(90,155,255,.55); outline-offset:-6px; border-radius:12px; }
 .dragOverlay{
@@ -121,7 +105,6 @@
 }
 .inputRowDragging{ outline:2px dashed rgba(90,155,255,.6); outline-offset:-6px; background:rgba(90,155,255,.06); }
 
-/* превью выбранных файлов */
 .pendingWrap{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
 .pendingChip{
     display:inline-flex; align-items:center; gap:6px; max-width:100%;
@@ -135,10 +118,8 @@
 .removeBtn:hover{ color:#dc3545; }
 .ellipsis{ max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-/* контейнер чата */
 .chatShell{ background:#fff; position:relative; z-index:1; }
 
-/* вкладки (как было) */
 .chatTabs{ display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:0; list-style:none; }
 .chatTabsItem{ margin:0; padding:0; }
 .chatTabsBtn{
@@ -163,7 +144,6 @@
     content:""; width:8px; height:8px; margin-left:6px; border-radius:999px; background:#fff; box-shadow:0 0 0 3px rgba(239,68,68,.95);
 }
 
-/* мобильный режим — пузырь шире */
 @media (max-width: 640px){
     .chat :global(.cs-message__content-wrapper),
     .chat :global(.cs-message__custom-content){
@@ -172,7 +152,6 @@
     }
 }
 
-/* --- одинаковая ширина для обычного и кастомного контента --- */
 .chat :global(.cs-message__content-wrapper),
 .chat :global(.cs-message__custom-content){
     width: min(80%, 820px) !important;
@@ -181,7 +160,6 @@
     min-width: 0;
 }
 
-/* --- сам «пузырь»: паддинги, скругление, тени --- */
 .chat :global(.cs-message__content),
 .chat :global(.cs-message__custom-content){
     width: 100% !important;
@@ -194,7 +172,6 @@
     overflow-wrap: anywhere;
 }
 
-/* --- цвета входящих/исходящих для кастомного контента --- */
 .chat :global(.cs-message--incoming .cs-message__custom-content){
     background: linear-gradient(0deg,#eaf3ff 0%,#f3f8ff 100%);
     color:#0f172a;
@@ -204,13 +181,10 @@
     color:#fff;
 }
 
-/* --- контент внутри сообщения --- */
 .msgText{ margin-bottom:8px; white-space: pre-wrap; }
 
-/* «Файлы (1)» — пусть наследует цвет текста пузыря */
 .filesTitle{ font-size:12px; color: inherit; opacity:.85; margin-bottom:4px; display:flex; gap:6px; align-items:center; }
 
-/* Чипсы: читаемость на синем фоне */
 .filesChips{ display:flex; flex-wrap:wrap; gap:6px; }
 .chat :global(.cs-message--outgoing) .filesChips a{
     background: rgba(255,255,255,.2) !important;
@@ -222,21 +196,18 @@
     color:#0f172a !important;
 }
 
-/* контейнер уже есть */
 .filesChips{ display:flex; flex-wrap:wrap; gap:6px; }
 
-/* сам чип-ссылка */
 .fileChip{
     display:inline-flex;
     align-items:center;
     padding:6px 10px;
     border-radius:999px;
     text-decoration:none;
-    max-width:100%;     /* не шире пузыря */
-    min-width:0;        /* позволяет сжиматься во флексе */
+    max-width:100%;
+    min-width:0;
 }
 
-/* текст внутри чипа — с троеточием */
 .fileChipText{
     overflow:hidden;
     text-overflow:ellipsis;
@@ -245,7 +216,6 @@
     min-width:0;
 }
 
-/* цвета для входящих/исходящих */
 .chat :global(.cs-message--outgoing) .fileChip{
     background: rgba(255,255,255,.2);
     color:#fff;
@@ -256,7 +226,6 @@
     color:#0f172a;
 }
 
-/* по желанию: сделай чипы чуть «квадратнее» на мобилках */
 @media (max-width: 640px){
     .fileChip{ padding:6px 8px; }
 }

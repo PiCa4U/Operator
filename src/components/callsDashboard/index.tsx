@@ -50,7 +50,6 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
 
     const [fsReport, setFsReport] = useState<any[]>([])
     // const fsReport = useSelector((state: RootState) => state.operator.fsReport);
-    // Значения для инпутов
     const [startDate, setStartDate] = useState<Date | null >(null);
     const [endDate,   setEndDate]   = useState<Date | null>(null);
     const [phoneSearch, setPhoneSearch] = useState('');
@@ -59,7 +58,6 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
     const projectPool = useSelector(selectFullProjectPool) || [];
     const forbiddenProjects = ['api_call', 'no_project_out'];
 
-    // Пагинация
     // const [currentPage, setCurrentPage] = useState(1);
     const [totalPages,  setTotalPages]  = useState(1);
 
@@ -137,7 +135,6 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
             const keys = call.projects ? Object.keys(call.projects) : [];
             if (keys.length === 0) return false;
             const proj = call.projects[keys[0]];
-            // незаполненным считаем только когда оба === null или === undefined
             return proj.call_reason == null && proj.call_result == null;
         });
 
@@ -209,7 +206,6 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
     function formatUTCDateToLocal(datetimeStr: string): string {
         if (!datetimeStr) return '';
 
-        // Преобразуем "2025-07-28 14:39:32" → ISO-формат
         const isoStr = datetimeStr.replace(' ', 'T') + 'Z'; // теперь это "2025-07-28T14:39:32Z"
         const date = new Date(isoStr);
 
@@ -225,7 +221,6 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
 
     return (
         <div className="container-fluid" style={{ marginLeft: 0 }}>
-            {/* Блок с поиском (дата + телефон) и кнопками */}
             <div className="row ml-1 mb-3 align-items-center">
                 <div className="col-auto">
                     <DatePicker

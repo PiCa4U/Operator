@@ -22,9 +22,8 @@ export function useOperators() {
     const [filters, setFilters] = useState<FiltersState>({
         name: "",
         projects: [],
-        // поддерживаем и новый, и старый формат для плавной миграции
         department: null,
-        departments: [],      // <— мультивыбор отделов
+        departments: [],
         robot: "all",
         online: "all",
     });
@@ -40,7 +39,6 @@ export function useOperators() {
         select: (data) => (data ?? []).filter((a: any) => !a?.is_deleted),
     });
 
-    // уникальные отделы
     const departments = useMemo<string[]>(() => {
         const items = query.data ?? [];
         const set = new Set<string>();
@@ -86,7 +84,6 @@ export function useOperators() {
                 if (!hay.includes(q)) return false;
             }
 
-            // Отдел: приоритет — мульти, затем старый single
             const dep = (a.department ?? "").toString();
             if (filters.departments && filters.departments.length > 0) {
                 if (!dep || !filters.departments.includes(dep)) return false;
@@ -94,20 +91,17 @@ export function useOperators() {
                 if (dep !== filters.department) return false;
             }
 
-            // Робот / Человек
             if (filters.robot !== "all") {
                 const isRobot = !Boolean(a?.post_obrabotka);
                 const needRobot = filters.robot === "robot";
                 if (isRobot !== needRobot) return false;
             }
 
-            // Онлайн / Оффлайн
             if (filters.online !== "all") {
                 const needOnline = filters.online === "online";
                 if (isOnlineByFields(a) !== needOnline) return false;
             }
 
-            // Проекты: хотя бы один из выбранных
             if (filters.projects.length) {
                 const set = new Set(a?.projects ?? []);
                 const hasAny = filters.projects.some((p) => set.has(p));

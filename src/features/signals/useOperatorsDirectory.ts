@@ -1,4 +1,3 @@
-// src/features/signals/useOperatorsDirectory.ts (или оставь прежний путь)
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import { useSelector } from "react-redux";
@@ -11,9 +10,7 @@ type UsersObjectResponse = {
 };
 type UsersArrayResponse = { result?: RawUser[]; data?: RawUser[] };
 
-/** map: { [login]: name } */
 export function useOperatorsDirectory() {
-    // берём актуальный glagol_parent из Redux — хук пересчитает запрос при изменении
     const glagol_parent = useSelector(
         (s: RootState) => s.credentials.glagolParent || ""
     );
@@ -28,7 +25,6 @@ export function useOperatorsDirectory() {
 
             const map: Record<string, string> = {};
 
-            // ТЕКУЩИЙ ФОРМАТ: data.users — объект { "1000": { name: "Иван" }, ... }
             if (data && data.users && typeof data.users === "object") {
                 for (const [login, u] of Object.entries(data.users)) {
                     map[login] = u?.name || login;
@@ -36,7 +32,6 @@ export function useOperatorsDirectory() {
                 return map;
             }
 
-            // Фоллбек на массив (если когда-то встретится)
             const rows: RawUser[] = (data?.result ?? data?.data ?? []) as RawUser[];
             for (const u of rows) {
                 if (!u?.login) continue;
@@ -44,16 +39,14 @@ export function useOperatorsDirectory() {
             }
             return map;
         },
-        // настройки
         staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: false,
         placeholderData: {},
         select: (m) => ({ ...m }),
-        enabled: true, // можно поставить !!glagol_parent, если не хочешь стреляć без параметра
+        enabled: true,
     });
 }
 
-/** "Имя (login) · Отдел: ..." */
 export function formatOperatorLine(
     login: string,
     dict?: Record<string, string>,
@@ -65,7 +58,6 @@ export function formatOperatorLine(
     return department ? `${base} · Отдел: ${department}` : base;
 }
 
-/** "Имя (login)" или просто login */
 export function formatOperator(login: string, dict?: Record<string, string>) {
     if (!login) return "";
     const name = dict?.[login];

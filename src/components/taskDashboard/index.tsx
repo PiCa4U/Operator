@@ -19,8 +19,6 @@ import {AssignComp} from "./components/assign";
 import {chatApi} from "../../features/itsm/chat/api";
 import {selectTableFilters, TableFilters, tasksTableActions} from "../../redux/tasksTableSlice";
 
-// --- Типы данных ---
-// ---- Session-scoped storage helpers ----
 const TABLE_SCOPE = 'tasksTable';
 
 function makeScope(presetId?: number) {
@@ -38,7 +36,6 @@ function ssRemove(key: string) {
     try { sessionStorage.removeItem(key); } catch {}
 }
 
-// ---- Local "last snapshot" helpers ----
 function lsRead<T>(key: string, fallback: T): T {
     try { const v = localStorage.getItem(key); return v ? JSON.parse(v) as T : fallback; } catch { return fallback; }
 }
@@ -48,14 +45,11 @@ function lsWrite(key: string, val: any) {
 
 type Step = { type: string; code_filename?: string };
 
-const COL_W_DEFAULT = 240; // дефолт для всех данных
+const COL_W_DEFAULT = 240;
 const COL_W: Record<string, number> = {
-    '#select': 44,     // чекбокс
-    '#actions': 76,    // быстрые действия
-    '#messages': 150 ,  // колонка "Сообщения"
-    // при желании можно задать точечно по ключам из preset.structure:
-    // '1': 180,
-    // '2': 220,
+    '#select': 44,
+    '#actions': 76,
+    '#messages': 150 ,
 };
 const getColW = (key: string) => COL_W[key] ?? COL_W_DEFAULT;
 
@@ -65,11 +59,9 @@ function makeGroupCardUrl(row: ApiRow, selectedPreset: OptionType | null, phones
     u.searchParams.set("card", "1");
     u.searchParams.set("ids", (row.id_list || []).join(","));
 
-    // желательно: чтобы при открытии выбрался тот же пресет
     const pid = selectedPreset?.preset?.id;
     if (pid) u.searchParams.set("pid", String(pid));
 
-    // опционально: добавим guid первого контакта, если знаем — чтоб сразу поднялся чат
     const byId = new Map<number, any>(phonesData.map(p => [p.id, p]));
     for (const id of row.id_list || []) {
         const p = byId.get(id);
@@ -111,10 +103,10 @@ function extractActionSteps(act?: { [k: string]: any }): Step[] {
 }
 
 const UI = {
-    font: 14,   // тело таблицы
-    head: 15,   // заголовки столбцов
-    menu: 14,   // выпадающее меню действий
-    icon: 18,   // иконки в колонке "Действия"
+    font: 14,
+    head: 15,
+    menu: 14,
+    icon: 18,
 } as const;
 
 type FilterMethod =
@@ -132,13 +124,8 @@ type SearchItemCfg = {
     name: string;
     methods: FilterMethod[];
     options?: OptionDescriptor[];
-    // ↓ новое поле
     default?: {
         method: FilterMethod;
-        // Может быть строкой или массивом:
-        // - для IN/NOT IN — массив строк
-        // - для '=', '!=', 'LIKE', 'NOT LIKE' — строка
-        // - для DATES — [from, to] (YYYY-MM-DD) или относительные "{today}", "{today-3}", "{today+7}"
         options: string | string[];
     };
 };
@@ -147,25 +134,24 @@ export type ColumnCfgWithSearch = {
     name: string;
     default: string;
     render_template: string;
-    search?: SearchItemCfg[]; // НОВОЕ
+    search?: SearchItemCfg[];
 };
 
-// черновики настроек в попапах (локально до «Применить»)
 type ServerDraftItem = {
     key: string;
     method: FilterMethod;
-    values: string[]; // для не-IN берём values[0] как одиночное значение
+    values: string[];
 };
 type ServerDraftByCol = {
-    selectedIdx: number | null;   // какая «радиокнопка» активна (или null)
-    items: ServerDraftItem[];     // по количеству search[] у столбца
+    selectedIdx: number | null;
+    items: ServerDraftItem[];
 };
 
 type ServerAppliedByCol = {
     key: string;
     method: FilterMethod;
     values: string[];
-} | null; // null = фильтр по условию для столбца не активен
+} | null;
 
 interface ColumnCell {
     name: string;
@@ -202,7 +188,6 @@ export interface OptionType {
     preset: Preset;
 }
 
-// Опции для селекта действий
 export interface ActionOption {
     value: string;
     label: string;
@@ -325,12 +310,10 @@ const PresetSelectorTable: React.FC<Props> = ({
     const {monitorUsers} = useSelector(
         (state: RootState) => state.operator.monitorData
     );
-    // Скоуп ключей зависит от выбранного пресета
     const scope = useMemo(() => makeScope(selectedPreset?.preset?.id), [selectedPreset?.preset?.id]);
     const lsKeyLast = useMemo(() => `${scope}:last`, [scope]);
 
 
-// Набор ключей для sessionStorage (текущее состояние вкладки)
     const ssKey = useMemo(() => ({
         rowsPerPage: `${scope}:rowsPerPage`,
         searchTerm:  `${scope}:searchTerm`,
@@ -338,7 +321,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         sort:        `${scope}:sort`,
         selectedOp:  `${scope}:selectedOperator`,
         localFilters:`${scope}:localFilters`,
-        serverFilters:`${scope}:serverFilters`,   // текущие серверные фильтры вкладки
+        serverFilters:`${scope}:serverFilters`,
         page:        `${scope}:page`,
     }), [scope]);
 
@@ -385,7 +368,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         const entries = Object.entries(monitorUsers || {})
             .filter(([_, data]) => data.post_obrabotka === true);
 
-        // Разделяем текущего оператора и остальных
         const currentOperatorEntry = entries.find(([login]) => login === sipLogin);
         const otherEntries = entries.filter(([login]) => login !== sipLogin);
 
@@ -420,7 +402,6 @@ const PresetSelectorTable: React.FC<Props> = ({
     const [statusOptions, setStatusOptions] = useState<string[]>([])
     const [modules, setModules] = useState<ModuleType[]>([]);
 
-    // какой столбец сейчас открыт в попапе
     const [openFilterCol, setOpenFilterCol] = useState<string | null>(null);
 
     const [filterSide, setFilterSide] = useState<'left' | 'right'>('left');
@@ -434,7 +415,6 @@ const PresetSelectorTable: React.FC<Props> = ({
     const bytesToMB = (n: number) => (n / (1024 * 1024)).toFixed(1);
 
     function pickNiceErrorMessage(err: any): string {
-        // Достаём строку сообщения из всего, что может прилететь
         let raw = "";
         if (typeof err?.response?.data === "string") raw = err.response.data;
         else if (typeof err?.response?.data?.message === "string") raw = err.response.data.message;
@@ -444,7 +424,6 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         const text = (raw || "").toString();
 
-        // 1) gRPC oversize: "Sent message larger than max (27129499 vs. 26214400)"
         const oversize = text.match(/Sent message larger than max \((\d+)\s*vs\.\s*(\d+)\)/i);
         if (oversize) {
             const sent = Number(oversize[1]);
@@ -453,18 +432,15 @@ const PresetSelectorTable: React.FC<Props> = ({
                 + `Сузьте фильтры: диапазон дат, проекты, статусы или уменьшите выборку.`;
         }
 
-        // 2) RESOURCE_EXHAUSTED без чисел — та же рекомендация
         if (/StatusCode\.?RESOURCE_EXHAUSTED/i.test(text)) {
             return `Сервер отклонил запрос из-за объёма данных (RESOURCE_EXHAUSTED). `
                 + `Сузьте фильтры: диапазон дат, проекты, статусы или уменьшите выборку.`;
         }
 
-        // 3) Таймауты/задержки
         if (/deadline exceeded|timeout/i.test(text)) {
             return `Сервер не ответил вовремя. Сузьте фильтры (диапазон дат/проект/статус) и повторите.`;
         }
 
-        // 4) Фолбэк: всегда с подсказкой
         return `Не удалось загрузить данные. Сузьте фильтры (диапазон дат, проекты, статусы) и попробуйте снова.`;
     }
 
@@ -477,22 +453,18 @@ const PresetSelectorTable: React.FC<Props> = ({
         const presetId = selectedPreset.preset.id;
         const structure = (selectedPreset.preset.structure ?? {}) as Record<string, ColumnCfgWithSearch>;
 
-        // соберём appliedServerFilters из defaults (учтёт {today} и макросы пользователя)
         const defaults = buildAppliedFromDefaults(structure);
 
-        // применяем
         setAppliedServerFilters(defaults);
-        setAppliedLocalFilters({});             // локальные "в найденном" — очистим
+        setAppliedLocalFilters({});
         setOpenFilterCol(null);
 
-        // сохраняем в LS как актуальные на сегодня
         try {
             localStorage.setItem(serverFiltersKey(presetId), JSON.stringify(defaults));
             localStorage.setItem(serverFiltersDayKey(presetId), toYmd(new Date()));
             localStorage.setItem(LS_LOCAL_FILTERS_KEY(presetId), JSON.stringify({}));
         } catch {}
 
-        // перезагрузка с учётом дефолтов
         const extra = buildExtraFilterByFromMap(defaults);
         loadGroupedPhones(extra);
     }, [selectedPreset, setAppliedServerFilters, setAppliedLocalFilters]);
@@ -512,7 +484,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         };
     }, []);
 
-// Активен ли фильтр у конкретной колонки (локальный или серверный)
     const isColumnFiltered = useCallback(
         (colKey: string) =>
             Boolean((appliedLocalFilters[colKey] ?? '').trim()) ||
@@ -577,7 +548,6 @@ const PresetSelectorTable: React.FC<Props> = ({
     }, [unreadOnly, tableData, guidCounts]);
 
     useEffect(() => {
-        // раньше: localStorage.setItem(ROWS_PER_PAGE_KEY, String(rowsPerPage));
         ssWrite(ssKey.rowsPerPage, rowsPerPage);
         setCurrentPage(1);
     }, [rowsPerPage, setCurrentPage, ssKey.rowsPerPage]);
@@ -621,10 +591,8 @@ const PresetSelectorTable: React.FC<Props> = ({
             return;
         }
 
-        // Пытаемся взять last-снимок из localStorage
         const last = lsRead<TabStateSnapshot | null>(lsKeyLast, null);
         if (last) {
-            // 1) Применяем в React-состояние
             setAppliedServerFilters(last.appliedServerFilters || {});
             setAppliedLocalFilters(last.appliedLocalFilters || {});
             setSearchTerm(last.searchTerm ?? '');
@@ -637,8 +605,6 @@ const PresetSelectorTable: React.FC<Props> = ({
             setStartDate(last.dateRange?.start ? parseYmd(last.dateRange.start) : null);
             setEndDate(last.dateRange?.end ? parseYmd(last.dateRange.end) : null);
 
-            // 2) И сразу фиксируем это как «текущее состояние вкладки» в sessionStorage,
-            // чтобы остальные эффекты уже видели заполненные значения:
             ssWrite(ssKey.serverFilters, last.appliedServerFilters || {});
             ssWrite(ssKey.localFilters,  last.appliedLocalFilters  || {});
             ssWrite(ssKey.searchTerm,    last.searchTerm ?? '');
@@ -658,7 +624,6 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         const raw = localStorage.getItem(LS_LOCAL_FILTERS_KEY(presetId));
         if (!raw) {
-            // нет сохранений — просто обнуляем локальные фильтры
             setAppliedLocalFilters({});
             return;
         }
@@ -679,7 +644,6 @@ const PresetSelectorTable: React.FC<Props> = ({
             const cache = phonesCacheRef.current;
             const inFlight = inflightPhonesRef.current;
 
-            // отбрасываем то, что уже есть в кэше или уже запрошено
             ids.forEach(id => {
                 if (cache.has(id)) return;
                 if (inFlight.has(id)) return;
@@ -719,7 +683,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         [selectedPreset?.preset?.group_table, role, buildBaseFilter, upsertFlatPhones]
     );
 
-// вместо чтения из localStorage в on-preset change:
     useEffect(() => {
         const presetId = selectedPreset?.preset?.id;
         if (!presetId) return;
@@ -727,7 +690,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         setAppliedLocalFilters(parsed && typeof parsed === 'object' ? parsed : {});
     }, [selectedPreset?.preset?.id, ssKey.localFilters]);
 
-// вместо записи в LS:
     useEffect(() => {
         const presetId = selectedPreset?.preset?.id;
         if (!presetId) return;
@@ -746,7 +708,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         sortConfig?.key,
         sortConfig?.direction,
     ]);
-// Поиск — один раз при монтировании
     useEffect(() => {
         const v = ssRead<string | null>(ssKey.searchTerm, null);
         if (v !== null) setSearchTerm(v);
@@ -757,9 +718,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         ssWrite(ssKey.searchTerm, searchTerm ?? '');
     }, [searchTerm, ssKey.searchTerm]);
 
-// было
-// useEffect(() => { const v = localStorage.getItem(LS_UNREAD_ONLY_KEY); if (v !== null) setUnreadOnly(v === '1' || v === 'true'); }, []);
-// useEffect(() => { localStorage.setItem(LS_UNREAD_ONLY_KEY, unreadOnly ? '1' : '0'); }, [unreadOnly]);
 
     useEffect(() => {
         const v = ssRead<boolean | null>(ssKey.unreadOnly, null);
@@ -771,10 +729,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         ssWrite(ssKey.unreadOnly, unreadOnly);
     }, [unreadOnly, ssKey.unreadOnly]);
 
-// Сортировка — один раз при монтировании
-// было
-// useEffect(() => { const raw = localStorage.getItem(LS_SORT_KEY); ... setSortConfig(parsed) }, []);
-// useEffect(() => { if (sortConfig) localStorage.setItem(LS_SORT_KEY, JSON.stringify(sortConfig)); else localStorage.removeItem(LS_SORT_KEY); }, [sortConfig?.key, sortConfig?.direction]);
 
     useEffect(() => {
         const parsed = ssRead<{ key: string; direction: 'asc'|'desc' } | null>(ssKey.sort, null);
@@ -787,9 +741,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         else ssRemove(ssKey.sort);
     }, [sortConfig, ssKey.sort]);
 
-// Оператор — когда список операторов готов
-    // было
-// useEffect(() => { const saved = localStorage.getItem(LS_SELECTED_OPERATOR_KEY); ... }, [operatorOptions])
 
     useEffect(() => {
         const saved = ssRead<string | null>(ssKey.selectedOp, null);
@@ -802,37 +753,32 @@ const PresetSelectorTable: React.FC<Props> = ({
         else ssRemove(ssKey.selectedOp);
     }, [selectedOperator, ssKey.selectedOp]);
 
-// восстановить страницу из ss
     useEffect(() => {
         const p = Number(ssRead<number | null>(ssKey.page, null));
         if (Number.isFinite(p) && p >= 1) setCurrentPage(p);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [ssKey.page]);
 
-// сохранять при изменении
     useEffect(() => {
         ssWrite(ssKey.page, currentPage);
     }, [currentPage, ssKey.page]);
 
-    // Поиск
     useEffect(() => {
         localStorage.setItem(LS_SEARCH_TERM_KEY, searchTerm ?? '');
     }, [searchTerm]);
 
-// Только с непрочитанными
     useEffect(() => {
         localStorage.setItem(LS_UNREAD_ONLY_KEY, unreadOnly ? '1' : '0');
     }, [unreadOnly]);
 
-// Сортировка
     useEffect(() => {
         if (sortConfig) localStorage.setItem(LS_SORT_KEY, JSON.stringify(sortConfig));
         else localStorage.removeItem(LS_SORT_KEY);
     }, [sortConfig?.key, sortConfig?.direction]);
 
     const getSortIcon = useCallback((key: string) => {
-        if (!sortConfig || sortConfig.key !== key) return 'unfold_more'; // нейтральная
-        return sortConfig.direction === 'asc' ? 'north' : 'south';      // ↑ / ↓
+        if (!sortConfig || sortConfig.key !== key) return 'unfold_more';
+        return sortConfig.direction === 'asc' ? 'north' : 'south';
     }, [sortConfig]);
 
     useEffect(() => {
@@ -841,7 +787,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         const freshPreset = presets.find(p => p.preset.id === selectedPreset.preset.id);
 
         if (!freshPreset) {
-            // Пресета больше нет в списке — удалить
             localStorage.removeItem('tasksSelectedPreset');
             return;
         }
@@ -849,25 +794,20 @@ const PresetSelectorTable: React.FC<Props> = ({
         const isDifferent = JSON.stringify(freshPreset) !== JSON.stringify(selectedPreset);
 
         if (isDifferent) {
-            // Если пресет обновился в списке — заменить
             setSelectedPreset(freshPreset);
             localStorage.setItem('tasksSelectedPreset', JSON.stringify(freshPreset));
         } else {
-            // Если тот же, но обновился selectedPreset — записать в localStorage
             localStorage.setItem('tasksSelectedPreset', JSON.stringify(selectedPreset));
         }
     }, [selectedPreset, presets]);
 
-// 1) Инициализируем appliedServerFilters из LS/дефолтов, НО без запроса
     useEffect(() => {
         const presetId = selectedPreset?.preset?.id;
         if (!presetId) return;
 
-        // 1) Пытаемся взять ТЕКУЩЕЕ состояние вкладки из sessionStorage
         const ssCur = ssRead<Record<string, ServerAppliedByCol> | null>(ssKey.serverFilters, null);
         if (ssCur) { setAppliedServerFilters(ssCur); return; }
 
-        // 2) Иначе — дневной дефолт из localStorage (как раньше)
         const lsKey  = serverFiltersKey(presetId);
         const dayKey = serverFiltersDayKey(presetId);
         const today  = toYmd(new Date());
@@ -881,30 +821,28 @@ const PresetSelectorTable: React.FC<Props> = ({
         if (!initialApplied) {
             const structure = (selectedPreset?.preset?.structure ?? {}) as Record<string, ColumnCfgWithSearch>;
             initialApplied = buildAppliedFromDefaults(structure);
-            localStorage.setItem(lsKey, JSON.stringify(initialApplied)); // дефолт на сегодня
+            localStorage.setItem(lsKey, JSON.stringify(initialApplied));
             localStorage.setItem(dayKey, today);
         }
 
         setAppliedServerFilters(initialApplied ?? {});
-        // и сразу складываем в SS, как «текущее» для вкладки
         ssWrite(ssKey.serverFilters, initialApplied ?? {});
     }, [selectedPreset?.preset?.id, ssKey.serverFilters]);
 
-// 2) Грузим данные, когда всё готово, включая server-фильтры
     useEffect(() => {
         if (!selectedPreset) return
         const bothNull = !startDate && !endDate
         const bothSet  = !!startDate && !!endDate
         if (!(bothNull || bothSet)) return
 
-        loadGroupedPhones() // внутри возьмёт актуальные appliedServerFilters
+        loadGroupedPhones()
     }, [
         selectedPreset?.preset?.id,
         startDate?.getTime(),
         endDate?.getTime(),
         selectedStatus,
         selectedOperator,
-        appliedServerFilters,         // <--- вот это главное
+        appliedServerFilters,
     ])
 
     useEffect(() => {
@@ -956,13 +894,11 @@ const PresetSelectorTable: React.FC<Props> = ({
     useEffect(() => {
         const isSearching = !!searchTerm?.trim();
 
-        // старт поиска: запомним текущую страницу и уйдём на 1
         if (isSearching && !wasSearchingRef.current) {
             pageBeforeSearchRef.current = currentPage;
             setCurrentPage(1);
         }
 
-        // поиск очистили: восстановим страницу, если была
         if (!isSearching && wasSearchingRef.current) {
             if (pageBeforeSearchRef.current && pageBeforeSearchRef.current > 0) {
                 setCurrentPage(pageBeforeSearchRef.current);
@@ -993,14 +929,12 @@ const PresetSelectorTable: React.FC<Props> = ({
                 if (!a && !b) return;
 
                 if (isRealTimestampKey(key)) {
-                    // timestamp → BETWEEN
                     const s = parseYmd((a ?? b)!);
                     const e = parseYmd((b ?? a)!);
                     const startStr = formatWithTimezone(s <= e ? s : e, 'start');
                     const endStr   = formatWithTimezone(s <= e ? e : s, 'end');
                     out[key] = ['BETWEEN', [startStr, endStr]];
                 } else {
-                    // строковые даты → LIKE IN по списку yyyy-MM-dd
                     const days = expandDateStrings(a ?? '', b ?? '');
                     if (days.length) out[key] = ['LIKE IN', days];
                 }
@@ -1013,7 +947,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                 return;
             }
 
-            // '=', '!=', 'LIKE', 'NOT LIKE'
             const v = nonEmptyStr(item.values?.[0]);
             if (v) out[key] = [method, v];
         });
@@ -1032,10 +965,8 @@ const PresetSelectorTable: React.FC<Props> = ({
     }, [selectedPreset])
     useEffect(() => {
         const handler = (payload: Record<string, ModuleType[]>) => {
-            // Собираем модули в flat-массив
             const allModules = Object.values(payload).flat();
 
-            // Уникализируем по filename (можно по id, если гарантированно одинаков)
             const uniqueMap = new Map<string, ModuleType>();
             allModules.forEach(mod => {
                 if (!uniqueMap.has(mod.filename)) {
@@ -1098,7 +1029,6 @@ const PresetSelectorTable: React.FC<Props> = ({
     }, [role, selectedPreset]);
 
 
-    // 1) загрузка пресетов
     useEffect(() => {
         if (!role || projectNames.length === 0) return;
 
@@ -1113,7 +1043,6 @@ const PresetSelectorTable: React.FC<Props> = ({
             const presetOptions = data.map(p => ({value: p.id, label: p.preset_name, preset: p}));
             setPresets(presetOptions);
 
-            // --- Синхронизация с localStorage ---
             const savedRaw = localStorage.getItem('tasksSelectedPreset');
             if (savedRaw) {
                 try {
@@ -1163,7 +1092,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         return `${base}${time}${tz}`;
     }
 
-    // yyyy-MM-dd -> Date (локальная полуночь)
     function parseYmd(ymd: string): Date {
         const [y, m, d] = ymd.split('-').map(Number);
         return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0);
@@ -1172,7 +1100,6 @@ const PresetSelectorTable: React.FC<Props> = ({
     const serverFiltersKey = (presetId: number) => `tasksServerFilters_${presetId}`;
     const serverFiltersDayKey = (presetId: number) => `tasksServerFiltersDay_${presetId}`;
 
-// yyyy-MM-dd из Date (локальная дата)
     function toYmd(d: Date): string {
         const yyyy = d.getFullYear();
         const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -1180,7 +1107,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         return `${yyyy}-${mm}-${dd}`;
     }
 
-// Разбор "{today}", "{today-3}", "{today+7}"
     function resolveRelativeToken(token: string): string | null {
         const m = token.trim().toLowerCase().match(/^\{today(?:([+-]\d+))?\}$/);
         if (!m) return null;
@@ -1191,7 +1117,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         return toYmd(d);
     }
 
-// Преобразуем default.options -> values: string[]
     function normalizeDefaultValues(
         method: FilterMethod,
         raw: string | string[],
@@ -1216,7 +1141,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         return [materialize(rel ?? one)];
     }
 
-// Собираем appliedServerFilters из defaults в структуре пресета
     function buildAppliedFromDefaults(structure: Record<string, ColumnCfgWithSearch>): Record<string, ServerAppliedByCol> {
         const out: Record<string, ServerAppliedByCol> = {};
         const { monitorUsers } = (store.getState() as RootState).operator.monitorData || { monitorUsers: {} };
@@ -1231,15 +1155,11 @@ const PresetSelectorTable: React.FC<Props> = ({
 
             const item = arr[withDefaultIdx];
             const method = item.default!.method as FilterMethod;
-            // учитываем макросы пользователя
             let values = normalizeDefaultValues(method, item.default!.options, { sipLogin, monitorUsers });
 
-            // Если это users-опции — дефолт всегда должен быть ЛОГИНом (мы уже так вернули из макроса)
-            // На всякий, если дефолт пришёл реальным ФИО, попробуем заменить его на логин текущего:
             const depts = extractUsersDepartments(item.options);
             if (depts) {
                 values = values.map(v => {
-                    // если случайно прислали имя вместо логина — ставим свой логин
                     if (v && !/^\d+$/.test(v) && sipLogin) return sipLogin;
                     return v;
                 });
@@ -1250,19 +1170,17 @@ const PresetSelectorTable: React.FC<Props> = ({
         return out;
     }
 
-// инкремент на 1 день
     function addDays(date: Date, days: number): Date {
         const dt = new Date(date);
         dt.setDate(dt.getDate() + days);
         return dt;
     }
 
-// сделать массив yyyy-MM-dd для диапазона включительно
     function expandDateStrings(startYmd: string, endYmd: string): string[] {
         if (!startYmd && !endYmd) return [];
         const s = parseYmd(startYmd || endYmd);
         const e = parseYmd(endYmd || startYmd);
-        const start = s <= e ? s : e;      // если перепутали — поменяем местами
+        const start = s <= e ? s : e;
         const end = s <= e ? e : s;
 
         const out: string[] = [];
@@ -1275,7 +1193,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         return out;
     }
 
-    // ключ считается timestamp-колонкой (created_dt/next_call_dt/deadline)?
     function isRealTimestampKey(key: string): boolean {
         const k = (key || '').toLowerCase();
         return /\b(created_dt|next_call_dt|deadline|deadline_dt|deadline_date)\b/.test(k);
@@ -1283,7 +1200,6 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     function sanitizeList(vals: unknown): string[] {
         const arr = Array.isArray(vals) ? vals : [];
-        // trim + фильтруем пустые + уникализируем
         return Array.from(new Set(arr.map(v => String(v ?? '').trim()).filter(Boolean)));
     }
 
@@ -1292,8 +1208,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         return s.length ? s : null;
     }
 
-// Превращаем черновик по колонке в применённый фильтр,
-// отбрасывая пустые кейсы. Вернёт null, если нет валидных значений.
     function coerceAppliedFromDraft(item: ServerDraftItem): ServerAppliedByCol {
         const { key, method } = item;
 
@@ -1308,16 +1222,13 @@ const PresetSelectorTable: React.FC<Props> = ({
             return (a || b) ? { key, method, values: [a ?? '', b ?? ''] } : null;
         }
 
-        // '=', '!=', 'LIKE', 'NOT LIKE'
         const v = nonEmptyStr(item.values?.[0]);
         return v ? { key, method, values: [v] } : null;
     }
 
     useEffect(() => {
-        // 1. Смотрим, что в LS
         const saved = localStorage.getItem('selectedStatus');
         if (saved === null) {
-            // если ничего нет — ничего не делаем, дальше
             return;
         }
 
@@ -1342,9 +1253,7 @@ const PresetSelectorTable: React.FC<Props> = ({
             const { preset } = selectedPreset;
             resetPhonesCache();
 
-            // базовый (в т.ч. project IN [...]) + серверные
             const base = buildBaseFilter();
-            // если зовём с extra (после "Применить") — оно уже отфильтровано
             const filterBy: any = extraFilterBy ? { ...base, ...extraFilterBy } : base;
 
             const response1 = await axios.post<ApiRow[]>('/api/v1/get_grouped_phones', {
@@ -1383,18 +1292,6 @@ const PresetSelectorTable: React.FC<Props> = ({
     };
 
 
-    /** Есть ли среди options объект { users: [...] } */
-    // function extractUsersDepartments(options?: OptionDescriptor[]): string[] | null {
-    //     if (!Array.isArray(options)) return null;
-    //     for (const o of options) {
-    //         if (o && typeof o === "object" && "users" in o && Array.isArray((o as any).users)) {
-    //             return (o as any).users.filter(Boolean).map(String);
-    //         }
-    //     }
-    //     return null;
-    // }
-
-    /** Унифицируем массив отделов у юзера */
     function readUserDepartments(u: any): string[] {
         // пытаемся найти поле с отделом(ами)
         const raw =
@@ -1433,29 +1330,23 @@ const PresetSelectorTable: React.FC<Props> = ({
             .filter(n => Number.isFinite(n));
         if (!ids.length) return;
 
-        // Если в ссылке задан pid — сводим на нужный пресет
         const pid = sp.get("pid");
         if (pid && presets.length) {
             const matched = presets.find(p => String(p.preset.id) === pid);
-            // Если пресет другой — сначала установим его и подождём следующий прогон эффекта
             if (matched && (!selectedPreset || matched.preset.id !== selectedPreset.preset.id)) {
                 setSelectedPreset(matched);
-                return; // ждём, пока selectedPreset применится
+                return;
             }
         }
 
-        // Если пресет ещё не готов (например, грузится из localStorage/сервера) — подождём
         if (!selectedPreset) return;
 
-        // Теперь всё готово: открываем карточку и гидрируем данные
         setOpenedGroup(ids);
         void hydrateByIds(ids);
 
-        // Помечаем, что URL обработан, только когда реально гидрировали
         urlHydratedRef.current = true;
     }, [presets, selectedPreset, hydrateByIds]);
 
-    /** Унифицируем список проектов у юзера (если есть) */
     function readUserProjects(u: any): string[] {
         const raw = u?.projects ?? u?.projects_names ?? null;
         if (!raw) return [];
@@ -1463,14 +1354,12 @@ const PresetSelectorTable: React.FC<Props> = ({
         return String(raw).split(",").map(s => s.trim()).filter(Boolean);
     }
 
-    /** true, если юзер попадает под отделы (если отделы заданы) */
     function userMatchesDepartments(u: any, wanted: string[] | null): boolean {
         if (!wanted || !wanted.length) return true;
         const deps = readUserDepartments(u).map(d => d.toLowerCase());
         return wanted.some(w => deps.includes(String(w).toLowerCase()));
     }
 
-    /** true, если юзер связан с проектами пресета (если у юзера есть такая инфа) */
     function userMatchesProjects(u: any, presetProjects: string[]): boolean {
         const up = readUserProjects(u);
         if (!up.length) return true; // нет инфы — не режем
@@ -1478,7 +1367,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         return presetProjects.some(p => set.has(String(p)));
     }
 
-    /** Построить список опций юзеров: [{label: 'Иван Иванов (1001)', value: '1001'}] */
     function buildUserOptionsByDepartments(
         monitorUsers: Record<string, any> | undefined,
         departments: string[] | null,
@@ -1496,18 +1384,15 @@ const PresetSelectorTable: React.FC<Props> = ({
             out.push({ label: `${name} (${login})`, value: String(login) });
         });
 
-        // Стабильная сортировка по имени
         out.sort((a, b) => a.label.localeCompare(b.label, 'ru'));
         return out;
     }
 
-    /** Разрешаем макросы пользователя. По требованию — и {user.name}, и {user.login} -> ЛОГИН */
     function resolveUserMacros(token: string, sipLogin: string): string {
         const low = token.toLowerCase().trim();
         if (low === "{user.login}" || low === "{user.name}") return String(sipLogin || "");
         return token;
     }
-    // Опции для выпадающего списка действий в шапке
     const actionOptions: ActionOption[] = useMemo(() => {
         if (!selectedPreset) return [];
         return selectedPreset.preset.actions.map(act => ({
@@ -1542,9 +1427,9 @@ const PresetSelectorTable: React.FC<Props> = ({
                 const cb = afterModulesCallbackRef.current;
                 afterModulesCallbackRef.current = null;
                 if (cb) {
-                    cb();                 // продолжаем цепочку (следующий шаг)
+                    cb();
                 } else {
-                    finishChain();        // это был последний шаг — обновляем таблицу
+                    finishChain();
                 }
 
             }
@@ -1568,14 +1453,12 @@ const PresetSelectorTable: React.FC<Props> = ({
         };
     }, [modulesInFlight]);
 
-    // Внутри PresetSelectorTable:
     const processRows = (rows: ApiRow[], opt: ActionOption, operator?: string) => {
         if (!opt?.action) return;
 
         const steps = extractActionSteps(opt.action);
         if (!steps.length) return;
 
-        // подготовим группы id по проектам
         const allIds = rows.flatMap(r => r.id_list);
         const idToProject = idProjectMap.reduce<Record<number, string>>((acc, { id, project_name }) => {
             acc[id] = project_name; return acc;
@@ -1693,7 +1576,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                 // }
 
                 default:
-                    // незнакомый шаг — пропускаем
                     runStep(i + 1);
             }
         };
@@ -1702,36 +1584,27 @@ const PresetSelectorTable: React.FC<Props> = ({
     };
 
 
-// Переписанная handleBulkProcess:
     const handleBulkProcess = (
         rows: ApiRow[],
         actionOpt?: ActionOption,
         isRowClick: boolean = false
     ) => {
-        // выбираем источник опции: либо переданная, либо из шапки
         const opt = actionOpt ?? selectedActionOption;
 
-        // 1) Если не row-click и нет опции — требуем выбор в шапке
         if (!opt && !isRowClick) {
             return Swal.fire("Ошибка", "Выберите действие в шапке", "error");
         }
 
-        // 2) Нет строк — ничего делать
         if (rows.length === 0) {
             return Swal.fire("Нечего обрабатывать", "Отметьте хотя бы одну строку", "info");
         }
 
-        // if (actionOpt?.action.action_type === "assign") {
-        //
-        // }
-        // 3) Если клик из строки и ровно один ID в одной строке — мгновенно обрабатываем
         if (isRowClick && rows.length === 1 && rows[0].id_list.length === 1) {
             return processRows(rows, opt!);
         }
 
-        // 4) Если одна строка, но несколько ID — открываем модалку
         const steps = actionOpt ? extractActionSteps(actionOpt.action) : [];
-        const needsModal = steps.some(s => s.type !== 'assign'); // для цепочек с чем-то кроме assign
+        const needsModal = steps.some(s => s.type !== 'assign');
         if (rows.length === 1 && rows[0].id_list.length > 1 && needsModal) {
             setModalIds(rows[0].id_list);
             setModalAction(actionOpt!.action);
@@ -1744,13 +1617,11 @@ const PresetSelectorTable: React.FC<Props> = ({
     };
 
 
-    // --- 3) поиск + сортировка + пагинация вычисляются мемоизированно ---
     const processedRows = useMemo(() => {
         if (!selectedPreset) return [];
 
         let result = tableData;
 
-        // 4.1 Локальные фильтры «в найденном» (по И)
         const activeLocal = Object.entries(appliedLocalFilters)
             .map(([colKey, val]) => [colKey, (val ?? '').trim().toLowerCase()] as const)
             .filter(([, v]) => v.length > 0);
@@ -1766,7 +1637,6 @@ const PresetSelectorTable: React.FC<Props> = ({
             );
         }
 
-        // 4.2 Глобальный поиск по всем колонкам
         const term = (searchTerm ?? '').toLowerCase().trim();
         if (term) {
             result = result.filter(row =>
@@ -1778,12 +1648,10 @@ const PresetSelectorTable: React.FC<Props> = ({
             );
         }
 
-        // 4.2.5 Только строки с непрочитанными
         if (unreadOnly) {
             result = result.filter(row => getRowMsgInfo(row).sumUnread > 0);
         }
 
-        // 4.3 Сортировка
         if (sortConfig) {
             result = [...result].sort((a, b) => {
                 const aCell = a[sortConfig.key] as ColumnCell | undefined;
@@ -1854,12 +1722,10 @@ const PresetSelectorTable: React.FC<Props> = ({
         if (from === 'body') {
             setScrollLeft(gridScrollRef.current.scrollLeft);
         } else {
-            // управление из верхнего бара (перетаскивание/клик)
             gridScrollRef.current.scrollLeft = scrollLeft;
         }
     };
 
-    // 3.3 разбиваем на страницы
     const totalPages = Math.max(1, Math.ceil(processedRows.length / rowsPerPage));
     const paginatedRows = processedRows.slice(
         (currentPage - 1) * rowsPerPage,
@@ -1890,7 +1756,6 @@ const PresetSelectorTable: React.FC<Props> = ({
     const showingFrom = totalRowsCount ? (currentPage - 1) * rowsPerPage + 1 : 0;
     const showingTo = totalRowsCount ? Math.min(currentPage * rowsPerPage, totalRowsCount) : 0;
 
-    // --- обработчики ---
     const toggleSort = (colKey: string) => {
         setSortConfig(prev => {
             if (!prev || prev.key !== colKey) return { key: colKey, direction: 'asc' };
@@ -1904,10 +1769,8 @@ const PresetSelectorTable: React.FC<Props> = ({
         const newSet = new Set(selectedRows);
         const allSelected = allKeys.every(k => newSet.has(k));
         if (allSelected) {
-            // снять всё на этой странице
             allKeys.forEach(k => newSet.delete(k));
         } else {
-            // отметить всё
             allKeys.forEach(k => newSet.add(k));
         }
         setSelectedRows(newSet);
@@ -2005,13 +1868,9 @@ const PresetSelectorTable: React.FC<Props> = ({
         await fetchStatuses();
     };
 
-// кто мы
     const hasSipLogin = !!sipLogin?.trim();
     const loginForUnread = hasSipLogin ? sipLogin : "client";
 
-// кэш счётчиков по guid
-
-// достать guid из элемента phonesData (учёт разных полей)
     function getGuidFromPhone(p: any): string | null {
         return (
             (p?.contact_info?.guid && String(p.contact_info.guid)) ||
@@ -2022,7 +1881,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         );
     }
 
-// все guid для данной строки
     function getGuidsForRow(row: ApiRow): string[] {
         const ids = row.id_list || [];
         const guids = new Set<string>();
@@ -2034,26 +1892,20 @@ const PresetSelectorTable: React.FC<Props> = ({
         return Array.from(guids);
     }
 
-// распарсить ответ /count -> unread/total
     function extractCounts(resp: any, hasSip: boolean, login: string) {
-        // unread
         let unread = 0;
         if (hasSip) {
-            // только мои непрочитанные:
             unread = Number(resp?.unwatched?.[login] ?? 0);
 
-            // ❗️если нужно прибавлять "responsible" — раскомментируй:
-            // unread += Number(resp?.unwatched?.responsible ?? 0);
         } else {
             const clientTop = Number(resp?.client ?? 0);
             const clientInUnwatched = Number(resp?.unwatched?.client ?? 0);
             unread = clientTop || clientInUnwatched || 0;
         }
 
-        // total — читаем реальное поле total_messages
         const total =
             Number(
-                resp?.total_messages ??   // <-- главное поле с твоего бэка
+                resp?.total_messages ??
                 resp?.total ??
                 resp?.all ??
                 resp?.messages ??
@@ -2064,7 +1916,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         return {unread, total};
     }
 
-// подгрузка счётчиков для одного guid (если ещё не в кэше)
     const repeatParams = (p: { guid?: string[]; logins?: string[] }) => {
         const parts: string[] = [];
         if (Array.isArray(p.guid))   parts.push(...p.guid.map(g => `guid=${encodeURIComponent(g)}`));
@@ -2076,13 +1927,11 @@ const PresetSelectorTable: React.FC<Props> = ({
         const list = Array.from(new Set(guids.filter(Boolean)));
         if (!list.length) return;
 
-        // нужно то, чего нет в кэше и не в полёте
         const need = list.filter(
             g => guidCounts[g] === undefined && !inflightGuidsRef.current.has(g)
         );
         if (!need.length) return;
 
-        // помечаем «в полёте», чтобы параллельные эффекты не дёргали повторно
         need.forEach(g => inflightGuidsRef.current.add(g));
 
         try {
@@ -2101,36 +1950,30 @@ const PresetSelectorTable: React.FC<Props> = ({
             };
 
             if (Array.isArray(data)) {
-                // массив объектов — поддерживаем на всякий
                 for (const item of data) {
                     const g = String(item?.guid ?? item?.GUID ?? item?.id ?? "");
                     if (g) put(g, item);
                 }
             } else if (data && typeof data === "object") {
-                // объект-словарь: пропускаем служебные поля, типа "status"
                 for (const [k, payload] of Object.entries<any>(data)) {
                     if (k === "status") continue; // <-- важно
                     put(k, payload);
                 }
             }
 
-            // 🔴 критично: то, что бек НЕ вернул, закрываем нулями — иначе вечные повторные запросы
             need.forEach(g => {
                 if (!merge[g]) merge[g] = { unread: 0, total: 0 };
             });
 
             setGuidCounts(prev => ({ ...prev, ...merge }));
         } catch (e) {
-            // ошибка — тоже закрываем нулями, чтобы не дергать снова
             const zeros = Object.fromEntries(need.map(g => [g, { unread: 0, total: 0 }]));
             setGuidCounts(prev => ({ ...prev, ...zeros }));
         } finally {
-            // снимаем пометки «в полёте»
             need.forEach(g => inflightGuidsRef.current.delete(g));
         }
     }
 
-// агрегировать по строке (сумма по всем guid строки)
     function getRowMsgInfo(row: ApiRow) {
         const guids = getGuidsForRow(row);
         let sumUnread = 0;
@@ -2159,21 +2002,18 @@ const PresetSelectorTable: React.FC<Props> = ({
     useEffect(() => {
         if (!Object.keys(expressConfig).length) return;
 
-        // Сразу получаем первый раз
         fetchStatuses();
 
-        // Запускаем интервал опроса каждые 15 секунд
         const intervalId = setInterval(() => {
             fetchStatuses();
         }, 5000);
 
-        // Чистим интервал при размонтировании или изменении expressConfig/role
         return () => clearInterval(intervalId);
     }, [expressConfig, role]);
 
     const renderExpressCards = () => {
         const entries = Object.entries(expressStates)
-            .filter(([_, state]) => role === "manager" || state.active); // ← фильтруем только активные для операторов
+            .filter(([_, state]) => role === "manager" || state.active);
 
         return (
             <div
@@ -2248,20 +2088,17 @@ const PresetSelectorTable: React.FC<Props> = ({
     };
 
     const applyColumnFilters = (colKey: string) => {
-        // локальный «в найденном»
         const nextLocal = {
             ...appliedLocalFilters,
             [colKey]: (localFilterDraft[colKey] ?? '').trim(),
         };
         setAppliedLocalFilters(nextLocal);
 
-        // серверный (радиокнопка)
         const sd = serverFilterDraft[colKey];
         let nextServerForCol: ServerAppliedByCol = null;
 
         if (sd && sd.selectedIdx !== null) {
             const draft = sd.items[sd.selectedIdx];
-            // 🔴 тут отбрасываем пустые кейсы:
             nextServerForCol = coerceAppliedFromDraft(draft);
         }
 
@@ -2275,7 +2112,6 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         setOpenFilterCol(null);
 
-        // грузим уже с отфильтрованным набором условий
         const extra = buildExtraFilterByFromMap(nextServer);
         loadGroupedPhones(extra);
     };
@@ -2286,19 +2122,16 @@ const PresetSelectorTable: React.FC<Props> = ({
     const toPlainOptions = (opts?: OptionDescriptor[]): string[] =>
         (opts ?? []).filter((o): o is string => typeof o === "string");
 
-    /** Если среди options есть объект {users: [...]}, вернём массив отделов, иначе null */
     function extractUsersDepartments(options?: OptionDescriptor[]): string[] | null {
         const found = (options ?? []).find(isUsersDescriptor);
         return found ? found.users.map(String).filter(Boolean) : null;
     }
 
     const resetColumnFilters = (colKey: string) => {
-        // сброс локального
         const nextLocal = {...appliedLocalFilters, [colKey]: ''};
         setAppliedLocalFilters(nextLocal);
         setLocalFilterDraft(prev => ({...prev, [colKey]: ''}));
 
-        // сброс серверного
         setServerFilterDraft(prev => {
             const cur = prev[colKey];
             if (!cur) return prev;
@@ -2373,7 +2206,6 @@ const PresetSelectorTable: React.FC<Props> = ({
     const exportToExcel = (scope: ExportScope = 'all') => {
         if (!selectedPreset) return;
 
-        // какие строки выгружать
         const rowsSrc =
             scope === 'page'
                 ? paginatedRows
@@ -2381,13 +2213,11 @@ const PresetSelectorTable: React.FC<Props> = ({
                     ? processedRows.filter(r => selectedRows.has(r.id_list.join(',')))
                     : processedRows;
 
-        // заголовки и порядок колонок — как в таблице
         const cols = Object.entries(selectedPreset.preset.structure as Record<string, ColumnCfgWithSearch>)
             .sort(([a], [b]) => Number(a) - Number(b));
 
-        const headers = cols.map(([_, cfg]) => cfg.name).concat('Сообщения'); // «Действия» не добавляем
+        const headers = cols.map(([_, cfg]) => cfg.name).concat('Сообщения');
 
-        // формируем двумерный массив (AOA), чтобы контролировать порядок колонок
         const aoa: (string | number)[][] = [headers];
 
         rowsSrc.forEach(row => {
@@ -2400,7 +2230,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                 return val ?? '';
             });
 
-            // колонка «Сообщения»
             const {sumUnread, sumTotal} = getRowMsgInfo(row);
             rowArr.push(`${sumUnread}/${sumTotal}`);
 
@@ -2409,7 +2238,6 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         const ws = XLSX.utils.aoa_to_sheet(aoa);
 
-        // чуть-чуть ширины колонок, чтобы было читабельно
         ws['!cols'] = headers.map(h => ({wch: Math.max(12, String(h).length + 2)}));
 
         const wb = XLSX.utils.book_new();
@@ -2706,14 +2534,11 @@ const PresetSelectorTable: React.FC<Props> = ({
                         <div
                             style={{
                                 height: '70vh',
-                                // важный момент: вертикальный скролл теперь у gridScrollRef,
-                                // поэтому тут не включаем overflow, чтобы sticky работал как надо
                                 position: 'relative',
                                 display: 'flex',
                                 flexDirection: 'column',
                             }}
                         >
-                            {/* ВЕРХНИЙ ПСЕВДО-СКРОЛЛ */}
                             <div
                                 ref={topHScrollRef}
                                 style={{
@@ -2726,7 +2551,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                                     borderBottom: '1px solid rgba(0,0,0,0.08)',
                                     userSelect: 'none',
                                 }}
-                                // колесо/трекпад поверх верхней полоски будет крутить низ
                                 onWheel={(e) => {
                                     if (!gridScrollRef.current) return;
                                     const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
@@ -2740,11 +2564,10 @@ const PresetSelectorTable: React.FC<Props> = ({
                                     onMouseDown={(e) => {
                                         if (!topHScrollRef.current) return;
                                         const track = topHScrollRef.current.getBoundingClientRect();
-                                        const P = 8; // отступы трека
+                                        const P = 8;
                                         const trackW = Math.max(0, track.width - P*2);
                                         const maxScroll = Math.max(1, contentWidth - viewportW);
 
-                                        // центрируем «прыжок» к месту клика
                                         const clickX = e.clientX - track.left - P;
                                         const thumbW = Math.max(24, Math.round((viewportW / contentWidth) * trackW));
                                         const maxLeft = Math.max(0, trackW - thumbW);
@@ -2802,14 +2625,11 @@ const PresetSelectorTable: React.FC<Props> = ({
                                     setScrollLeft(gridScrollRef.current!.scrollLeft);
                                 }}
                                 style={{
-                                    /* важно: растягиваемся внутри родителя 70vh */
                                     flex: '1 1 0%',
-                                    minHeight: 0,              // критично для корректного скролла во flex-контейнерах
-                                    /* по X всегда скроллим, а по Y — только если есть строки */
+                                    minHeight: 0,
+
                                     overflowX: 'auto',
                                     overflowY: hasRows ? 'auto' : 'visible',
-                                    /* maxHeight уже не нужен, но можно оставить, если хочешь лимит */
-                                    // maxHeight: `calc(70vh - ${needsHScroll ? TOP_HSCROLL_H : 0}px)`,
                                     paddingBottom: 8,
                                 }}
                             >
@@ -2980,7 +2800,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                         <button
                                                             type="button"
                                                             onClick={(e) => {
-                                                                // твоя логика открытия попапа — оставил как у тебя
                                                                 const isOpen = openFilterCol === colKey;
                                                                 if (isOpen) { setOpenFilterCol(null); return; }
 

@@ -1,13 +1,12 @@
 export type ToneName = 'ringback' | 'busy' | 'reorder' | 'incoming';
 export type ToneSources = Partial<Record<ToneName, string>>;
 
-type OscStep = { f: number; d: number }; // frequency, duration(ms)
+type OscStep = { f: number; d: number };
 
 export class ToneManager {
     private els: Partial<Record<ToneName, HTMLAudioElement>> = {};
     private playing: ToneName | null = null;
 
-    // WebAudio fallback
     private ctx: AudioContext | null = null;
     private gain: GainNode | null = null;
     private cadenceTimer: number | null = null;
@@ -59,7 +58,6 @@ export class ToneManager {
                 this.playing = name;
                 return;
             } catch {
-                // автоплей запрещён или источник не поддерживается — fallback
             }
         }
 

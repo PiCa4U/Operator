@@ -1,17 +1,16 @@
-// src/components/managerPanel/tabs/monitoring/components/ActiveDialogsTable.tsx
 import React from "react";
 import { VideoTile } from "../../../../../screenShare/VideoTile";
 
 export type Row = {
     project: string;
-    operator: string; // логин
+    operator: string;
     name?: string;
     department?: string | null;
     phone?: string;
     duration?: string;
     uuid?: string | null;
     b_uuid?: string | null;
-    direction?: string | null; // inbound / outbound / ...
+    direction?: string | null;
 };
 
 export type ConnectionType = "listen_only" | "whisper" | "takeover" | "barge";
@@ -27,23 +26,17 @@ type Props = {
     onHold?: (uuid: string) => void;
     onHangup?: (uuid: string) => void;
     pending?: Record<string, boolean>;
-    /** ▶️ новый колбэк – подключение к экрану оператора */
     onScreenShare?: (operatorLogin: string) => void;
-    /** ▶️ новый колбэк – подключение менеджера к звонку */
     onJoinCall?: (row: Row, type: ConnectionType) => void;
-    /** состояние "созвона" по uuid исходного звонка */
     joinStatesByTargetUuid?: Record<string, JoinUiState>;
 
-    /** ▶️ кто сейчас активен для шаринга */
     activeScreenOperator?: string | null;
-    /** ▶️ состояние viewer-а */
     screenShareStatus?: "idle" | "connecting" | "connected";
     screenShareError?: string | null;
     screenShareStreams?: MediaStream[];
     onStopScreenShare?: () => void;
 };
 
-/** эврика по uuid – дублируем логику из MonitoringTab */
 const resolveJoinUuidFromRow = (
     row: Row,
     type: ConnectionType
@@ -134,7 +127,6 @@ export const ActiveDialogsTable: React.FC<Props> = ({
                             ? !!pending?.[currentUuid]
                             : false;
 
-                        // uuid для каждого типа (логика совпадает с MonitoringTab)
                         const joinUuidByType: Record<ConnectionType, string | null> = {
                             listen_only: resolveJoinUuidFromRow(r, "listen_only"),
                             whisper:     resolveJoinUuidFromRow(r, "whisper"),
@@ -142,7 +134,6 @@ export const ActiveDialogsTable: React.FC<Props> = ({
                             barge:       resolveJoinUuidFromRow(r, "barge"),
                         };
 
-                        // состояние join-а для каждого типа
                         const joinStateByType: Partial<Record<ConnectionType, JoinUiState>> = {};
                         (["listen_only", "whisper", "takeover", "barge"] as ConnectionType[]).forEach((t) => {
                             const ju = joinUuidByType[t];
@@ -151,7 +142,6 @@ export const ActiveDialogsTable: React.FC<Props> = ({
                             }
                         });
 
-                        // по этому звонку уже есть какой-то join (любого типа)
                         const anyJoinActive = (["listen_only", "whisper", "takeover", "barge"] as ConnectionType[])
                             .some((t) => !!joinStateByType[t]);
 
@@ -222,7 +212,6 @@ export const ActiveDialogsTable: React.FC<Props> = ({
                                             role="group"
                                             aria-label="call-actions"
                                         >
-                                            {/* варианты подключения менеджера к разговору */}
                                             {onJoinCall && (
                                                 <>
                                                     {/* Слушать / Закончить прослушивание */}
@@ -401,7 +390,6 @@ export const ActiveDialogsTable: React.FC<Props> = ({
                                     </td>
                                 </tr>
 
-                                {/* Инлайновая панель просмотра экрана под активной строкой */}
                                 {isScreenActiveHere && (
                                     <tr className="table-active">
                                         <td colSpan={7}>

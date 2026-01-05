@@ -23,7 +23,6 @@ if (!container) throw new Error("Root container not found");
 
 const isProd = process.env.NODE_ENV === "production";
 
-/* ===================== читаем data-* ===================== */
 const ds = container.dataset as Partial<Record<string, string>>;
 
 const pick = (v: string | undefined, fallback = "") => {
@@ -31,8 +30,6 @@ const pick = (v: string | undefined, fallback = "") => {
     return s || fallback;
 };
 
-// jQuery/шаблон обычно прокидывает вот это:
-// data-sip-login, data-worker, data-session-key, data-fs-server, data-glagol-parent, data-webrtc, data-chat-server, data-code-server
 const sipLogin = pick(ds.sipLogin);
 const worker = pick(ds.worker);
 const sessionKey = pick(ds.sessionKey);
@@ -62,7 +59,6 @@ if (isProd) {
     }
 }
 
-/* ===================== axios ===================== */
 if (fsServer) {
     axios.defaults.baseURL = `https://${fsServer}`;
 }
@@ -70,7 +66,6 @@ if (sessionKey) {
     axios.defaults.headers.common["Authorization"] = `Bearer ${sessionKey}`;
 }
 
-/* ===================== bootstrap ===================== */
 store.dispatch(
     setCredentials({
         sessionKey,

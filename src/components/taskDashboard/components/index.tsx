@@ -334,7 +334,6 @@ const GroupActionModal: React.FC<Props> = ({
     };
 
 
-// ЗАМЕНИ вот этот useEffect (который делает axios.post к /api/v1/get_grouped_phones) на этот:
     useEffect(() => {
         if (!isOpen) return;
 
@@ -375,10 +374,8 @@ const GroupActionModal: React.FC<Props> = ({
                 const raw = response.data;
                 const allRows: RawRow[] = flattenRows(raw);
 
-                // уже отфильтровано на бэке — просто кладём
                 setRawRows(allRows);
 
-                // проставим чекбоксы
                 setSelectedIds(() => {
                     if (phoneID && allRows.some(r => r.id === phoneID)) {
                         return new Set([phoneID]);
@@ -386,7 +383,6 @@ const GroupActionModal: React.FC<Props> = ({
                     return new Set(allRows.map(r => r.id));
                 });
 
-                // сбросим локальные фильтры модалки
                 setSelectedFilters({
                     group1: new Set(),
                     group2: new Set(),

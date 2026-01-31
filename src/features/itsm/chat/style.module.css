@@ -225,6 +225,57 @@
     background:#e2e8f0;
     color:#0f172a;
 }
+.commentMessage :global(.cs-message__content) {
+    background: #d1fae5 !important; /* светло-зелёный */
+    color: #0f5132 !important;
+    /*border: 1px solid rgba(16, 185, 129, 0.35) !important;*/
+}
+
+/* Чуть “мягче” хвостик/внутренности, если где-то перекрывается */
+.commentMessage :global(.cs-message__content-wrapper) {
+    filter: saturate(1.05);
+}
+
+.commentBadge {
+    margin-left: 8px;
+    font-size: 11px;
+    line-height: 1;
+    padding: 3px 6px;
+    border-radius: 999px;
+    background: rgba(16, 185, 129, 0.18);
+    color: #0f5132;
+    /*border: 1px solid rgba(16, 185, 129, 0.28);*/
+}
+
+/* ===== COMMENT MESSAGE OVERRIDES (должно быть в самом низу, чтобы перебить incoming/outgoing) ===== */
+
+.commentMessage {
+    --c-bg1: #d1fae5; /* салатовый низ */
+    --c-bg2: #ecfdf5; /* салатовый верх */
+    --c-fg:  #0f5132;
+    --c-bd:  rgba(16,185,129,.35);
+}
+
+/* ВАЖНО: перекрашиваем и обычный bubble, и custom-content bubble */
+.commentMessage :global(.cs-message__content),
+.commentMessage :global(.cs-message__custom-content) {
+    background: linear-gradient(0deg, var(--c-bg1) 0%, var(--c-bg2) 100%) !important;
+    color: var(--c-fg) !important;
+    /*border: 1px solid var(--c-bd) !important;*/
+}
+
+/* (опционально) имя/футер чуть зелёнее, чтобы не было серым */
+.commentMessage :global(.cs-message__sender-name),
+.commentMessage :global(.cs-message__footer) {
+    color: rgba(15,81,50,.85) !important;
+}
+
+/* Чипы файлов в комменте — тоже в зелёный (иначе их давит bootstrap bg-secondary !important) */
+.commentMessage .fileChip {
+    background: rgba(16,185,129,.18) !important;
+    color: var(--c-fg) !important;
+    border: 1px solid rgba(16,185,129,.25) !important;
+}
 
 @media (max-width: 640px){
     .fileChip{ padding:6px 8px; }

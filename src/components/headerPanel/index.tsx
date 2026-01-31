@@ -1,17 +1,24 @@
-import React, {useEffect, useMemo, useState} from 'react';
-import {useDispatch, useSelector} from 'react-redux';
-import Swal from 'sweetalert2';
-import {RootState, store} from '../../redux/store';
-import {socket} from '../../socket';
-import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
-import isEqual from "lodash/isEqual";
-import ModeSwitch, {Mode} from './components/switch';
-import {OptionType, Preset} from "../taskDashboard";
+// HeaderPanel.tsx
+import React, { useEffect, useMemo, useState } from "react";
+import { useDispatch, useSelector } from "react-redux";
+import Swal from "sweetalert2";
 import axios from "axios";
-import {SignalsToaster} from "../../features/signals/SignalsToaster";
-import {NotificationsPanel} from "../../features/signals/NotificationsPanel";
-import {SignalsBell} from "../../features/signals/SignalsBell";
-import {normalizeUrl} from "../callControlPanel";
+import isEqual from "lodash/isEqual";
+
+import { RootState, store } from "../../redux/store";
+import { socket } from "../../socket";
+
+import ModeSwitch, { Mode } from "./components/switch";
+import { OptionType, Preset } from "../taskDashboard";
+import { normalizeUrl } from "../callControlPanel";
+
+import { makeSelectFullProjectPool, setUserStatuses } from "../../redux/operatorSlice";
+
+import { SignalsToaster } from "../../features/signals/SignalsToaster";
+import { NotificationsPanel } from "../../features/signals/NotificationsPanel";
+import { SignalsBell } from "../../features/signals/SignalsBell";
+
+/** ===== helpers ===== */
 
 function getByPath(obj: any, path: string) {
     if (!obj || !path) return undefined;
@@ -20,16 +27,18 @@ function getByPath(obj: any, path: string) {
 
 function normalizeToArray(val: any): any[] {
     if (val == null) return [];
-    if (Array.isArray(val)) return val.filter(v => v != null && v !== "");
+    if (Array.isArray(val)) return val.filter((v) => v != null && v !== "");
     if (typeof val === "string") {
         const trimmed = val.trim();
         if (!trimmed) return [];
         if (trimmed.includes(",")) {
-            return trimmed.split(",").map(s => s.trim()).filter(Boolean);
+            return trimmed
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean);
         }
         return [trimmed];
     }
-    // числа, булевы и т.п.
     return [val];
 }
 
@@ -55,14 +64,11 @@ function makeCardUrl(openedPhones: any[], matchedPreset: OptionType | null) {
     return u.toString();
 }
 
-function buildGroupByFilter(
-    groupBy: unknown,
-    contact: Record<string, any>
-): Record<string, ["IN", any[]]> {
+function buildGroupByFilter(groupBy: unknown, contact: Record<string, any>): Record<string, ["IN", any[]]> {
     const fields: string[] = Array.isArray(groupBy)
         ? groupBy
         : typeof groupBy === "string"
-            ? groupBy.split(",").map(s => s.trim()).filter(Boolean)
+            ? groupBy.split(",").map((s) => s.trim()).filter(Boolean)
             : [];
 
     const filter: Record<string, ["IN", any[]]> = {};
@@ -75,6 +81,40 @@ function buildGroupByFilter(
     }
     return filter;
 }
+
+/**
+ * other_users может прийти:
+ * 1) объектом { [sip_login]: { status, state, sofia_status, ... } }
+ * 2) массивом [{ sip_login, status, state, sofia_status, ... }, ...]
+ * Приводим к объекту.
+ */
+function sanitizeOtherUsers(msg: any): Record<string, any> {
+    if (!msg) return {};
+    if (Array.isArray(msg)) {
+        const out: Record<string, any> = {};
+        for (const it of msg) {
+            const k = String(it?.sip_login ?? it?.login ?? it?.sip ?? "");
+            if (!k) continue;
+            out[k] = it;
+        }
+        return out;
+    }
+    if (typeof msg === "object") return msg as Record<string, any>;
+    return {};
+}
+
+function otherUsersSig(obj: Record<string, any>) {
+    const keys = Object.keys(obj).sort();
+    return keys
+        .map((k) => {
+            const v = obj[k] || {};
+            return `${k}:${v?.status ?? ""}|${v?.state ?? ""}|${v?.sofia_status ?? ""}`;
+        })
+        .join(";");
+}
+
+/** ===== types ===== */
+
 export interface Project {
     active: boolean;
     created_date: string;
@@ -92,7 +132,7 @@ export interface Project {
     is_deleted: boolean;
     modified_date: string | null;
     out_active: boolean;
-    out_gateways: {extension_name: string, prefix: string};
+    out_gateways: { extension_name: string; prefix: string };
     out_priority: number | null;
     out_script: {
         comment_mode: string;
@@ -107,44 +147,41 @@ export interface Project {
 
 interface HeaderPanelProps {
     setShowScriptPanel: (showScriptPanel: boolean) => void;
-    showScriptPanel: boolean
+    showScriptPanel: boolean;
     selectedProject: Project | null;
     setSelectedProject: (selectedProject: Project) => void;
-    setPostActive: (postActive: boolean) => void
-    setOutboundCall: (outBoundCall: boolean) => void
-    setActiveProjectName:(activeProjectName: string) => void
-    outActivePhone: string | null
-    setOutActivePhone: (outActivePhone: string | null) => void
-    outActiveProjectName: string
-    setOutActiveProjectName: (outActiveProjectName: string) => void
-    assignedKey: string
-    setAssignedKey: (assignedKey: string) => void
-    setIsLoading: (isLoading: boolean) => void
-    specialKey: string
-    setSpecialKey: (specialKey: string) => void
-    activeProjectName: string
+    setPostActive: (postActive: boolean) => void;
+    setOutboundCall: (outBoundCall: boolean) => void;
+    setActiveProjectName: (activeProjectName: string) => void;
+    outActivePhone: string | null;
+    setOutActivePhone: (outActivePhone: string | null) => void;
+    outActiveProjectName: string;
+    setOutActiveProjectName: (outActiveProjectName: string) => void;
+    assignedKey: string;
+    setAssignedKey: (assignedKey: string) => void;
+    setIsLoading: (isLoading: boolean) => void;
+    specialKey: string;
+    setSpecialKey: (specialKey: string) => void;
+    activeProjectName: string;
     showTasksDashboard: boolean;
     setShowTasksDashboard: (show: boolean) => void;
-    prefix: string
-    setPrefix: (prefix: string) => void
-    setOutboundID: (outboundID: number) => void
-    setOpenedGroup: (ids: number[]) => void
-    setGroupIDs: (ids: any[]) => void
-    setOpenedPhones: (numbersData: any[]) => void
-    setPhonesData: (numbersData: any[]) => void
-    setSelectedPreset: (preset: OptionType | null) => void
-    role: string
-    expressCall: boolean
-    groupProjects: string[]
-    setManagerPanel: (managerPanel: boolean) => void
-    managerPanel: boolean,
-    // setPhoneID: (number: number) => void
-    // phoneID: number | null
-    outActivePhoneData?: any
-    setOutActivePhoneData?: (outActivePhoneData: any) => void
-    startModulesRanRef: React.MutableRefObject<boolean>
+    prefix: string;
+    setPrefix: (prefix: string) => void;
+    setOutboundID: (outboundID: number) => void;
+    setOpenedGroup: (ids: number[]) => void;
+    setGroupIDs: (ids: any[]) => void;
+    setOpenedPhones: (numbersData: any[]) => void;
+    setPhonesData: (numbersData: any[]) => void;
+    setSelectedPreset: (preset: OptionType | null) => void;
+    role: string;
+    expressCall: boolean;
+    groupProjects: string[];
+    setManagerPanel: (managerPanel: boolean) => void;
+    managerPanel: boolean;
+    outActivePhoneData?: any;
+    setOutActivePhoneData?: (outActivePhoneData: any) => void;
+    startModulesRanRef: React.MutableRefObject<boolean>;
 }
-
 
 const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      showTasksDashboard,
@@ -177,84 +214,94 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      groupProjects,
                                                      setManagerPanel,
                                                      managerPanel,
-                                                     // setPhoneID,
-                                                     // phoneID,
                                                      outActivePhoneData,
                                                      setOutActivePhoneData,
-                                                     startModulesRanRef
+                                                     startModulesRanRef,
                                                  }) => {
+    const dispatch = useDispatch();
+
     const {
-        sipLogin   = '',
-        worker     = '',
-        glagolParent = ''
-    } = store.getState().credentials;
+        sipLogin = "",
+        worker = "",
+        glagolParent = "",
+    } = useSelector((s: RootState) => s.credentials);
+
+    const sessionKey = useSelector((s: RootState) => s.operator.sessionKey);
 
     const fallbackModulesRanRef = React.useRef(false);
     const modulesRanRef = startModulesRanRef ?? fallbackModulesRanRef;
 
-    const isManager = role === "manager";          // твоя логика роли
+    const isManager = role === "manager";
+
     const [notifOpen, setNotifOpen] = useState(false);
-    const userStatuses      = useSelector((state: RootState) => state.operator.userStatuses);
-    const dispatch = useDispatch();
+
+    const userStatuses = useSelector((state: RootState) => state.operator.userStatuses);
+
     const { monitorUsers, monitorProjects, allProjects, monitorCallcenter } = useSelector(
         (state: RootState) => state.operator.monitorData
     );
+
     const [autocallEnabled, setAutocallEnabled] = useState(() => {
-        return localStorage.getItem('autocallEnabled') === 'true';
+        return localStorage.getItem("autocallEnabled") === "true";
     });
 
-    const fsStatus = useSelector(
-        (state: RootState) => state.operator.fsStatus,
-        isEqual
-    );
-    const post = (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available") && fsStatus.state === "Idle";
+    const fsStatus = useSelector((state: RootState) => state.operator.fsStatus, isEqual);
+
+    const post =
+        (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available") &&
+        fsStatus.state === "Idle";
+
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
-
     const projectPool = useSelector(selectFullProjectPool) || [];
-    const projectPoolForCall = useMemo(() => {
-        return projectPool
-            // .filter(project => (project.out_active && project.active))
-            .map(project => project.project_name);
-    }, [projectPool]);
-    // const projectGateawayPrefix = projectPool.length && projectPool.filter(project => (project.out_active && project.active))[0].out_gateways[2].prefix
 
+    const projectPoolForCall = useMemo(() => {
+        return projectPool.map((project: any) => project.project_name);
+    }, [projectPool]);
 
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
     const activeCalls = useMemo(() => {
-        return Array.isArray(rawActiveCalls)
-            ? rawActiveCalls
-            : Object.values(rawActiveCalls || {});
+        return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
     }, [rawActiveCalls]);
-    const myCallCenter = monitorCallcenter[sipLogin]?.[0];
-
 
     const [showStatuses, setShowStatuses] = useState(false);
-    const [phone, setPhone] = useState('');
-    const [callType, setCallType] = useState<'call' | 'redirect'>('call');
+    const [phone, setPhone] = useState("");
+    const [callType, setCallType] = useState<"call" | "redirect">("call");
 
-
-    const [handleOutboundCall, setHandleOutboundCall] = useState<boolean>(false)
+    const [handleOutboundCall, setHandleOutboundCall] = useState<boolean>(false);
     const [outPreparation, setOutPreparation] = useState(false);
-    const [hasActiveCall, setHasActiveCall] = useState<boolean>(false)
-    const [postCallData, setPostCallData] = useState<any>({})
+    const [hasActiveCall, setHasActiveCall] = useState<boolean>(false);
+    const [postCallData, setPostCallData] = useState<any>({});
 
-    const [searchTerm, setSearchTerm] = useState('');
-    const [typeFilter, setTypeFilter] = useState<'all' | 'operators' | 'robots'>('all');
-    const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
-
+    const [searchTerm, setSearchTerm] = useState("");
+    const [typeFilter, setTypeFilter] = useState<"all" | "operators" | "robots">("all");
+    const [statusFilter, setStatusFilter] = useState<"all" | "online" | "offline">("all");
 
     const [presets, setPresets] = useState<OptionType[]>([]);
+    const [callTimer, setCallTimer] = useState<string>("00:00");
 
-    const [callTimer, setCallTimer] = useState<string>('00:00');
+    const lastOtherUsersSigRef = React.useRef<string | null>(null);
 
-    const { sessionKey } = store.getState().operator
+    /** ===== other_users слушаем ТОЛЬКО когда открыто "Кто онлайн?" ===== */
+    useEffect(() => {
+        if (!showStatuses) return;
 
-    // const getPrefix = (projectName: string) => {
-    //     const projectGateawayPrefix =
-    //         projectPool.length &&
-    //         projectPool.find(p => p.project_name === projectName).out_gateways[2].prefix
-    //     return projectGateawayPrefix
-    // }
+        // чтобы первый пакет не “скипнулся”
+        lastOtherUsersSigRef.current = null;
+
+        const handleOtherUsers = (msg: any) => {
+            const clean = sanitizeOtherUsers(msg);
+            const sig = otherUsersSig(clean);
+            if (sig === lastOtherUsersSigRef.current) return;
+            lastOtherUsersSigRef.current = sig;
+
+            dispatch(setUserStatuses(clean));
+        };
+
+        socket.on("other_users", handleOtherUsers);
+        return () => {
+            socket.off("other_users", handleOtherUsers)
+        };
+    }, [showStatuses, dispatch]);
 
     useEffect(() => {
         if (
@@ -266,7 +313,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             fsStatus.state === "Waiting" &&
             (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
         ) {
-            socket.emit('outbound_call_get', {
+            socket.emit("outbound_call_get", {
                 assign: true,
                 batch: 1,
                 worker,
@@ -274,15 +321,18 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 sip_login: sipLogin,
                 session_key: sessionKey,
                 projects_pool: projectPoolForCall,
-                start_type: "auto"
+                start_type: "auto",
             });
         }
+        // намеренно триггерим в основном по showTasksDashboard,
+        // остальное берётся из текущего рендера
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [showTasksDashboard]);
 
     const toggleAutocall = () => {
         const newState = !autocallEnabled;
         setAutocallEnabled(newState);
-        localStorage.setItem('autocallEnabled', String(newState));
+        localStorage.setItem("autocallEnabled", String(newState));
 
         if (
             newState &&
@@ -292,7 +342,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             fsStatus.state === "Waiting" &&
             (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
         ) {
-            socket.emit('outbound_call_get', {
+            socket.emit("outbound_call_get", {
                 assign: true,
                 batch: 1,
                 worker,
@@ -300,89 +350,79 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 sip_login: sipLogin,
                 session_key: sessionKey,
                 projects_pool: projectPoolForCall,
-                start_type: "auto"
+                start_type: "auto",
             });
         }
     };
 
     useEffect(() => {
-        if (activeCalls.length > 0 && Object.keys(activeCalls[0]).length > 0) {
+        if (activeCalls.length > 0 && Object.keys(activeCalls[0] || {}).length > 0) {
             setHasActiveCall(true);
         } else {
-        setHasActiveCall(false);
-      }
+            setHasActiveCall(false);
+        }
     }, [activeCalls]);
 
     useEffect(() => {
         setHandleOutboundCall(false);
 
         const first = activeCalls[0];
-        const hasAppField = first !== undefined && 'application' in first;
-        const hasApp      = Boolean(first?.application);
-
+        const hasAppField = first !== undefined && "application" in (first as any);
+        const hasApp = Boolean((first as any)?.application);
 
         if (hasAppField && hasApp) {
             setPostCallData(first);
         }
 
         if (!hasActiveCall && !hasAppField && postCallData?.application) {
-            socket.emit('get_fs_report', {
+            socket.emit("get_fs_report", {
                 worker,
                 session_key: sessionKey,
                 sip_login: sipLogin,
                 level: 0,
             });
+
             if (fsStatus.status === "On Break") {
-                socket.emit('change_status_fs', {
+                socket.emit("change_status_fs", {
                     sip_login: sipLogin,
                     worker,
                     session_key: sessionKey,
-                    action: 'available',
-                    page: 'online',
+                    action: "available",
+                    page: "online",
                 });
             }
 
-            socket.emit("fs_post_started",{
+            socket.emit("fs_post_started", {
                 session_key: sessionKey,
                 sip_login: sipLogin,
                 worker,
-                reason: "postobrabotka"
-            })
-            // socket.emit('change_state_fs', {
-            //     sip_login: sipLogin,
-            //     worker,
-            //     session_key: sessionKey,
-            //     action: 'available',
-            //     state: "idle",
-            //     reason: "postobrabotka",
-            //     page: 'online',
-            // });
-            setIsLoading(true)
-            socket.emit('outbound_call_update', {
+                reason: "postobrabotka",
+            });
+
+            setIsLoading(true);
+            socket.emit("outbound_call_update", {
                 worker,
                 session_key: sessionKey,
                 ...(assignedKey ? { assigned_key: assignedKey } : {}),
-                log_status: 'finished',
-                phone_status: 'finished',
+                log_status: "finished",
+                phone_status: "finished",
                 special_key: specialKey,
                 project_name: outActiveProjectName,
             });
             setPostCallData({});
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeCalls, postCallData, hasActiveCall]);
 
-
     const getRegisteredSofia = (status: string) => {
-        return status.includes('Registered')
+        return (status || "").includes("Registered");
     };
 
     useEffect(() => {
-        let intervalId: NodeJS.Timeout;
+        let intervalId: ReturnType<typeof setInterval> | undefined;
 
         if (hasActiveCall) {
-            // получаем первый звонок
-            const first = activeCalls && activeCalls.length ? activeCalls[0] : {};
-            // пытаемся взять время из epoch-поля, иначе текущее время
+            const first: any = activeCalls && activeCalls.length ? activeCalls[0] : {};
             const epoch = first.b_created_epoch || first.created_epoch;
             const start = epoch
                 ? new Date(Number(epoch) * 1000)
@@ -390,20 +430,15 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     ? new Date(first.b_created)
                     : new Date();
 
-
             intervalId = setInterval(() => {
                 const diffMs = Date.now() - start.getTime();
                 const totalSec = Math.floor(diffMs / 1000);
                 const mins = Math.floor(totalSec / 60);
                 const secs = totalSec % 60;
-                setCallTimer(
-                    `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
-                );
+                setCallTimer(`${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`);
             }, 1000);
-
         } else {
-
-            setCallTimer('00:00');
+            setCallTimer("00:00");
         }
 
         return () => {
@@ -412,64 +447,47 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     }, [hasActiveCall, activeCalls]);
 
     useEffect(() => {
-        const s_dot = worker.indexOf('.');
-        const s_login = worker.slice(s_dot + 1);
-        if(sessionKey){
-            socket.emit('monitor_fs_projects', {
-                worker,
-                session_key: sessionKey
-            });
-            socket.emit('monitor_fs_statuses', {
-                worker,
-                session_key: sessionKey
-            });
+        if (sessionKey) {
+            socket.emit("monitor_fs_projects", { worker, session_key: sessionKey });
+            socket.emit("monitor_fs_statuses", { worker, session_key: sessionKey });
         }
-
     }, [worker, sessionKey]);
 
-
     const changeStateFs = (newState: string, reason: string) => {
-        socket.emit('change_state_fs', {
+        socket.emit("change_state_fs", {
             sip_login: sipLogin,
             worker,
             session_key: sessionKey,
             state: newState,
             reason,
-            page: 'online'
+            page: "online",
         });
     };
 
-    const outProjectClickToCall = ( phone: string, project_name: string, specialKey: string ) => {
-
-            socket.emit('get_phone_line', {
-                // fs_server: fsServer,
-                // room_id: roomId,
-                worker,
-                session_key: sessionKey,
-                // call_section: 1,
-                project_name: project_name,
-                phone: phone,
-                // out_extension: out_extension,
-                special_key: specialKey
-            });
-    }
-
+    const outProjectClickToCall = (phone: string, project_name: string, specialKey: string) => {
+        socket.emit("get_phone_line", {
+            worker,
+            session_key: sessionKey,
+            project_name,
+            phone,
+            special_key: specialKey,
+        });
+    };
 
     function extractPhoneGroups(obj: any): any[][] {
         const groups: any[][] = [];
         function recurse(node: any) {
             if (Array.isArray(node)) {
-                if (node.length && typeof node[0] === 'object' && 'phone' in node[0]) {
-                    groups.push(node); // нашли массив телефонов
+                if (node.length && typeof node[0] === "object" && "phone" in node[0]) {
+                    groups.push(node);
                 }
-            } else if (typeof node === 'object' && node !== null) {
+            } else if (typeof node === "object" && node !== null) {
                 Object.values(node).forEach(recurse);
             }
         }
         recurse(obj);
         return groups;
     }
-
 
     useEffect(() => {
         if (!outActiveProjectName) return;
@@ -478,42 +496,38 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             try {
                 let myPresets = presets;
                 if (presets.length === 0) {
-                    const response = await axios.post<Preset[]>('/api/v1/get_preset_list', {
+                    const response = await axios.post<Preset[]>("/api/v1/get_preset_list", {
                         glagol_parent: glagolParent,
                         worker,
                         projects: projectPoolForCall,
                         role,
                     });
                     const data: Preset[] = response.data;
-                    myPresets = data.map(p => ({ value: p.id, label: p.preset_name, preset: p }));
+                    myPresets = data.map((p) => ({ value: p.id, label: p.preset_name, preset: p }));
                     setPresets(myPresets);
                 }
 
-                const matchedPreset = myPresets.find(p =>
-                    p.preset.projects.includes(outActiveProjectName)
-                );
+                const matchedPreset = myPresets.find((p) => p.preset.projects.includes(outActiveProjectName));
 
                 if (!matchedPreset) {
                     socket.emit("get_project_fields", {
                         projects: [outActiveProjectName],
                         session_key: sessionKey,
-                        worker
+                        worker,
                     });
                     return;
                 } else {
                     setSelectedPreset(matchedPreset);
                 }
 
-                // 🔽 строим filter_by из group_by + проект
                 const groupFilter = buildGroupByFilter(matchedPreset.preset.group_by, outActivePhoneData || {});
                 const filter_by: Record<string, any> = {
-                    project: ['IN', matchedPreset.preset.projects],
+                    project: ["IN", matchedPreset.preset.projects],
                     ...groupFilter,
                 };
 
-
-                const response = await axios.post<any>('/api/v1/get_grouped_phones', {
-                    glagol_parent: projectPool[0].scheme || '',
+                const response = await axios.post<any>("/api/v1/get_grouped_phones", {
+                    glagol_parent: (projectPool?.[0] as any)?.scheme || "",
                     group_by: matchedPreset.preset.group_by,
                     filter_by,
                     group_table: matchedPreset.preset.group_table,
@@ -522,27 +536,19 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
                 const projectIdData = response.data;
 
-                // ✅ Рекурсивный обход для сборки групп (как у тебя было)
                 const allGroups = extractPhoneGroups(projectIdData);
-
                 const flatPhones = allGroups.flat();
 
-                if (!outActivePhoneData.id) return;
+                if (!outActivePhoneData?.id) return;
 
-                const matchedGroups = allGroups.filter(group =>
-                    group.some(item => item.id === outActivePhoneData.id)
-                );
+                const matchedGroups = allGroups.filter((group) => group.some((item) => item.id === outActivePhoneData.id));
 
                 if (matchedGroups.length > 0) {
                     setShowTasksDashboard(true);
 
-                    const matchedGroupIDs = Array.from(
-                        new Set(matchedGroups.flat().map(item => item.id))
-                    );
-
+                    const matchedGroupIDs = Array.from(new Set(matchedGroups.flat().map((item) => item.id)));
                     const openedPhones = matchedGroups.flat();
-
-                    const groupIDs = allGroups.map(group => group.map(item => item.id));
+                    const groupIDs = allGroups.map((group) => group.map((item) => item.id));
 
                     setGroupIDs(groupIDs);
                     setPhonesData(flatPhones);
@@ -551,71 +557,62 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
                     const url = makeCardUrl(openedPhones, matchedPreset);
                     window.history.replaceState({}, "", url);
-
                 } else {
                     setShowTasksDashboard(false);
                 }
             } catch (err) {
-                console.error('Ошибка при проверке пресетов:', err);
+                console.error("Ошибка при проверке пресетов:", err);
             }
         };
 
         fetchPresetsAndCheckPhone();
-
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [outActiveProjectName, outActivePhone, outActivePhoneData]);
 
     useEffect(() => {
         const handleGetPhoneToCall = (msg: any) => {
             if (!msg || !msg.length) {
                 Swal.fire({
-                    icon: 'info',
-                    title: 'Контакты для работы не найдены',
-                    text: 'В пуле нет подходящих контактов для обзвона.',
+                    icon: "info",
+                    title: "Контакты для работы не найдены",
+                    text: "В пуле нет подходящих контактов для обзвона.",
                 });
                 return;
             }
-            normalizeUrl()
+
+            normalizeUrl();
             setOpenedPhones?.([]);
             setOpenedGroup?.([]);
             setPhonesData?.([]);
             modulesRanRef.current = false;
-            const phoneID = msg[0].id
+
             const phone = msg[0].phone;
             const project_name = msg[0].project;
-            if (setOutActivePhoneData) {
-                setOutActivePhoneData(msg[0])
-            }
-            // setPhoneID(phoneID)
+
+            if (setOutActivePhoneData) setOutActivePhoneData(msg[0]);
+
             setSpecialKey(msg[0].special_key);
             setOutActivePhone(phone);
             setOutActiveProjectName(project_name);
-            if (msg[0].auto_start) {
-                setAssignedKey(msg[0].assigned_key);
-            } else {
-                setAssignedKey("")
-            }
 
-            socket.emit("check_express", {
-                phone,
-                project_name,
-                session_key: sessionKey,
-                worker,
-            });
+            if (msg[0].auto_start) setAssignedKey(msg[0].assigned_key);
+            else setAssignedKey("");
 
+            socket.emit("check_express", { phone, project_name, session_key: sessionKey, worker });
 
             const handleCheckExpress = (response: any) => {
-                if (response.express) return
+                if (response?.express) return;
 
-                const startType = projectPool.find(p => p.project_name === project_name)?.start_type || "auto";
+                const startType = (projectPool as any[])?.find((p) => p.project_name === project_name)?.start_type || "auto";
                 setOutPreparation(true);
 
-                if (startType === 'manual') {
+                if (startType === "manual") {
                     Swal.fire({
-                        title: `Исходящий вызов - ${allProjects[project_name]?.glagol_name || project_name}`,
+                        title: `Исходящий вызов - ${allProjects?.[project_name]?.glagol_name || project_name}`,
                         text: `На номер ${phone}`,
                         showCancelButton: true,
-                        confirmButtonText: 'Совершить',
-                        cancelButtonText: 'Отказаться',
+                        confirmButtonText: "Совершить",
+                        cancelButtonText: "Отказаться",
                         icon: "warning",
                         timer: 20000,
                         timerProgressBar: true,
@@ -623,51 +620,49 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                         if (result.isConfirmed) {
                             outProjectClickToCall(phone, project_name, msg[0].special_key);
                             if (projectPoolForCall.length > 0) {
-                                socket.emit('outbound_call_update', {
+                                socket.emit("outbound_call_update", {
                                     worker,
                                     session_key: sessionKey,
                                     assigned_key: msg[0].assigned_key,
-                                    log_status: 'taken',
-                                    phone_status: 'taken',
+                                    log_status: "taken",
+                                    phone_status: "taken",
                                     special_key: msg[0].special_key,
                                 });
                             }
                         } else {
-                            changeStateFs('waiting', 'outbound_reject');
+                            changeStateFs("waiting", "outbound_reject");
                             setOutPreparation(false);
                             if (projectPoolForCall.length > 0) {
-                                socket.emit('outbound_call_update', {
+                                socket.emit("outbound_call_update", {
                                     worker,
                                     session_key: sessionKey,
                                     assigned_key: msg[0].assigned_key,
-                                    log_status: 'reject',
-                                    phone_status: msg[0].phone?.status,
-                                    special_key: msg[0].phone?.special_key,
+                                    log_status: "reject",
+                                    phone_status: msg[0]?.phone?.status,
+                                    special_key: msg[0]?.phone?.special_key,
                                 });
                             }
                         }
                     });
-                } else if (startType === 'auto') {
+                } else if (startType === "auto") {
                     if (msg[0].auto_start) {
                         Swal.fire({
-                            title: `Исходящий вызов - ${allProjects[project_name]?.glagol_name || project_name}`,
+                            title: `Исходящий вызов - ${allProjects?.[project_name]?.glagol_name || project_name}`,
                             text: `На номер ${phone}`,
                             showConfirmButton: false,
                             icon: "warning",
                             timer: 3000,
                             timerProgressBar: true,
                         }).then(() => {
-                            if (msg[0].auto_start) {
-                                outProjectClickToCall(phone, project_name, msg[0].special_key);
-                            }
+                            if (msg[0].auto_start) outProjectClickToCall(phone, project_name, msg[0].special_key);
 
                             if (projectPoolForCall.length > 0 && msg[0].auto_start) {
-                                socket.emit('outbound_call_update', {
+                                socket.emit("outbound_call_update", {
                                     worker,
                                     session_key: sessionKey,
                                     assigned_key: msg[0].assigned_key,
-                                    log_status: 'taken',
-                                    phone_status: 'taken',
+                                    log_status: "taken",
+                                    phone_status: "taken",
                                     special_key: msg[0].special_key,
                                 });
                             }
@@ -682,445 +677,409 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         };
 
         const handleClickToCallStart = (msg: any) => {
-            if (msg.status === 'OK') {
+            if (msg?.status === "OK") {
                 Swal.fire({ title: "Звонок запускается", icon: "success", timer: 1000 });
                 if (assignedKey && specialKey) {
-                    socket.emit('outbound_call_update', {
+                    socket.emit("outbound_call_update", {
                         worker,
                         session_key: sessionKey,
                         ...(assignedKey ? { assigned_key: assignedKey } : {}),
-                        log_status: 'ringing',
-                        phone_status: 'ringing',
+                        log_status: "ringing",
+                        phone_status: "ringing",
                         special_key: specialKey,
                     });
                 }
-                // socket.emit('change_state_fs', {
-                //     sip_login: sipLogin,
-                //     worker,
-                //     session_key: sessionKey,
-                //     state: "idle",
-                //     reason:"outboundcall",
-                //     page: 'online',
-                // });
             } else {
                 Swal.fire({ title: "Ошибка при старте звонка", icon: "error" });
-                socket.emit('outbound_call_update', {
+                socket.emit("outbound_call_update", {
                     worker,
                     session_key: sessionKey,
                     ...(assignedKey ? { assigned_key: assignedKey } : {}),
-                    log_status: 'error',
-                    phone_status: 'error',
+                    log_status: "error",
+                    phone_status: "error",
                     special_key: specialKey,
                 });
-                socket.emit('change_status_fs', {
+                socket.emit("change_status_fs", {
                     sip_login: sipLogin,
                     worker,
                     session_key: sessionKey,
-                    action: 'available',
-                    page: 'online',
+                    action: "available",
+                    page: "online",
                 });
             }
         };
 
-        const handleHoldToggle = () => {
-            Swal.fire({ title: "Удержание переключено", icon: "success", timer: 1000 });
-        };
+        const handleHoldToggle = () => Swal.fire({ title: "Удержание переключено", icon: "success", timer: 1000 });
+        const handleUuidBreak = () => Swal.fire({ title: "Вызов завершён", icon: "success", timer: 1000 });
+        const handleUuidBridge = () => Swal.fire({ title: "Вызовы объединены", icon: "success", timer: 1000 });
 
-        const handleUuidBreak = () => {
-            Swal.fire({ title: "Вызов завершён", icon: "success", timer: 1000 });
-        };
-
-        const handleUuidBridge = () => {
-            Swal.fire({ title: "Вызовы объединены", icon: "success", timer: 1000 });
-        };
-
-        socket.on('outbound_call_get', handleGetPhoneToCall);
-        socket.on('call', handleClickToCallStart);
-        socket.on('hold_toggle', handleHoldToggle);
-        socket.on('uuid_break', handleUuidBreak);
-        socket.on('uuid_bridge', handleUuidBridge);
+        socket.on("outbound_call_get", handleGetPhoneToCall);
+        socket.on("call", handleClickToCallStart);
+        socket.on("hold_toggle", handleHoldToggle);
+        socket.on("uuid_break", handleUuidBreak);
+        socket.on("uuid_bridge", handleUuidBridge);
 
         return () => {
-            socket.off('outbound_call_get', handleGetPhoneToCall);
-            socket.off('call', handleClickToCallStart);
-            socket.off('hold_toggle', handleHoldToggle);
-            socket.off('uuid_break', handleUuidBreak);
-            socket.off('uuid_bridge', handleUuidBridge);
+            socket.off("outbound_call_get", handleGetPhoneToCall);
+            socket.off("call", handleClickToCallStart);
+            socket.off("hold_toggle", handleHoldToggle);
+            socket.off("uuid_break", handleUuidBreak);
+            socket.off("uuid_bridge", handleUuidBridge);
         };
-    }, [allProjects, assignedKey, specialKey, outActiveProjectName, projectPoolForCall, sessionKey, sipLogin, worker]);
+    }, [
+        allProjects,
+        assignedKey,
+        specialKey,
+        projectPoolForCall,
+        sessionKey,
+        sipLogin,
+        worker,
+        projectPool,
+        setAssignedKey,
+        setOutActivePhone,
+        setOutActiveProjectName,
+        setSpecialKey,
+        setOpenedPhones,
+        setOpenedGroup,
+        setPhonesData,
+        setIsLoading,
+        modulesRanRef,
+        setOutActivePhoneData,
+    ]);
 
     const getTzOffsetMinutes = () => -new Date().getTimezoneOffset();
+
     useEffect(() => {
-        if (autocallEnabled) {
-            const interval = setInterval(() => {
-                if (
-                    !hasActiveCall &&
-                    projectPoolForCall.length > 0 &&
-                    getRegisteredSofia(fsStatus.sofia_status) &&
-                    fsStatus.state === "Waiting" &&
-                    (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
-                ) {
-                    socket.emit('outbound_call_get', {
-                        assign: true,
-                        batch: 1,
-                        // break: true,
-                        worker,
-                        interface: "glagol",
-                        sip_login: sipLogin,
-                        session_key: sessionKey,
-                        projects_pool: projectPoolForCall,
-                        start_type: "auto",
-                        tz_offset: getTzOffsetMinutes(),
-                    });
-                }
-            }, 30000);
-            return () => clearInterval(interval);
-        }
-    }, [autocallEnabled, hasActiveCall, outPreparation, sipLogin, sessionKey, worker, projectPoolForCall, fsStatus.state, fsStatus.status]);
+        if (!autocallEnabled) return;
+
+        const interval = setInterval(() => {
+            if (
+                !hasActiveCall &&
+                projectPoolForCall.length > 0 &&
+                getRegisteredSofia(fsStatus.sofia_status) &&
+                fsStatus.state === "Waiting" &&
+                (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
+            ) {
+                socket.emit("outbound_call_get", {
+                    assign: true,
+                    batch: 1,
+                    worker,
+                    interface: "glagol",
+                    sip_login: sipLogin,
+                    session_key: sessionKey,
+                    projects_pool: projectPoolForCall,
+                    start_type: "auto",
+                    tz_offset: getTzOffsetMinutes(),
+                });
+            }
+        }, 30000);
+
+        return () => clearInterval(interval);
+    }, [
+        autocallEnabled,
+        hasActiveCall,
+        sipLogin,
+        sessionKey,
+        worker,
+        projectPoolForCall,
+        fsStatus.state,
+        fsStatus.status,
+        fsStatus.sofia_status,
+    ]);
 
     useEffect(() => {
         const handleGetOutStart = (msg: any) => {
-            setOutboundID(msg.phone_line[0].id)
-            setOutboundCall(true)
-            if (setOutActivePhoneData) {
-                setOutActivePhoneData(msg.phone_line[0])
-            }
+            setOutboundID(msg?.phone_line?.[0]?.id);
+            setOutboundCall(true);
+            if (setOutActivePhoneData) setOutActivePhoneData(msg?.phone_line?.[0]);
             setOutActiveProjectName(msg.project_name);
-            // setAssignedKey(msg.assigned_key);
             setOutPreparation(false);
+
             if (!hasActiveCall && !handleOutboundCall && !expressCall) {
-                socket.emit('call', {
+                socket.emit("call", {
                     worker,
                     sip_login: sipLogin,
                     session_key: sessionKey,
-                    phone: msg.phone_line[0].phone,
+                    phone: msg?.phone_line?.[0]?.phone,
                     prefix: msg.out_extension,
-                    project_name: msg.project_name
+                    project_name: msg.project_name,
                 });
             }
         };
 
-        socket.on('get_out_start', handleGetOutStart);
+        socket.on("get_out_start", handleGetOutStart);
         return () => {
-            socket.off('get_out_start', handleGetOutStart);
+            socket.off("get_out_start", handleGetOutStart);
         };
-    }, [sipLogin, sessionKey, worker, hasActiveCall]);
+    }, [sipLogin, sessionKey, worker, hasActiveCall, handleOutboundCall, expressCall, setOutboundID, setOutboundCall, setOutActiveProjectName, setOutActivePhoneData]);
 
     const handleCallByNumber = () => {
-        if (!activeCalls[0].application) {
-            setHandleOutboundCall(true)
+        if (!activeCalls?.[0]?.application) {
+            setHandleOutboundCall(true);
         }
-        setOutboundCall(true)
-        // outProjectClickToCall()
+        setOutboundCall(true);
 
-        let selectedExtension = '';
+        if (hasActiveCall) setCallType("redirect");
+        else setCallType("call");
 
-        if (prefix) {
-            selectedExtension = prefix;
-        }
+        const projName = activeProjectName ? activeProjectName : groupProjects[0];
 
-        if (hasActiveCall) {
-            setCallType('redirect');
-        } else {
-            setCallType('call');
-        }
-
-
-        // if (!selectedExtension && callType !== 'redirect') {
-        //     Swal.fire({
-        //         title: "Вам не назначена линия для исходящих вызовов",
-        //         text: 'Обратитесь к администратору',
-        //         icon: "error",
-        //     });
-        //     return;
-        // }
-        const projName = activeProjectName ? activeProjectName : groupProjects[0]
-            socket.emit('redirect', {
-                worker,
-                sip_login: sipLogin,
-                session_key: sessionKey,
-                phone,
-                project_name: projName
-                // prefix: selectedExtension,
-                // uuid: activeCalls[0].uuid,
-            });
-        // } else {
-        //     socket.emit('call', {
-        //         worker,
-        //         sip_login: sipLogin,
-        //         session_key: sessionKey,
-        //         phone,
-        //         // prefix: "0069",
-        //         project_name: activeCalls[0].direction === "outbound" ? outActiveProjectName : activeProjectName,
-        //     });
-        // }
+        socket.emit("redirect", {
+            worker,
+            sip_login: sipLogin,
+            session_key: sessionKey,
+            phone,
+            project_name: projName,
+        });
     };
 
-
     const handlePostStop = () => {
-        socket.emit('change_state_fs', {
+        socket.emit("change_state_fs", {
             sip_login: sipLogin,
             worker,
             session_key: sessionKey,
-            action: 'available',
+            action: "available",
             state: "waiting",
             reason: "manual_return",
-            page: 'online',
+            page: "online",
         });
-        setPostActive(false)
+        setPostActive(false);
     };
 
     const handleStartFs = (reason?: string, idle_set?: boolean) => {
-        socket.emit('change_status_fs', {
+        socket.emit("change_status_fs", {
             sip_login: sipLogin,
             worker,
             session_key: sessionKey,
-            action: 'available',
+            action: "available",
             reason,
             idle_set,
-            page: 'online',
+            page: "online",
         });
-        socket.emit('change_state_fs', {
+        socket.emit("change_state_fs", {
             sip_login: sipLogin,
             worker,
             session_key: sessionKey,
-            action: 'available',
+            action: "available",
             state: "waiting",
             reason,
-            page: 'online',
+            page: "online",
         });
     };
 
-
     const handlePauseFs = async () => {
         if (fsStatus.status === "On Break") {
-            socket.emit('change_status_fs', {
+            socket.emit("change_status_fs", {
                 sip_login: sipLogin,
                 worker,
                 session_key: sessionKey,
-                action: 'available',
-                page: 'online',
+                action: "available",
+                page: "online",
             });
         } else {
             const { value: reason } = await Swal.fire({
-                title: 'Укажите причину перерыва',
-                input: 'select',
+                title: "Укажите причину перерыва",
+                input: "select",
                 inputOptions: {
-                    break: 'Перерыв',
-                    study: 'Обучение',
-                    admin: 'Административный',
-                    lunch: 'Обед',
+                    break: "Перерыв",
+                    study: "Обучение",
+                    admin: "Административный",
+                    lunch: "Обед",
                 },
-                inputPlaceholder: 'Выберите опцию',
+                inputPlaceholder: "Выберите опцию",
                 showCancelButton: true,
             });
+
             if (!reason) return;
-            socket.emit('change_status_fs', {
+
+            socket.emit("change_status_fs", {
                 sip_login: sipLogin,
                 worker,
                 session_key: sessionKey,
-                action: 'pause',
+                action: "pause",
                 reason,
-                page: 'online',
+                page: "online",
             });
         }
     };
 
     const handleLogoutFs = () => {
-        socket.emit('change_status_fs', {
+        socket.emit("change_status_fs", {
             sip_login: sipLogin,
             worker,
             session_key: sessionKey,
-            action: 'logout',
-            page: 'online',
+            action: "logout",
+            page: "online",
         });
     };
 
-    const handleStatusesVis = () => setShowStatuses(prev => !prev);
+    const handleStatusesVis = () => setShowStatuses((prev) => !prev);
+
     const handleScriptLook = async () => {
-        if(showScriptPanel) {
-            setShowScriptPanel(false)
+        if (showScriptPanel) {
+            setShowScriptPanel(false);
         } else {
             const { value: scriptName } = await Swal.fire({
-                title: 'Введите название скрипта для тестирования',
-                input: 'text',
-                inputPlaceholder: 'Название скрипта',
+                title: "Введите название скрипта для тестирования",
+                input: "text",
+                inputPlaceholder: "Название скрипта",
                 showCancelButton: true,
             });
 
             if (scriptName) {
-                socket.emit('start_script', {
+                socket.emit("start_script", {
                     worker,
                     sip_login: sipLogin,
                     session_key: sessionKey,
-                    init_mode: 'find',
-                    direction: '123',
+                    init_mode: "find",
+                    direction: "123",
                     project_name: "asd",
-                    cyrillic_name: scriptName
+                    cyrillic_name: scriptName,
                 });
-                setShowScriptPanel(true)
+                setShowScriptPanel(true);
             }
         }
     };
 
     const statusMapping: { [key: string]: { text: string; color: string } } = {
-        'Available': { text: 'На линии', color: '#0BB918' },
-        'Available (On Demand)': { text: 'На линии', color: '#0BB918' },
-        'Logged Out': { text: 'Выключен', color: '#f33333' },
-        'On Break': { text: 'Перерыв', color: '#cba200' },
-        'Post': { text: 'Постобработка', color: '#cba200' },
+        Available: { text: "На линии", color: "#0BB918" },
+        "Available (On Demand)": { text: "На линии", color: "#0BB918" },
+        "Logged Out": { text: "Выключен", color: "#f33333" },
+        "On Break": { text: "Перерыв", color: "#cba200" },
+        Post: { text: "Постобработка", color: "#cba200" },
     };
+
     const sofiaMapping: { [key: string]: { text: string; color: string } } = {
-        'Registered': { text: 'Авторизован', color: '#0BB918' },
-        'Unregistered': { text: 'Выключен', color: '#f33333' },
+        Registered: { text: "Авторизован", color: "#0BB918" },
+        Unregistered: { text: "Выключен", color: "#f33333" },
     };
 
     const getSofiaStatus = (status: string) => {
-        return status.includes('Unregistered')
-            ? sofiaMapping['Unregistered']
-            : sofiaMapping['Registered'];
+        return (status || "").includes("Unregistered") ? sofiaMapping.Unregistered : sofiaMapping.Registered;
     };
 
-
-
-    const currentSofia =
-        fsStatus && fsStatus.sofia_status
-            ? getSofiaStatus(fsStatus.sofia_status)
-            : { text: 'Обновляется', color: '#cba200' };
+    const currentSofia = fsStatus?.sofia_status
+        ? getSofiaStatus(fsStatus.sofia_status)
+        : { text: "Обновляется", color: "#cba200" };
 
     const callStatusMapped =
-        fsStatus && fsStatus.status
+        fsStatus?.status
             ? post
-                ? statusMapping["Post"]
-                : statusMapping[fsStatus.status] || { text: fsStatus.status, color: '#cba200' }
-            : { text: 'Обновляется', color: '#cba200' };
+                ? statusMapping.Post
+                : statusMapping[fsStatus.status] || { text: fsStatus.status, color: "#cba200" }
+            : { text: "Обновляется", color: "#cba200" };
 
-    const postColor = statusMapping['Post'].color;
-
+    const postColor = statusMapping.Post.color;
 
     const displayStatusText = hasActiveCall
         ? `Активный вызов (${callTimer})`
-        : (post
-                ? statusMapping['Post'].text
-                : callStatusMapped.text
-        );
+        : post
+            ? statusMapping.Post.text
+            : callStatusMapped.text;
 
-    const displayStatusColor = hasActiveCall
-        ? postColor
-        : callStatusMapped.color;
+    const displayStatusColor = hasActiveCall ? postColor : callStatusMapped.color;
 
-
+    /** ===== "Кто онлайн?" ===== */
     const renderColleagueCards = () => {
-        const allEntries = Object.entries(monitorUsers);
+        const allEntries = Object.entries(monitorUsers || {});
 
-        // 1. Поиск
-        let filtered = allEntries.filter(([login, user]: [string, any]) =>
-            login.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (user.name && user.name.toLowerCase().includes(searchTerm.toLowerCase()))
-        );
+        // 1) Поиск
+        let filtered = allEntries.filter(([login, user]: [string, any]) => {
+            const l = String(login || "");
+            const nm = String(user?.name || "");
+            return l.toLowerCase().includes(searchTerm.toLowerCase()) || nm.toLowerCase().includes(searchTerm.toLowerCase());
+        });
 
-        // 2. Тип
-        if (typeFilter === 'operators') {
-            filtered = filtered.filter(([_, u]) => u.post_obrabotka !== false);
-        } else if (typeFilter === 'robots') {
-            filtered = filtered.filter(([_, u]) => u.post_obrabotka === false);
+        // 2) Тип
+        if (typeFilter === "operators") {
+            filtered = filtered.filter(([_, u]) => u?.post_obrabotka !== false);
+        } else if (typeFilter === "robots") {
+            filtered = filtered.filter(([_, u]) => u?.post_obrabotka === false);
         }
 
-        // 3. Онлайн/оффлайн
-        if (statusFilter !== 'all') {
+        // 3) Онлайн/оффлайн (ВАЖНО: ключом может быть sip_login)
+        if (statusFilter !== "all") {
             filtered = filtered.filter(([login, user]) => {
-                // берём реальный SIP-ключ
-                const sipKey = user.sip_login || login;
-
-                const statusObj = userStatuses[sipKey] || {};
-                // приводим к boolean
-
-                const isOnline = statusObj.sofia_status?.includes('Registered');
-                const online = statusFilter === "online" ? isOnline : !isOnline
-                return online
-
+                const sipKey = String(user?.sip_login || login); // ✅ FIX
+                const statusObj = userStatuses?.[sipKey] || {};
+                const isOnline = String(statusObj?.sofia_status || "").includes("Registered");
+                return statusFilter === "online" ? isOnline : !isOnline;
             });
         }
 
-        const liveOperators = filtered.filter(([_, u]) => u.post_obrabotka !== false);
-        const robots        = filtered.filter(([_, u]) => u.post_obrabotka === false);
+        const liveOperators = filtered.filter(([_, u]) => u?.post_obrabotka !== false);
+        const robots = filtered.filter(([_, u]) => u?.post_obrabotka === false);
 
-        // const renderGroup = (entries: [string, any][]) =>
         const renderGroup = (entries: [string, any][]) =>
             entries.map(([login, user]) => {
-                // 1) Получаем список «ключей» проектов для этого логина, либо []
-                const projectNames: string[] = Array.isArray(monitorCallcenter?.[login])
-                    ? monitorCallcenter?.[login]
-                        .filter((key: string) => typeof key === 'string' || typeof key === 'number')
-                        .map((key: string) => monitorProjects?.[key] ?? key)
+                const sipKey = String(user?.sip_login || login); // ✅ FIX
+
+                // Проекты по sipKey
+                const projectNames: string[] = Array.isArray(monitorCallcenter?.[sipKey])
+                    ? monitorCallcenter?.[sipKey]
+                        .filter((key: any) => typeof key === "string" || typeof key === "number")
+                        .map((key: any) => (monitorProjects as any)?.[key] ?? String(key))
                     : [];
 
-                // 1) Получаем статус для этого логина
-                const statusObj = userStatuses[login] || {};
-                const { sofia_status, status: fsStatus, state: fsState } = statusObj;
-                // 2) Вычисляем Sofía-статус
-                const sofiaText  = sofia_status?.includes('Registered') ? 'Авторизован' : 'Выключен';
-                const sofiaColor = sofia_status?.includes('Registered') ? '#0BB918' : '#f33333';
+                // Статусы тоже по sipKey
+                const statusObj = userStatuses?.[sipKey] || {}; // ✅ FIX
+                const { sofia_status, status: fsSt, state: fsState } = statusObj;
 
-                // 3) Вычисляем FS-статус
-                let fsText  = fsStatus || 'Обновляется';
-                let fsColor = '#cba200';
-                if (fsStatus === 'Logged Out') {
-                    fsText  = 'Выключен';
-                    fsColor = '#f33333';
-                } else if (fsState === 'In a queue call' && fsStatus?.includes('Available')) {
-                    fsText  = 'Активный вызов';
-                    fsColor = '#cba200';
-                } else if (fsStatus?.includes('Available') && fsState === 'Idle') {
-                    fsText  = 'Постобработка';
-                    fsColor = '#cba200';
-                } else if (fsStatus?.includes('Available') && fsState === 'Waiting') {
-                    fsText  = 'На линии';
-                    fsColor = '#0BB918';
-                } else if (fsStatus === "On Break") {
-                    fsText  = 'Перерыв';
-                    fsColor = '#cba200';
+                const sofiaText = String(sofia_status || "").includes("Registered") ? "Авторизован" : "Выключен";
+                const sofiaColor = String(sofia_status || "").includes("Registered") ? "#0BB918" : "#f33333";
+
+                let fsText = fsSt || "Обновляется";
+                let fsColor = "#cba200";
+
+                if (fsSt === "Logged Out") {
+                    fsText = "Выключен";
+                    fsColor = "#f33333";
+                } else if (fsState === "In a queue call" && String(fsSt || "").includes("Available")) {
+                    fsText = "Активный вызов";
+                    fsColor = "#cba200";
+                } else if (String(fsSt || "").includes("Available") && fsState === "Idle") {
+                    fsText = "Постобработка";
+                    fsColor = "#cba200";
+                } else if (String(fsSt || "").includes("Available") && fsState === "Waiting") {
+                    fsText = "На линии";
+                    fsColor = "#0BB918";
+                } else if (fsSt === "On Break") {
+                    fsText = "Перерыв";
+                    fsColor = "#cba200";
                 }
 
-                // 4) «Готов», если Available + Idle
-                const ready = fsStatus?.includes('Available') && fsState === 'Waiting';
-
-                // 5) Проекты пользователя
-                // const projectKeys  = monitorCallcenter[login] || [];
-                // const projectNames = projectKeys.map(key => monitorProjects[key] || key);
+                const ready = String(fsSt || "").includes("Available") && fsState === "Waiting";
 
                 return (
-                    <div key={login} className="col-sm-6 col-md-4 col-lg-3 mb-3">
+                    <div key={sipKey} className="col-sm-6 col-md-4 col-lg-3 mb-3">
                         <div className="card h-100">
                             <div className="card-body">
-                                <h6 className="card-title">{user.name} ({login})</h6>
+                                <h6 className="card-title">
+                                    {user?.name} ({sipKey})
+                                </h6>
 
                                 <p className="mb-1" style={{ color: sofiaColor }}>
                                     {sofiaText}
                                 </p>
 
-                                {/* FS-статус */}
                                 <p className="mb-2" style={{ color: fsColor }}>
                                     {fsText}
                                 </p>
-                                {ready && (
-                                    <span
-                                        style={{ color: fsColor }}
-                                    >
-                                        Готов
-                                    </span>
-                                )}
-                                <div className="d-flex flex-wrap">
 
-                                    {projectNames.length ? (projectNames.map(prj => (
-                                        <span
-                                            key={prj}
-                                            className=" mb-1 mr-1 px-2 py-1 rounded text-primary"
-                                            style={{border:"1px  solid"}}
-                                        >
-                                            {prj}
-                                        </span>
-                                    ))) : "Проекты не назначены"}
+                                {ready && <span style={{ color: fsColor }}>Готов</span>}
+
+                                <div className="d-flex flex-wrap">
+                                    {projectNames.length
+                                        ? projectNames.map((prj) => (
+                                            <span
+                                                key={prj}
+                                                className="mb-1 mr-1 px-2 py-1 rounded text-primary"
+                                                style={{ border: "1px solid" }}
+                                            >
+                          {prj}
+                        </span>
+                                        ))
+                                        : "Проекты не назначены"}
                                 </div>
                             </div>
                         </div>
@@ -1132,68 +1091,50 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             <div>
                 <div>
                     <h6>Операторы</h6>
-                    {liveOperators.length > 0
-                        ? <div className="row">{renderGroup(liveOperators)}</div>
-                        : <p>Нет операторов</p>
-                    }
+                    {liveOperators.length > 0 ? <div className="row">{renderGroup(liveOperators)}</div> : <p>Нет операторов</p>}
                 </div>
                 <hr />
                 <div>
                     <h6>Роботы</h6>
-                    {robots.length > 0
-                        ? <div className="row">{renderGroup(robots)}</div>
-                        : <p>Нет роботов</p>
-                    }
+                    {robots.length > 0 ? <div className="row">{renderGroup(robots)}</div> : <p>Нет роботов</p>}
                 </div>
             </div>
         );
     };
 
     const renderButtons = () => {
-        // if (!fsStatus || !fsStatus.status) return null;
         const currentStatus = fsStatus.status;
+
         return (
             <>
                 {post && (
-                    <button
-                        name="online"
-                        id="post_stop"
-                        className="btn btn-outline-success mx-1 ml-2"
-                        onClick={handlePostStop}
-                    >
+                    <button name="online" id="post_stop" className="btn btn-outline-success mx-1 ml-2" onClick={handlePostStop}>
                         Закончить обработку
                     </button>
                 )}
-                {currentStatus === 'Logged Out' && (
+
+                {currentStatus === "Logged Out" && (
                     <button
                         name="online"
                         id="online"
                         className="btn btn-outline-success mx-1 ml-2"
-                        onClick={() => handleStartFs('manual_start')}
+                        onClick={() => handleStartFs("manual_start")}
                     >
                         Выйти на линию
                     </button>
                 )}
-                {currentStatus !== 'Logged Out' && (
+
+                {currentStatus !== "Logged Out" && (
                     <>
-                        <button
-                            name="pause_calls"
-                            id="pause"
-                            className="btn btn-outline-warning mx-1 ml-2"
-                            onClick={handlePauseFs}
-                        >
+                        <button name="pause_calls" id="pause" className="btn btn-outline-warning mx-1 ml-2" onClick={handlePauseFs}>
                             {fsStatus.status === "On Break" ? "Закончить перерыв" : "Перерыв"}
                         </button>
-                        <button
-                            name="logout_calls"
-                            id="logout"
-                            className="btn btn-outline-danger mx-1 ml-2"
-                            onClick={handleLogoutFs}
-                        >
+                        <button name="logout_calls" id="logout" className="btn btn-outline-danger mx-1 ml-2" onClick={handleLogoutFs}>
                             Закончить смену
                         </button>
                     </>
                 )}
+
                 <button
                     name="statuses_vis"
                     id="statuses"
@@ -1202,6 +1143,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 >
                     Кто онлайн?
                 </button>
+
                 <button
                     name="script_look"
                     id="script_look"
@@ -1210,37 +1152,38 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 >
                     Скрипты
                 </button>
-                <div className="row" style={{marginLeft: 0}}>
+
+                <div className="row" style={{ marginLeft: 0 }}>
                     <div className="col text-center">
                         <ModeSwitch
-                            mode={showTasksDashboard ? 'tasks' : 'calls'}
+                            mode={showTasksDashboard ? "tasks" : "calls"}
                             onChange={(m: Mode) => {
                                 setManagerPanel(false);
-                                setShowTasksDashboard(m === 'tasks');
+                                setShowTasksDashboard(m === "tasks");
                                 setShowScriptPanel(false);
-                                setActiveProjectName("")
+                                setActiveProjectName("");
                             }}
                         />
                     </div>
                 </div>
-                {role === "manager" &&
+
+                {role === "manager" && (
                     <button
-                        name="script_look"
-                        id="script_look"
+                        name="manager_panel"
+                        id="manager_panel"
                         className="btn btn-outline-light text text-dark mx-1 ml-2"
                         onClick={() => setManagerPanel(!managerPanel)}
                     >
                         Панель менеджера
                     </button>
-                }
+                )}
 
                 <button
-                    className={`btn mx-1 ml-2 ${autocallEnabled ?'btn-outline-success' : 'btn-outline-primary'}`}
+                    className={`btn mx-1 ml-2 ${autocallEnabled ? "btn-outline-success" : "btn-outline-primary"}`}
                     onClick={toggleAutocall}
                 >
-                    Автообзвон: {autocallEnabled ? 'Вкл' : 'Выкл'}
+                    Автообзвон: {autocallEnabled ? "Вкл" : "Выкл"}
                 </button>
-
             </>
         );
     };
@@ -1250,65 +1193,63 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             <div className="card col ml-3">
                 <div className="card-body" id="glagol_play_text">
                     <div className="row col-12 pr-0" id="status_user">
-
                         <div className="mt-0 mb-0 mr-3">
                             <div className="row ml-0 pl-0">
-                                <p
-                                    id="status"
-                                    className="font-weight-bold mb-1 text"
-                                    style={{ color: displayStatusColor  }}
-                                >
+                                <p id="status" className="font-weight-bold mb-1 text" style={{ color: displayStatusColor }}>
                                     {displayStatusText}
                                 </p>
                             </div>
-                            <p
-                                id="sofia_status"
-                                className="font-weight-bold mt-0 mb-0 text"
-                                style={{ color: currentSofia.color }}
-                            >
+                            <p id="sofia_status" className="font-weight-bold mt-0 mb-0 text" style={{ color: currentSofia.color }}>
                                 {currentSofia.text}
                             </p>
                         </div>
+
                         {renderButtons()}
+
                         {isManager && (
                             <>
-                                <SignalsBell managerLogin={sipLogin} onOpen={()=>setNotifOpen(true)} />
+                                <SignalsBell managerLogin={sipLogin} onOpen={() => setNotifOpen(true)} />
                                 <SignalsToaster managerLogin={sipLogin} />
-                                <NotificationsPanel managerLogin={sipLogin} open={notifOpen} onClose={()=>setNotifOpen(false)} />
+                                <NotificationsPanel managerLogin={sipLogin} open={notifOpen} onClose={() => setNotifOpen(false)} />
                             </>
                         )}
                     </div>
                 </div>
             </div>
-            {hasActiveCall && <div id="start_section" className="card ml-3 mr-0">
-                <div className="card-body pr-0" id="glagol_actions">
-                    <div className="row col-12 pr-0" id="start_inner">
-                        <input
-                            type="text"
-                            className="form-control col input mb-0 mr-2"
-                            style={{height: '40px'}}
-                            placeholder="Номер для вызова"
-                            value={phone}
-                            onChange={e => setPhone(e.target.value.replace(/\D/g, ''))}
-                        />
-                        <button
-                            name="start_calls"
-                            id="start_call"
-                            className="btn btn-outline-success mx-1 ml-2"
-                            title="Вызов по введенному номеру телефона"
-                            onClick={handleCallByNumber}
-                        >
-                            <i className="align-middle mr-1 fas fa-fw fa-address-book"></i>
-                            <span className="align-middle" id="vizov_btn">{"Вызов по номеру"}</span>
-                        </button>
+
+            {hasActiveCall && (
+                <div id="start_section" className="card ml-3 mr-0">
+                    <div className="card-body pr-0" id="glagol_actions">
+                        <div className="row col-12 pr-0" id="start_inner">
+                            <input
+                                type="text"
+                                className="form-control col input mb-0 mr-2"
+                                style={{ height: "40px" }}
+                                placeholder="Номер для вызова"
+                                value={phone}
+                                onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
+                            />
+                            <button
+                                name="start_calls"
+                                id="start_call"
+                                className="btn btn-outline-success mx-1 ml-2"
+                                title="Вызов по введенному номеру телефона"
+                                onClick={handleCallByNumber}
+                            >
+                                <i className="align-middle mr-1 fas fa-fw fa-address-book"></i>
+                                <span className="align-middle" id="vizov_btn">
+                  {"Вызов по номеру"}
+                </span>
+                            </button>
+                        </div>
                     </div>
                 </div>
-            </div>}
+            )}
 
             <div className="card ml-3 mr-0">
                 <div className="card-body mt-0">
                     <div className="row col-12 my-0 py-0 mx-0 pr-0 pl-0" id="ver_place">
-                        <p className="mt-0 mb-1">Версия {fsStatus?.version || '2.0.00'}</p>
+                        <p className="mt-0 mb-1">Версия {fsStatus?.version || "2.0.00"}</p>
                     </div>
                     <div className="row col-12 pr-0">
                         <a data-name="sharp_stop" id="exit" className="btn btn-outline-danger mr-3" href="https://my.glagol.ai/login_work/">
@@ -1320,42 +1261,44 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
             {showStatuses && (
                 <div id="active_sips" className="row col-12 pr-0 py-2">
-
                     <div className="card col-12 mx-3 pl-0">
                         <div className="card-header mt-0">
-                            <h5 style={{ marginRight: '20px', whiteSpace: 'nowrap' }}>Список коллег онлайн</h5>
+                            <h5 style={{ marginRight: "20px", whiteSpace: "nowrap" }}>Список коллег онлайн</h5>
+
                             <div className="d-flex align-items-center">
-                                <div style={{ width: '220px', marginRight: '15px' }}>
-                                    <label style={{ whiteSpace: 'nowrap' }}>Поиск</label>
+                                <div style={{ width: "220px", marginRight: "15px" }}>
+                                    <label style={{ whiteSpace: "nowrap" }}>Поиск</label>
                                     <input
                                         type="text"
                                         className="form-control"
                                         placeholder="Поиск оператора/робота"
                                         value={searchTerm}
-                                        onChange={e => setSearchTerm(e.target.value)}
-                                        style={{ width: '220px' }}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                        style={{ width: "220px" }}
                                     />
                                 </div>
-                                <div style={{ width: '220px', marginRight: '15px' }}>
-                                    <label style={{ whiteSpace: 'nowrap' }}>Тип</label>
+
+                                <div style={{ width: "220px", marginRight: "15px" }}>
+                                    <label style={{ whiteSpace: "nowrap" }}>Тип</label>
                                     <select
                                         className="form-control"
                                         value={typeFilter}
-                                        onChange={(e) => setTypeFilter(e.target.value as 'all' | 'operators' | 'robots')}
-                                        style={{ width: '220px' }}
+                                        onChange={(e) => setTypeFilter(e.target.value as "all" | "operators" | "robots")}
+                                        style={{ width: "220px" }}
                                     >
                                         <option value="all">Все</option>
                                         <option value="operators">Операторы</option>
                                         <option value="robots">Роботы</option>
                                     </select>
                                 </div>
-                                <div style={{ width: '220px' }}>
-                                    <label style={{ whiteSpace: 'nowrap' }}>Статус</label>
+
+                                <div style={{ width: "220px" }}>
+                                    <label style={{ whiteSpace: "nowrap" }}>Статус</label>
                                     <select
                                         className="form-control"
                                         value={statusFilter}
-                                        onChange={(e) => setStatusFilter(e.target.value as 'all' | 'online' | 'offline')}
-                                        style={{ width: '220px' }}
+                                        onChange={(e) => setStatusFilter(e.target.value as "all" | "online" | "offline")}
+                                        style={{ width: "220px" }}
                                     >
                                         <option value="all">Все</option>
                                         <option value="online">Онлайн</option>

@@ -93,7 +93,7 @@ function makeSocket(): IOSocket {
     const fromRedux = sanitizeHost(getCreds().fsServer);
     console.log("fromRedux: ", fromRedux)
     const fromDOM = readFsServerFromDOM();
-    const host = (fromRedux || fromDOM || "pmpbx.glagol.ai").trim();
+    const host = (fromRedux || fromDOM || "wwstest.glagol.ai").trim();
 
     const url = `wss://${host}`;
     if (process.env.NODE_ENV !== "production") {
@@ -257,6 +257,11 @@ function requestTurn() {
         sip_login: sipLogin,
         worker,
     });
+    // socket.emit("table_locks_all", {
+    //     session_key: sessionKey,
+    //     worker,
+    //
+    // })
     // socket.emit('login', {worker})
 }
 
@@ -465,7 +470,7 @@ socket.on("disconnect", () => {
     stopScreenSharePing();
 });
 
-socket.on("fs_status", (data: any) => store.dispatch(setFsStatus(data)));
+// socket.on("fs_status", (data: any) => store.dispatch(setFsStatus(data)));
 socket.on("fs_report", (data: any) => store.dispatch(setFsReport(data)));
 socket.on("monitor_projects", (data: any) => {
     store.dispatch(setMonitorData(parseMonitorData(data)));

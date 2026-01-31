@@ -447,7 +447,7 @@ export default function ItsmGuidScreen() {
     const { connected, error: socketErr, send, markManyRead } = useChatSocket({
         guid: activeGuid,
         login: socketLogin,
-
+        glagol_parent: glagolParent,
         onIncoming: (msg: UiMessage) => {
             setLive((prev: UiMessage[]) => [...prev, msg]);
             if (activeGuid) void refreshUnreadCounts([activeGuid], hasSip, loginForUnread);
@@ -662,10 +662,10 @@ export default function ItsmGuidScreen() {
                             </ul>
                         </div>
                     )}
-                    <ContactFilesPanel
-                        contacts={openedPhones}
-                        serverFilesByGuid={serverFilesByGuid}
-                    />
+                    {/*<ContactFilesPanel*/}
+                    {/*    contacts={openedPhones}*/}
+                    {/*    serverFilesByGuid={serverFilesByGuid}*/}
+                    {/*/>*/}
                     <div className="flex-grow-1 d-flex flex-column min-h-0">
                         <LocalChat
                             guid={activeGuid}

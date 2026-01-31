@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useRef} from 'react';
+import React, {useState, useEffect, useRef, useLayoutEffect} from 'react';
 import { FieldDefinition } from "../index";
 import SearchableSelect from './select';
 import DatePicker, {registerLocale, setDefaultLocale} from 'react-datepicker';
@@ -28,6 +28,55 @@ function parseMapConfig(raw: unknown): { mapping: MapFieldMapping; defaults: Map
     return { mapping, defaults };
 }
 
+const TEXTAREA_MAX_HEIGHT = 360;
+
+function autosizeTextarea(el: HTMLTextAreaElement | null) {
+    if (!el) return;
+    el.style.height = "auto";
+
+    const next = Math.min(el.scrollHeight, TEXTAREA_MAX_HEIGHT);
+    el.style.height = `${next}px`;
+
+    el.style.overflowY = el.scrollHeight > TEXTAREA_MAX_HEIGHT ? "auto" : "hidden";
+}
+type AutoTextareaProps = {
+    value: string;
+    onChange: (v: string) => void;
+    readOnly?: boolean;
+    className?: string;
+};
+
+function AutoTextarea({ value, onChange, readOnly, className }: AutoTextareaProps) {
+    const ref = useRef<HTMLTextAreaElement | null>(null);
+
+    useLayoutEffect(() => {
+        autosizeTextarea(ref.current);
+    }, [value]);
+
+    return (
+        <textarea
+            ref={ref}
+            className={className}
+            value={value}
+            readOnly={readOnly}
+            rows={1}
+            onChange={(e) => {
+                onChange(e.target.value);
+                autosizeTextarea(e.currentTarget);
+            }}
+            style={{
+                resize: "none",
+                minHeight: 38,
+            }}
+        />
+    );
+}
+
+const TEXTAREA_DIVIDER = "\n——\n";
+
+function normalizeNewlines(s: string) {
+    return (s ?? "").replace(/\r\n/g, "\n");
+}
 
 interface EditableFieldsProps {
     params: FieldDefinition[];
@@ -66,7 +115,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                                            initialValues = {},
                                                            onChange,
                                                            augmentSaved = false,
-                                                           compact = false     // <- дефолт
+                                                           compact = false
                                                        }) => {
     const [fieldValues, setFieldValues] = useState<{ [fieldId: string]: string }>(initialValues);
 
@@ -74,6 +123,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
     const baseOptionsRef = useRef<string[]>([]);
     const baseLinksRef = useRef<any[]>([]);
     const overrideOptionsRef = useRef(null);
+
     useEffect(() => {
         setFieldValues(initialValues);
     }, [initialValues]);
@@ -95,6 +145,57 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
             return `${yyyy}-${mm}-${dd}`;
         }
         return "";
+    }
+
+    const DATE_INPUT_STYLE: React.CSSProperties = {
+        width: 170,
+        flex: "0 0 auto",
+    };
+
+    const TIME_INPUT_STYLE: React.CSSProperties = {
+        width: 120,
+        flex: "0 0 auto",
+    };
+
+    function ReadonlyTextareaView({ value }: { value: string }) {
+        const v = normalizeNewlines(value);
+        const parts = v.split(TEXTAREA_DIVIDER);
+
+        const boxStyle: React.CSSProperties = {
+            whiteSpace: "pre-wrap",
+            padding: "0.375rem 0.75rem",
+            backgroundColor: "#e9ecef",
+            border: "1px solid transparent",
+            borderRadius: "0.25rem",
+
+            width: "100%",
+            maxHeight: TEXTAREA_MAX_HEIGHT,
+            overflowY: "auto",
+
+            overflowWrap: "anywhere",
+            wordBreak: "break-word",
+        };
+
+        // если делимитера нет — просто выводим как есть (НО с linkify)
+        if (parts.length <= 1) {
+            return <div style={boxStyle}>{linkifyParts(v)}</div>;
+        }
+
+        // делим по "\n——\n" и рисуем разделитель только между частями
+        return (
+            <div style={boxStyle}>
+                {parts.map((p, idx) => (
+                    <div key={idx} style={{ padding: "6px 0" }}>
+                        {idx > 0 && (
+                            <div style={{ borderTop: "1px solid #9ca3af", marginBottom: 6 }} />
+                        )}
+                        <div style={{ lineHeight: 1.35 }}>
+                            {linkifyParts(p || "\u00a0")}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
     }
 
     return (
@@ -162,9 +263,24 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             )
                         )}
                         {param.field_type === 'number'  && <input type="number" {...commonProps} />}
-                        {param.field_type === 'date'    && <input type="date" className="form-control" value={toIsoDate(currentValue)} onChange={e => handleChange(param.field_id, e.target.value)} />}
-                        {param.field_type === 'time'    && <input type="time" {...commonProps} />}
+                        {param.field_type === "date" && (
+                            <input
+                                type="date"
+                                className="form-control"
+                                style={DATE_INPUT_STYLE}
+                                value={toIsoDate(currentValue)}
+                                onChange={(e) => handleChange(param.field_id, e.target.value)}
+                                readOnly={!param.editable}
+                            />
+                        )}
 
+                        {param.field_type === "time" && (
+                            <input
+                                type="time"
+                                {...commonProps}
+                                style={TIME_INPUT_STYLE}
+                            />
+                        )}
                         {param.field_type === 'map' && (() => {
                             const storeFieldId = param.field_id;
                             const { mapping, defaults } = parseMapConfig(param.field_vals);
@@ -232,27 +348,38 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                 </div>
                             );
                         })()}
-
                         {param.field_type === 'textarea' && (
                             param.editable ? (
-                                <textarea {...commonProps} />
+                                <AutoTextarea
+                                    className="form-control"
+                                    value={currentValue}
+                                    readOnly={!param.editable}
+                                    onChange={(v) => handleChange(param.field_id, v)}
+                                />
                             ) : (
-                                <span
-                                    style={{
-                                        whiteSpace: 'normal',
-                                        padding: '0.375rem 0.75rem',
-                                        backgroundColor: '#e9ecef'
-                                    }}
-                                >
-                                    {currentValue.split(/\r?\n/).map((line, idx) => (
-                                        <div key={idx} style={{ padding: '6px 0' }}>
-                                            {idx > 0 && <div style={{ borderTop: '1px solid #9ca3af', marginBottom: 6 }} />}
-                                            <div style={{ lineHeight: 1.35 }}>{linkifyParts(line || '\u00a0')}</div>
-                                        </div>
-                                    ))}
-                                </span>
+                                <ReadonlyTextareaView value={String(currentValue ?? "")} />
                             )
                         )}
+                        {/*{param.field_type === 'textarea' && (*/}
+                        {/*    param.editable ? (*/}
+                        {/*        <textarea {...commonProps} />*/}
+                        {/*    ) : (*/}
+                        {/*        <span*/}
+                        {/*            style={{*/}
+                        {/*                whiteSpace: 'normal',*/}
+                        {/*                padding: '0.375rem 0.75rem',*/}
+                        {/*                backgroundColor: '#e9ecef'*/}
+                        {/*            }}*/}
+                        {/*        >*/}
+                        {/*            {currentValue.split(/\r?\n/).map((line, idx) => (*/}
+                        {/*                <div key={idx} style={{ padding: '6px 0' }}>*/}
+                        {/*                    {idx > 0 && <div style={{ borderTop: '1px solid #9ca3af', marginBottom: 6 }} />}*/}
+                        {/*                    <div style={{ lineHeight: 1.35 }}>{linkifyParts(line || '\u00a0')}</div>*/}
+                        {/*                </div>*/}
+                        {/*            ))}*/}
+                        {/*        </span>*/}
+                        {/*    )*/}
+                        {/*)}*/}
 
                         {param.field_type === 'select' && (() => {
                             const rawVals = param.field_vals || "";

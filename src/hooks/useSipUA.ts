@@ -177,7 +177,7 @@ export function useSipUA(config: {
         if (endTonePlayedRef.current) return;
         endTonePlayedRef.current = true;
         tonesRef.current?.stopAll();
-        tonesRef.current?.play('reorder');
+        // tonesRef.current?.play('reorder');
         endToneUntilRef.current = Date.now() + ms;
         setTimeout(() => tonesRef.current?.stopAll(), ms);
     }
@@ -475,7 +475,7 @@ export function useSipUA(config: {
                         tonesRef.current?.play('busy');
                         setTimeout(() => tonesRef.current?.stopAll(), 2500);
                     } else if ([500, 503, 480, 408].includes(code)) {
-                        tonesRef.current?.play('reorder');
+                        // tonesRef.current?.play('reorder');
                         setTimeout(() => tonesRef.current?.stopAll(), 2500);
                     }
                 },

@@ -17,7 +17,16 @@ import { ContactFilesPanel } from '../../features/itsm/chat/FieldsPanel';
 import { chatApi } from '../../features/itsm/chat/api';
 import {makeId} from "../../utils";
 import {OperatorScreenSharePanel} from "../../screenShare/OperatorScreenSharePanel";
+import ContactUsersPresence from "./components/ContactUsersPresence";
 
+const IcoClip = (p: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" {...p}>
+        <path
+            fill="currentColor"
+            d="M16.5 6.5l-7.9 7.9a3 3 0 1 0 4.2 4.2l8-8a5 5 0 0 0-7.1-7.1l-8.2 8.2a7 7 0 0 0 9.9 9.9l7.8-7.8a1 1 0 1 0-1.4-1.4l-7.8 7.8a5 5 0 0 1-7.1-7.1l8.2-8.2a3 3 0 1 1 4.2 4.2l-8 8a1 1 0 1 1-1.4-1.4l7.9-7.9a1 1 0 1 0-1.4-1.4z"
+        />
+    </svg>
+);
 type AlertMsg = {
     title?: string;
     text?: string;
@@ -40,6 +49,18 @@ const mapIcon = (t?: string): 'success'|'error'|'warning'|'info' => {
     if (s === 'warn') return 'warning';
     return 'info';
 };
+
+function normalizeContactUsers(resp: any): string[] {
+    const arr =
+        Array.isArray(resp) ? resp :
+            Array.isArray(resp?.users) ? resp.users :
+                Array.isArray(resp?.sip_logins) ? resp.sip_logins :
+                    Array.isArray(resp?.logins) ? resp.logins :
+                        Array.isArray(resp?.data) ? resp.data :
+                            [];
+    return arr.map(String).map((s: any) => s.trim()).filter(Boolean);
+}
+
 
 function collectAlerts(payload: any): AlertMsg[] {
     const out: AlertMsg[] = [];
@@ -674,7 +695,30 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [activeTab, setActiveTab] = useState<string>(TAB_ALL);
     const [serverFilesByGuid, setServerFilesByGuid] = useState<Record<string, string[]>>({});
 
-// Дебаунс-таймеры на "поле-проект"
+    const [cardUsers, setCardUsers] = useState<string[]>([]);
+
+    const [isLocker, setIsLocker] = useState<boolean>(false)
+
+    const presenceIds = useMemo<number[]>(() => {
+        const fromOpened = (openedPhones ?? [])
+            .map((p: any) => Number(p?.id))
+            .filter((n) => Number.isFinite(n));
+
+        if (fromOpened.length) return Array.from(new Set(fromOpened));
+
+        const single = call?.id ?? phoneID;
+        const n = Number(single);
+        return Number.isFinite(n) ? [n] : [];
+    }, [openedPhones, call?.id, phoneID]);
+
+    const presenceKey = useMemo(() => presenceIds.join(","), [presenceIds]);
+
+    const otherUsers = useMemo(
+        () => cardUsers.filter(u => String(u) !== String(sipLogin)),
+        [cardUsers, sipLogin]
+    );
+
+
     const debounceOnchangeTimersRef = useRef<Record<string, any>>({});
     const valuesRef = useRef(values);
     useEffect(() => { valuesRef.current = values; }, [values]);
@@ -821,40 +865,50 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return [];
     }
 
-    async function uploadFilesToAllGuids(files: FileList) {
+    async function uploadFilesToAllGuids(
+        files: FileList,
+        login: string,
+        glagol_parent: string
+    ) {
         if (!files?.length || !guidsFromOpened?.length) return;
 
-        const bin   = Array.from(files);
+        const bin = Array.from(files);
         const guids = Array.from(new Set(guidsFromOpened));
 
         await Promise.allSettled(
             guids.map(async (guid) => {
                 try {
-                    // upload
                     const fd = new FormData();
-                    bin.forEach(f => fd.append('files', f, f.name));
+                    bin.forEach((f) => fd.append("files", f, f.name));
+
+                    fd.append("created_by", login);
+                    fd.append("glagol_parent", glagol_parent);
+
                     const { data: up } = await chatApi.post(
                         `/api/v1/storage/upload/${encodeURIComponent(guid)}`,
                         fd
                     );
+
                     const storage = extractUploadedNames(up);
                     if (!storage.length) {
-                        console.warn('upload ok, but no filenames in response:', up);
-                        window.dispatchEvent(new CustomEvent('contact-files:refresh', { detail: { guid } }));
+                        console.warn("upload ok, but no filenames in response:", up);
+                        window.dispatchEvent(new CustomEvent("contact-files:refresh", { detail: { guid } }));
                         return;
                     }
 
                     try {
-                        await chatApi.post(`/api/v1/contacts/storage/add`, { guid, storage });
+                        await chatApi.post(`/api/v1/contacts/storage/add`, {
+                            guid,
+                            storage,
+                        });
                     } catch (e: any) {
                         const code = e?.response?.status;
                         if (code !== 409 && code !== 400) throw e;
                     }
 
-                    // обновляем карточку только после успешной привязки
-                    window.dispatchEvent(new CustomEvent('contact-files:refresh', { detail: { guid } }));
+                    window.dispatchEvent(new CustomEvent("contact-files:refresh", { detail: { guid } }));
                 } catch (e) {
-                    console.warn('upload/attach failed for guid', guid, e);
+                    console.warn("upload/attach failed for guid", guid, e);
                 }
             })
         );
@@ -905,11 +959,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
     }, [activeTab, guidsFromOpened]);
 
-    useEffect(() => {
-        if (activeTab !== TAB_FILES) return;
-        const id = window.setInterval(() => void refreshAllOpenedFiles(), 60000);
-        return () => window.clearInterval(id);
-    }, [activeTab, guidsFromOpened]);
+    // useEffect(() => {
+    //     if (activeTab !== TAB_FILES) return;
+    //     const id = window.setInterval(() => void refreshAllOpenedFiles(), 60000);
+    //     return () => window.clearInterval(id);
+    // }, [activeTab, guidsFromOpened]);
 
     useEffect(() => {
         const handler = (e: Event) => {
@@ -1241,14 +1295,14 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     group_position: f.group_position || null,
                     group_id: f.group_id || null,
                     width: f.width ?? 12,
-                    onchangeByProject: { [projName]: oc }, // <-- НОВОЕ
+                    onchangeByProject: { [projName]: oc },
                 });
             } else {
                 const e = map.get(key)!;
                 if (!e.projects.includes(projName)) e.projects.push(projName);
                 e.fieldIds[projName] = f.field_id;
                 e.tabsByProject[projName] = tabKey;
-                e.onchangeByProject = { ...(e.onchangeByProject || {}), [projName]: oc }; // <-- НОВОЕ
+                e.onchangeByProject = { ...(e.onchangeByProject || {}), [projName]: oc };
             }
         };
 
@@ -2439,36 +2493,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     marginBottom: 16,
                 }}
             >
-                <button
-                    onClick={() => {
-                        setOpenedPhones?.([]);
-                        setOpenedGroup?.([]);
-                        setPhonesData?.([]);
-                        startModulesRanRef.current = false;
-                        if (setActiveProjectName) {
-                            setActiveProjectName("")
-                        }
-                        if (momoProjectRepo && momoProjectRepo.current && setTuskMode) {
-                            setTuskMode(false);
-                            onClose();
-                        }
-                        normalizeUrl();
-                    }}
-                    className="btn btn-outline-light text text-dark"
-                    style={{
-                        position: 'absolute',
-                        top: 0,
-                        right: 0,
-                        padding: '4px 8px',
-                        fontSize: 14,
-                        lineHeight: 1,
-                        zIndex: 1,
-                    }}
-                >
-                  <span className="material-icons" style={{ marginTop: 4 }}>
-                    close
-                  </span>
-                </button>
 
                 <div
                     key="manual-entry"
@@ -3017,7 +3041,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         return (
             <div style={wrap} aria-live="polite">
-                {/* Панель с кнопками */}
                 <div
                     id="actions-dock-panel"
                     style={panel}
@@ -3028,7 +3051,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 >
                     <div style={header}>Действия</div>
 
-                    {/* Save / Save & Return */}
                     <div style={grid}>
                         <button
                             style={{
@@ -3040,6 +3062,14 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             onClick={() => {
                                 setDockOpen(false);
                                 handleCloseCard();
+                                if (openedPhones && isLocker) {
+                                    const ids = openedPhones?.map((item) => item.id)
+                                    socket.emit("group_lock_off", {
+                                        ids,
+                                        session_key: sessionKey,
+                                        worker
+                                    })
+                                }
                             }}
                             title="Закрыть карточку"
                         >
@@ -3118,15 +3148,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                             }}
                                             title={proj}
                                         >
-                  <span
-                      style={{
-                          width: 10,
-                          height: 10,
-                          borderRadius: 999,
-                          background: projectColors[proj] || '#6b7280',
-                          border: '1px solid rgba(0,0,0,.12)',
-                      }}
-                  />
+                                          <span
+                                              style={{
+                                                  width: 10,
+                                                  height: 10,
+                                                  borderRadius: 999,
+                                                  background: projectColors[proj] || '#6b7280',
+                                                  border: '1px solid rgba(0,0,0,.12)',
+                                              }}
+                                          />
                                             {findNameProject(proj)}
                                         </div>
                                         <div style={grid}>
@@ -3505,12 +3535,49 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return [...callResults].sort((a, b) => Number(a.id) - Number(b.id));
     }, [callResults]);
 
+    const closeButton = (isLocker?: boolean) => {
+        setOpenedPhones?.([]);
+        setOpenedGroup?.([]);
+        setPhonesData?.([]);
+        startModulesRanRef.current = false;
+        if (setActiveProjectName) {
+            setActiveProjectName("")
+        }
+        if (momoProjectRepo && momoProjectRepo.current && setTuskMode) {
+            setTuskMode(false);
+            onClose();
+        }
+        normalizeUrl();
+        if (openedPhones && isLocker) {
+            const ids = openedPhones?.map((item) => item.id)
+            socket.emit("group_lock_off", {
+                ids,
+                session_key: sessionKey,
+                worker
+            })
+        }
+    }
+
+
     return (
-        <div style={{marginTop: 20}}>
+        <div>
             {/*{renderModules()}*/}
             <div className="col ml-2 pr-0 mr-0 mr-1">
                 <div className="card col ml-0">
                     <div className="card-body">
+                        <div style={{display: "flex", flexDirection: "row", }}>
+                        <ContactUsersPresence
+                            enabled={Boolean(sipLogin) && presenceIds.length > 0}
+                            sipLogin={sipLogin}
+                            ids={presenceIds}
+                            pollMs={5000}
+                            role={role}
+                            closeButton={closeButton}
+                            setIsLocker={setIsLocker}
+                        />
+
+                        </div>
+
                         {hasActiveCall && renderActiveCallHeader(activeCalls[0])}
                         {!hasActiveCall && postActive && renderPostCallHeader()}
                         {tuskMode && !hasActiveCall && !postActive && !isChating && renderGroupPhones()}
@@ -3574,14 +3641,17 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                     )}
                                     {activeTab === TAB_FILES && (
                                         <div style={{ marginTop: 8, marginBottom: 12 }}>
-                                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                                            <div style={{ display: 'flex', marginBottom: 8 }}>
                                                 <button
-                                                    className="btn btn-outline-secondary"
+                                                    type="button"
+                                                    className="btn btn-outline-secondary d-inline-flex align-items-center"
                                                     title="Прикрепить файлы"
                                                     onClick={() => fileInputRef.current?.click()}
                                                     disabled={!hasAnyGuid}
+                                                    style={{ gap: 8 }}
                                                 >
-                                                    <span className="material-icons" style={{ verticalAlign: 'middle' }}>attach_file</span>
+                                                    <IcoClip />
+                                                    <span>Прикрепить</span>
                                                 </button>
                                                 <input
                                                     ref={fileInputRef}
@@ -3589,8 +3659,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                     multiple
                                                     style={{ display: 'none' }}
                                                     onChange={(e) => {
-                                                        if (e.target.files) void uploadFilesToAllGuids(e.target.files);
-                                                        // сбрасываем, чтобы повторно можно было выбрать тот же файл
+                                                        if (e.target.files) void uploadFilesToAllGuids(e.target.files, sipLogin, glagolParent);
                                                         e.currentTarget.value = '';
                                                     }}
                                                 />
@@ -3600,6 +3669,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                 contacts={(openedPhones || [])}
                                                 serverFilesByGuid={serverFilesByGuid}
                                                 alwaysOpen
+                                                glagolParent={glagolParent}
                                             />
                                         </div>
                                     )}
@@ -4038,7 +4108,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             {renderModules()}
                         </div>
 
-                        {/* Кнопка «Сохранить» для обычного режима */}
                         {(shouldShowMeta && !hasActiveCall && !postActive) && (
                             <div className="card-footer d-flex justify-content-end">
                                 <button className="btn btn-outline-success" onClick={handleSave}>
@@ -4094,7 +4163,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 onClose={() => setGroupModalOpen(false)}
                 preset={selectedPreset?.preset ?? null}
                 ids={memoizedIds}
-                glagolParent="fs.at.glagol.ai"
+                glagolParent={glagolParent}
                 role={role || "operator"}
                 idProjectMap={idProjectMap}
                 onSelectionChange={setGroupSelectedIds}

@@ -12,7 +12,6 @@ import ItsmGuidRoute from "./features/itsm/ItsmGuidRoute";
 import { webrtcOwner } from "./webrtcOwner";
 import { OperatorScreenSharePanel } from "./screenShare/OperatorScreenSharePanel";
 
-/** если у тебя тип экспортируется из slice — можно заменить на импорт типа */
 type ScreenShareStatus = "idle" | "requesting" | "sharing" | "denied" | "error";
 
 type PhoneMode = "softphone" | "webrtc";
@@ -320,7 +319,6 @@ const RootHome: React.FC<RootHomeProps> = ({
         </div>
     );
 
-    // ВАЖНО: SipProvider включаем только когда прошли ВСЕ проверки
     return (
         <SipProvider
             // key={`${sipLogin}-${telephonyEnabled ? "on" : "off"}`}
@@ -340,13 +338,6 @@ const RootHome: React.FC<RootHomeProps> = ({
                 error={micError}
                 onRequest={onRequestMic}
             />
-
-            {/*<ScreenSharePermissionBanner*/}
-            {/*    show={wantWebrtc && role === "Оператор" && !screenGrantedOnce}*/}
-            {/*    status={screenStatus}*/}
-            {/*    grantedOnce={screenGrantedOnce}*/}
-            {/*    onCheck={onCheckScreenShare}*/}
-            {/*/>*/}
 
             {/* ждём HA1/TURN */}
             {wantWebrtc && !hasCreds && (

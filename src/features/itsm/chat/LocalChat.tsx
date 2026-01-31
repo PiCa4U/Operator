@@ -138,6 +138,7 @@ export type UiMessage = {
     isRead?: boolean;
     status?: "pending" | "sent" | "failed";
     errorText?: string;
+    message_type?: string,
 };
 
 type ReadStatus = { watched: string[]; responsible_watch: boolean };
@@ -329,7 +330,7 @@ export default function LocalChat({
     selfRole?: Role;
     collapsed: boolean;
     onToggle(): void;
-    onSend?: (text: string, files: File[]) => void | Promise<void>;
+    onSend?: (text: string, files: File[], message_type: string) => void | Promise<void>;
     messages?: UiMessage[];
     initialMessages?: UiMessage[];
     height?: string;
@@ -369,6 +370,13 @@ export default function LocalChat({
     }, [filesApiBase]);
 
     const list = isControlled ? (messages as UiMessage[]) : internal;
+
+    const visibleList = useMemo(() => {
+        if (selfRole === "client") {
+            return list.filter(m => (m.message_type ?? "msg") !== "comment");
+        }
+        return list;
+    }, [list, selfRole]);
 
     const [lb, setLb] = useState<{ items: LightboxItem[]; index: number } | null>(null);
 
@@ -415,7 +423,7 @@ export default function LocalChat({
         setDragging(false);
     }
 
-    const pos = useMemo(() => positionsOf(list, selfLogin ?? null, selfRole), [list, selfLogin, selfRole]);
+    const pos = useMemo(() => positionsOf(visibleList, selfLogin ?? null, selfRole), [visibleList, selfLogin, selfRole]);
 
     function addPending(fs: File[]) {
         if (!fs.length) return;
@@ -437,7 +445,7 @@ export default function LocalChat({
         []
     );
 
-    async function sendNow() {
+    async function sendNow(messageType: string = "msg") {
         const trimmed = text.trim();
         if (!trimmed) return;
 
@@ -460,11 +468,12 @@ export default function LocalChat({
             authorRole: selfRole,
             attachments: atts,
             isRead: false,
+            message_type: messageType,
         };
 
         if (!isControlled) setInternal((prev) => [...prev, msg]);
         try {
-            await onSend?.(trimmed, pendingFiles);
+            await onSend?.(trimmed, pendingFiles, messageType);
         } catch {}
 
         setText("");
@@ -476,7 +485,7 @@ export default function LocalChat({
     function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            void sendNow();
+            void sendNow("msg");
         }
     }
 
@@ -515,7 +524,9 @@ export default function LocalChat({
                                 </ConversationHeader>
 
                                 <MessageList autoScrollToBottom>
-                                    {list.map((m, i) => {
+                                    {visibleList.map((m, i) => {
+                                        const isComment = (m.message_type ?? "msg") === "comment";
+
                                         const direction = isOutgoing(m, selfLogin ?? null, selfRole) ? "outgoing" : "incoming";
                                         const cur = new Date(m.created_at);
                                         const prev = i > 0 ? new Date(list[i - 1].created_at) : null;
@@ -543,7 +554,7 @@ export default function LocalChat({
                                             }));
 
                                         return (
-                                            <div key={m.id}>
+                                            <div key={m.id} className={isComment ? styles.commentMessage : undefined}>
                                                 {showDayDivider && <MessageSeparator content={ruDate(cur)} />}
 
                                                 <Message
@@ -556,11 +567,12 @@ export default function LocalChat({
                                                     }}
                                                     title={readTooltip || undefined}
                                                 >
-                                                    {direction === "incoming" && name && (
+                                                    {(direction === "incoming") && (
                                                         <Message.Header>
                                                             <span className="small" style={{ fontWeight: 600 }}>
                                                                 {name}
                                                             </span>
+
                                                         </Message.Header>
                                                     )}
 
@@ -761,15 +773,30 @@ export default function LocalChat({
                             />
                         </div>
 
-                        <button
-                            type="button"
-                            className="btn btn-dark"
-                            onClick={sendNow}
-                            disabled={!text.trim()}
-                            title="Отправить (Enter)"
-                        >
-                            Отправить
-                        </button>
+                        <div className="d-flex" style={{ gap: 8 }}>
+                            {selfRole !== "client" && (
+                                <button
+                                    type="button"
+                                    className="btn btn-outline-success"
+                                    onClick={() => sendNow("comment")}
+                                    disabled={!text.trim()}
+                                    title="Отправить комментарий (видно только операторам)"
+                                >
+                                    💬
+                                </button>
+                            )}
+
+                            <button
+                                type="button"
+                                className="btn btn-dark"
+                                onClick={() => sendNow("msg")}
+                                disabled={!text.trim()}
+                                title="Отправить (Enter)"
+                            >
+                                Отправить
+                            </button>
+                        </div>
+
                     </div>
                 </div>
             )}

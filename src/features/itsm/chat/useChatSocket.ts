@@ -15,6 +15,7 @@ export type UiMessage = {
     tempId?: string;
     status?: "pending" | "sent";
     isRead?: boolean;
+    message_type?: string;
 };
 
 function toIso(s: string): string {
@@ -32,8 +33,10 @@ type Handlers = {
     onUploaded?: (p: { tempId: string; filenames: string[] }) => void;
 };
 
-export function useChatSocket(opts: { guid: string; login: string | null } & Handlers) {
-    const { guid, login, onIncoming, onAck, onRead, onUploaded } = opts;
+export function useChatSocket(
+    opts: { guid: string; login: string | null; glagol_parent: string | null } & Handlers
+) {
+    const { guid, login, glagol_parent, onIncoming, onAck, onRead, onUploaded } = opts;
 
     const sockRef = useRef<ReturnType<typeof createChatSocket> | null>(null);
     const [connected, setConnected] = useState(false);
@@ -74,6 +77,7 @@ export function useChatSocket(opts: { guid: string; login: string | null } & Han
             message: string;
             storage: string[] | null;
             created_dt?: string;
+            message_type?: string | null;
         }) => {
             const isClient = p.login === "client";
             const role: Role = isClient ? "client" : "operator";
@@ -92,6 +96,7 @@ export function useChatSocket(opts: { guid: string; login: string | null } & Han
                 authorRole: role,
                 attachments,
                 isRead: false,
+                message_type: (p.message_type ?? "msg"),
             };
 
             handlersRef.current.onIncoming?.(ui);
@@ -114,14 +119,18 @@ export function useChatSocket(opts: { guid: string; login: string | null } & Han
         };
     }, [guid, login]);
 
-    async function send(tempId: string, text: string, files: File[] = []) {
+    async function send(tempId: string, text: string, files: File[] = [], messageType: string = "msg") {
         try {
+            if (files.length) {
+                if (!login) throw new Error("send(): login is required for file upload");
+                if (!glagol_parent) throw new Error("send(): glagol_parent is required for file upload");
+            }
+
             let storageNames: string[] = [];
 
             if (files.length) {
-                const items: UploadItem[] = await uploadAndAttach(guid, files);
+                const items: UploadItem[] = await uploadAndAttach(guid, files, login!, glagol_parent!);
                 storageNames = items.map((i) => i.filename);
-                // сообщаем наверх финальные имена (для апдейта optimistic вложений)
                 handlersRef.current.onUploaded?.({ tempId, filenames: storageNames });
             }
 
@@ -130,6 +139,7 @@ export function useChatSocket(opts: { guid: string; login: string | null } & Han
             sockRef.current?.emit("message:send", {
                 message: text,
                 storage: storageNames.length ? storageNames : undefined,
+                message_type: messageType,
             });
         } catch (e) {
             console.error("Не удалось отправить сообщение/загрузить файлы", e);

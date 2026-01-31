@@ -53,7 +53,6 @@ const COL_W: Record<string, number> = {
 };
 const getColW = (key: string) => COL_W[key] ?? COL_W_DEFAULT;
 
-// сформировать deep-link на карточку текущей строки
 function makeGroupCardUrl(row: ApiRow, selectedPreset: OptionType | null, phonesData: any[]) {
     const u = new URL(window.location.href);
     u.searchParams.set("card", "1");
@@ -72,6 +71,31 @@ function makeGroupCardUrl(row: ApiRow, selectedPreset: OptionType | null, phones
     }
 
     return u.toString();
+}
+
+const NONE_TOKEN = "__NONE__";
+const NONE_LABEL = "Пустое значение";
+
+function isNoneToken(v: unknown) {
+    return v === NONE_TOKEN || String(v ?? "").trim() === NONE_LABEL;
+}
+
+// из UI значения -> в стейт
+function toStateValue(v: unknown): string {
+    const s = String(v ?? "").trim();
+    if (s === "" || s === NONE_LABEL) return NONE_TOKEN;
+    return s;
+}
+
+// из стейта -> в UI отображение
+function toUiValue(v: unknown): string {
+    return v === NONE_TOKEN ? NONE_LABEL : String(v ?? "");
+}
+
+// добавить "(Пусто)" в выпадающий список
+function withNoneOption(opts: { id: string; name: string }[]) {
+    if (opts.some(o => o.id === NONE_TOKEN)) return opts;
+    return [{ id: NONE_TOKEN, name: NONE_LABEL }, ...opts];
 }
 
 function extractActionSteps(act?: { [k: string]: any }): Step[] {
@@ -232,6 +256,37 @@ type Props = {
     unreadOnly: boolean;
     setUnreadOnly: React.Dispatch<React.SetStateAction<boolean>>;
 }
+
+function getMinIdForRow(row: ApiRow): number | null {
+    const raw = Array.isArray(row?.id_list) ? row.id_list : [];
+    const ids = raw
+        .map((x: any) => Number(x))
+        .filter((n) => Number.isFinite(n)) as number[];
+
+    if (!ids.length) return null;
+
+    let m = ids[0];
+    for (let i = 1; i < ids.length; i++) if (ids[i] < m) m = ids[i];
+    return Number.isFinite(m) ? m : null;
+}
+
+function getPresentByForRow(row: ApiRow, locks: Record<string, string>): string | null {
+    for (const rawId of row.id_list || []) {
+        const who = locks[String(rawId)];
+        if (who) return who;
+    }
+    return null;
+}
+
+function getMinIdsForPage(rows: ApiRow[]): number[] {
+    const set = new Set<number>();
+    for (const r of rows) {
+        const m = getMinIdForRow(r);
+        if (m && m > 0) set.add(m);
+    }
+    return Array.from(set).sort((a, b) => a - b);
+}
+
 const ROWS_PER_PAGE_KEY = 'tasksRowsPerPage';
 const LS_SEARCH_TERM_KEY = 'tasksSearchTerm';
 const LS_SELECTED_OPERATOR_KEY = 'tasksSelectedOperator';
@@ -313,6 +368,11 @@ const PresetSelectorTable: React.FC<Props> = ({
     const scope = useMemo(() => makeScope(selectedPreset?.preset?.id), [selectedPreset?.preset?.id]);
     const lsKeyLast = useMemo(() => `${scope}:last`, [scope]);
 
+    const isCardUrl = useMemo(() => {
+        const sp = new URLSearchParams(window.location.search);
+        return sp.get("card") === "1";
+    }, []);
+
 
     const ssKey = useMemo(() => ({
         rowsPerPage: `${scope}:rowsPerPage`,
@@ -330,6 +390,8 @@ const PresetSelectorTable: React.FC<Props> = ({
         worker = '',
         glagolParent = ''
     } = store.getState().credentials;
+    const {sessionKey} = store.getState().operator
+
     const phonesCacheRef = useRef<Map<number, any>>(new Map());
     const inflightPhonesRef = useRef<Set<number>>(new Set());
 
@@ -346,13 +408,72 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     const [pageInput, setPageInput] = useState('1');
     const [openActionsRow, setOpenActionsRow] = useState<string | null>(null);
-
+    const loadGroupedTimerRef = useRef<number | null>(null)
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpenActionsRow(null); };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, []);
+
+    const [tableLocks, setTableLocks] = useState<Record<string, string>>({});
+    const locksPollRef = useRef<number | null>(null);
+    const lastLocksSigRef = useRef<string>("");
+
+    const [showLockedOnly, setShowLockedOnly] = useState(false);
+    const [allLocks, setAllLocks] = useState<Record<string, string>>({});
+    const [allLocksLoading, setAllLocksLoading] = useState(false);
+
+    const normalizeLocksPayload = useCallback((payload: any) => {
+        const out: Record<string, string> = {};
+        if (!payload || typeof payload !== "object") return out;
+
+        for (const [k, v] of Object.entries(payload)) {
+            const key = String(k).trim();
+            const val = String(v ?? "").trim();
+            if (key && val) out[key] = val;
+        }
+        return out;
+    }, []);
+
+    const fetchAllLocks = useCallback(async () => {
+        if (!sessionKey || !worker) {
+            setAllLocks({});
+            return {};
+        }
+
+        setAllLocksLoading(true);
+
+        return await new Promise<Record<string, string>>((resolve) => {
+            let done = false;
+
+            const finish = (map: Record<string, string>) => {
+                if (done) return;
+                done = true;
+                setAllLocksLoading(false);
+                setAllLocks(map);
+                resolve(map);
+            };
+
+            const handler = (payload: any) => {
+                socket.off("table_locks_all", handler);
+                window.clearTimeout(tid);
+                finish(normalizeLocksPayload(payload));
+            };
+
+            const tid = window.setTimeout(() => {
+                socket.off("table_locks_all", handler);
+                finish({});
+            }, 6000);
+
+            socket.on("table_locks_all", handler);
+
+            socket.emit("table_locks_all", {
+                session_key: sessionKey,
+                worker,
+            });
+        });
+    }, [sessionKey, worker, normalizeLocksPayload]);
 
     const pageBeforeSearchRef = useRef<number | null>(null);
     const wasSearchingRef = useRef(false);
@@ -387,7 +508,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     }, [monitorUsers, sipLogin]);
 
     const [openExportMenu, setOpenExportMenu] = useState(false);
-    const [exportSide, setExportSide] = useState<'left' | 'right'>('right'); // куда прижать меню
+    const [exportSide, setExportSide] = useState<'left' | 'right'>('right');
     const exportMenuRef = useRef<HTMLDivElement | null>(null);
 
     const [modulesInFlight, setModulesInFlight] = useState(0);
@@ -410,7 +531,37 @@ const PresetSelectorTable: React.FC<Props> = ({
     const inflightGuidsRef = useRef<Set<string>>(new Set());
 
     const [loadError, setLoadError] = useState<string | null>(null);
+    const [serverFiltersReady, setServerFiltersReady] = useState(false);
 
+    const presetEpochRef = useRef(0);
+    const blockFlatFetchRef = useRef(false);
+    const lastFlatSigRef = useRef<string>('');
+
+    const resetPhonesCache = useCallback(() => {
+        phonesCacheRef.current.clear();
+        inflightPhonesRef.current.clear();
+        lastFlatSigRef.current = '';
+
+        setFlatPhones([]);
+        setPhonesData([]);
+        setIdProjectMap([]);
+    }, []);
+
+    useLayoutEffect(() => {
+        presetEpochRef.current += 1;
+        requestSeqRef.current += 1;
+
+        setServerFiltersReady(false);
+
+        setTableData([]);
+        setSelectedRows(new Set());
+        setOpenActionsRow(null);
+
+        setCurrentPage(1);
+        setPageInput("1");
+
+        resetPhonesCache();
+    }, [selectedPreset?.preset?.id, resetPhonesCache, setCurrentPage]);
 
     const bytesToMB = (n: number) => (n / (1024 * 1024)).toFixed(1);
 
@@ -458,6 +609,9 @@ const PresetSelectorTable: React.FC<Props> = ({
         setAppliedServerFilters(defaults);
         setAppliedLocalFilters({});
         setOpenFilterCol(null);
+        ssWrite(ssKey.serverFilters, defaults);
+        ssWrite(ssKey.localFilters, {});
+        ssWrite(ssKey.page, 1);
 
         try {
             localStorage.setItem(serverFiltersKey(presetId), JSON.stringify(defaults));
@@ -465,10 +619,9 @@ const PresetSelectorTable: React.FC<Props> = ({
             localStorage.setItem(LS_LOCAL_FILTERS_KEY(presetId), JSON.stringify({}));
         } catch {}
 
-        const extra = buildExtraFilterByFromMap(defaults);
-        loadGroupedPhones(extra);
-    }, [selectedPreset, setAppliedServerFilters, setAppliedLocalFilters]);
-
+        // const extra = buildExtraFilterByFromMap(defaults);
+        // loadGroupedPhones(extra);
+    }, [selectedPreset, setAppliedServerFilters, setAppliedLocalFilters, ssKey]);
 
     useEffect(() => {
         const onDocClick = (e: MouseEvent) => {
@@ -491,12 +644,6 @@ const PresetSelectorTable: React.FC<Props> = ({
         [appliedLocalFilters, appliedServerFilters]
     );
 
-    const resetPhonesCache = useCallback(() => {
-        phonesCacheRef.current.clear();
-        setFlatPhones([]);
-        setPhonesData([]);
-        setIdProjectMap([]);
-    }, []);
 
     const upsertFlatPhones = useCallback((items: any[]) => {
         if (!items || !items.length) return;
@@ -618,6 +765,44 @@ const PresetSelectorTable: React.FC<Props> = ({
         hydratedFromLastRef.current = true;
     }, [selectedPreset?.preset?.id, ssKey, lsKeyLast]);
 
+    useLayoutEffect(() => {
+        if (!selectedPreset) {
+            setColMinW({});
+            return;
+        }
+
+        const next: Record<string, number> = {};
+
+        const TH_PADDING_X = 16;
+
+        Object.keys(selectedPreset.preset.structure).forEach((colKey) => {
+            const el = headerRefs.current[colKey];
+            if (!el) return;
+
+            const w = Math.ceil(el.getBoundingClientRect().width) + TH_PADDING_X;
+
+            next[colKey] = Math.min(getColW(colKey), w);
+        });
+
+        setColMinW(next);
+    }, [
+        selectedPreset?.preset?.id,
+        sortConfig?.key,
+        sortConfig?.direction,
+        appliedLocalFilters,
+        appliedServerFilters,
+        unreadOnly,
+    ]);
+
+    const lockedRowsCount = useMemo(() => {
+        if (!tableData?.length) return 0;
+        let c = 0;
+        for (const row of tableData) {
+            if (getPresentByForRow(row, allLocks)) c++;
+        }
+        return c;
+    }, [tableData, allLocks]);
+
     useEffect(() => {
         const presetId = selectedPreset?.preset?.id;
         if (!presetId) return;
@@ -639,6 +824,8 @@ const PresetSelectorTable: React.FC<Props> = ({
     const fetchFlatByIds = useCallback(
         async (ids: number[], withBaseFilter: boolean) => {
             if (!selectedPreset || !ids.length) return;
+
+            const myEpoch = presetEpochRef.current;
 
             const need: number[] = [];
             const cache = phonesCacheRef.current;
@@ -671,6 +858,8 @@ const PresetSelectorTable: React.FC<Props> = ({
                         role,
                     }
                 );
+
+                if (myEpoch !== presetEpochRef.current) return;
 
                 const flat = Object.values(data || {}).flat();
                 upsertFlatPhones(flat);
@@ -803,21 +992,27 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     useEffect(() => {
         const presetId = selectedPreset?.preset?.id;
-        if (!presetId) return;
+        if (!presetId) { setServerFiltersReady(false); return; }
 
         const ssCur = ssRead<Record<string, ServerAppliedByCol> | null>(ssKey.serverFilters, null);
-        if (ssCur) { setAppliedServerFilters(ssCur); return; }
+        if (ssCur) {
+            setAppliedServerFilters(ssCur);
+            setServerFiltersReady(true);
+            return;
+        }
 
         const lsKey  = serverFiltersKey(presetId);
         const dayKey = serverFiltersDayKey(presetId);
         const today  = toYmd(new Date());
+
         let initialApplied: Record<string, ServerAppliedByCol> | null = null;
 
         const savedDay = localStorage.getItem(dayKey);
         const savedRaw = localStorage.getItem(lsKey);
         if (savedRaw && savedDay === today) {
-            try { initialApplied = JSON.parse(savedRaw) } catch {}
+            try { initialApplied = JSON.parse(savedRaw); } catch {}
         }
+
         if (!initialApplied) {
             const structure = (selectedPreset?.preset?.structure ?? {}) as Record<string, ColumnCfgWithSearch>;
             initialApplied = buildAppliedFromDefaults(structure);
@@ -827,23 +1022,42 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         setAppliedServerFilters(initialApplied ?? {});
         ssWrite(ssKey.serverFilters, initialApplied ?? {});
+        setServerFiltersReady(true);
     }, [selectedPreset?.preset?.id, ssKey.serverFilters]);
 
     useEffect(() => {
-        if (!selectedPreset) return
-        const bothNull = !startDate && !endDate
-        const bothSet  = !!startDate && !!endDate
-        if (!(bothNull || bothSet)) return
+        if (!selectedPreset) return;
+        if (!serverFiltersReady) return;
 
-        loadGroupedPhones()
+        // ✅ ВАЖНО: если URL уже в режиме карточки — таблица не должна стартовать тяжёлую загрузку
+        if (isCardUrl) return;
+
+        const bothNull = !startDate && !endDate;
+        const bothSet  = !!startDate && !!endDate;
+        if (!(bothNull || bothSet)) return;
+
+        if (loadGroupedTimerRef.current) window.clearTimeout(loadGroupedTimerRef.current);
+
+        loadGroupedTimerRef.current = window.setTimeout(() => {
+            loadGroupedPhones();
+        }, 0);
+
+        return () => {
+            if (loadGroupedTimerRef.current) {
+                window.clearTimeout(loadGroupedTimerRef.current);
+                loadGroupedTimerRef.current = null;
+            }
+        };
     }, [
         selectedPreset?.preset?.id,
+        serverFiltersReady,
         startDate?.getTime(),
         endDate?.getTime(),
         selectedStatus,
         selectedOperator,
         appliedServerFilters,
-    ])
+        isCardUrl,
+    ]);
 
     useEffect(() => {
         const structure = (selectedPreset?.preset?.structure ?? {}) as Record<string, ColumnCfgWithSearch>;
@@ -852,10 +1066,8 @@ const PresetSelectorTable: React.FC<Props> = ({
         const nextServer: Record<string, ServerDraftByCol> = {};
 
         Object.entries(structure).forEach(([colKey, cfg]) => {
-            // локальный «в найденном»
             nextLocal[colKey] = appliedLocalFilters[colKey] ?? '';
 
-            // серверные варианты
             if (Array.isArray(cfg.search) && cfg.search.length) {
                 const applied = appliedServerFilters[colKey] || null;
 
@@ -936,25 +1148,35 @@ const PresetSelectorTable: React.FC<Props> = ({
                     out[key] = ['BETWEEN', [startStr, endStr]];
                 } else {
                     const days = expandDateStrings(a ?? '', b ?? '');
-                    if (days.length) out[key] = ['LIKE IN', days];
+                    if (days.length) out[key] = ['IN', days];
                 }
                 return;
             }
 
             if (method === 'IN' || method === 'NOT IN') {
                 const list = sanitizeList(item.values);
-                if (list.length) out[key] = [method, list];
+                if (!list.length) return;
+
+                const mapped = list.map(v => (v === NONE_TOKEN ? null : v));
+
+                out[key] = [method, mapped] as any;
                 return;
             }
 
-            const v = nonEmptyStr(item.values?.[0]);
+            const raw = item.values?.[0];
+
+            if (raw === NONE_TOKEN) {
+                out[key] = [method, null] as any;
+                return;
+            }
+
+            const v = nonEmptyStr(raw);
             if (v) out[key] = [method, v];
         });
 
         return out;
     };
 
-    const {sessionKey} = store.getState().operator
     useEffect(() => {
         const list = tableData.map(group => group.id_list)
         setGroupIDs(list)
@@ -1061,7 +1283,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                             setSelectedPreset(saved);
                         }
                     } else {
-                        // Не найден — обнуляем
                         setSelectedPreset(null);
                         localStorage.removeItem('tasksSelectedPreset');
                     }
@@ -1075,6 +1296,8 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     const finishChain = () => {
         Swal.fire("Готово", "Действия выполнены", "success");
+        loadSigRef.current = "";
+        lastFlatSigRef.current = "";
         loadGroupedPhones();
     };
 
@@ -1184,13 +1407,38 @@ const PresetSelectorTable: React.FC<Props> = ({
         const end = s <= e ? e : s;
 
         const out: string[] = [];
+        const seen = new Set<string>();
+
         for (let dt = start; dt <= end; dt = addDays(dt, 1)) {
             const yyyy = String(dt.getFullYear());
             const mm = String(dt.getMonth() + 1).padStart(2, '0');
             const dd = String(dt.getDate()).padStart(2, '0');
-            out.push(`${yyyy}-${mm}-${dd}`);
+
+            const ymd = `${yyyy}-${mm}-${dd}`;
+
+            for (const v of dateVariantsFromYmd(ymd)) {
+                if (!v) continue;
+                if (seen.has(v)) continue;
+                seen.add(v);
+                out.push(v);
+            }
         }
+
         return out;
+    }
+
+    function dateVariantsFromYmd(ymd: string): string[] {
+        const m = String(ymd ?? '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!m) return [String(ymd ?? '').trim()].filter(Boolean);
+
+        const [, yyyy, mm, dd] = m;
+
+        return [
+            `${yyyy}-${mm}-${dd}`,
+            `${dd}.${mm}.${yyyy}`,
+            `${dd}/${mm}/${yyyy}`,
+            `${yyyy}/${mm}/${dd}`,
+        ];
     }
 
     function isRealTimestampKey(key: string): boolean {
@@ -1200,7 +1448,11 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     function sanitizeList(vals: unknown): string[] {
         const arr = Array.isArray(vals) ? vals : [];
-        return Array.from(new Set(arr.map(v => String(v ?? '').trim()).filter(Boolean)));
+        const normed = arr
+            .map(v => toStateValue(v))
+            .filter(s => s.length > 0);
+
+        return Array.from(new Set(normed));
     }
 
     function nonEmptyStr(val: unknown): string | null {
@@ -1222,8 +1474,12 @@ const PresetSelectorTable: React.FC<Props> = ({
             return (a || b) ? { key, method, values: [a ?? '', b ?? ''] } : null;
         }
 
-        const v = nonEmptyStr(item.values?.[0]);
-        return v ? { key, method, values: [v] } : null;
+        if (!item.values || item.values.length === 0) return null;
+
+        const raw = String(item.values?.[0] ?? '');
+        const normalized = toStateValue(raw);
+
+        return normalized ? { key, method, values: [normalized] } : null;
     }
 
     useEffect(() => {
@@ -1241,29 +1497,65 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     const loadGroupedPhones = async (extraFilterBy?: Record<string, any>) => {
         if (!selectedPreset) {
+            blockFlatFetchRef.current = false;
             setTableData([]);
             setSelectedActionOption(null);
             return;
         }
 
+        const stableStringify = (obj: any) => {
+            if (!obj || typeof obj !== "object") return JSON.stringify(obj);
+            if (Array.isArray(obj)) return JSON.stringify(obj);
+            const keys = Object.keys(obj).sort();
+            const out: any = {};
+            for (const k of keys) out[k] = obj[k];
+            return JSON.stringify(out);
+        };
+
+        const { preset } = selectedPreset;
+
+        const base = buildBaseFilter();
+        const filterBy: any = extraFilterBy ? { ...base, ...extraFilterBy } : base;
+
+        const sig = [
+            String(preset.id),
+            String(preset.group_table),
+            String(glagolParent ?? ""),
+            String(role ?? ""),
+            String(getTzOffsetMinutes()),
+            stableStringify(filterBy),
+        ].join("|");
+
+        if (sig === loadSigRef.current) {
+            return;
+        }
+        loadSigRef.current = sig;
+
+        loadAbortRef.current?.abort();
+        const ac = new AbortController();
+        loadAbortRef.current = ac;
+
+        blockFlatFetchRef.current = true;
+
         const mySeq = ++requestSeqRef.current;
         setLoading(true);
+        setLoadError(null);
 
         try {
-            const { preset } = selectedPreset;
             resetPhonesCache();
 
-            const base = buildBaseFilter();
-            const filterBy: any = extraFilterBy ? { ...base, ...extraFilterBy } : base;
-
-            const response1 = await axios.post<ApiRow[]>('/api/v1/get_grouped_phones', {
-                glagol_parent: glagolParent,
-                group_table: preset.group_table,
-                filter_by: filterBy,
-                preset_id: preset.id,
-                role,
-                tz_offset: getTzOffsetMinutes(),
-            });
+            const response1 = await axios.post<ApiRow[]>(
+                "/api/v1/get_grouped_phones",
+                {
+                    glagol_parent: glagolParent,
+                    group_table: preset.group_table,
+                    filter_by: filterBy,
+                    preset_id: preset.id,
+                    role,
+                    tz_offset: getTzOffsetMinutes(),
+                },
+                { signal: ac.signal }
+            );
 
             if (requestSeqRef.current !== mySeq) return;
 
@@ -1274,6 +1566,8 @@ const PresetSelectorTable: React.FC<Props> = ({
             setSortConfig(null);
             setSelectedRows(new Set());
         } catch (err: any) {
+            if (err?.name === "CanceledError" || err?.code === "ERR_CANCELED") return;
+
             if (requestSeqRef.current === mySeq) {
                 const nice = pickNiceErrorMessage(err);
 
@@ -1287,8 +1581,27 @@ const PresetSelectorTable: React.FC<Props> = ({
                 console.error("Ошибка загрузки данных:", err);
             }
         } finally {
-            if (requestSeqRef.current === mySeq) setLoading(false);
+            if (loadAbortRef.current === ac) loadAbortRef.current = null;
+
+            if (requestSeqRef.current === mySeq) {
+                blockFlatFetchRef.current = false;
+                setLoading(false);
+            }
         }
+    };
+
+
+    const loadSigRef = useRef<string>("");
+    const loadAbortRef = useRef<AbortController | null>(null);
+
+    const makeLoadSig = (extra?: Record<string, any>) => {
+        const presetId = selectedPreset?.preset?.id ?? "none";
+        const s = startDate ? toYmd(startDate) : "";
+        const e = endDate ? toYmd(endDate) : "";
+
+        const srv = JSON.stringify(appliedServerFilters ?? {});
+        const ex  = JSON.stringify(extra ?? {});
+        return [presetId, serverFiltersReady ? "1" : "0", s, e, selectedStatus ?? "", selectedOperator ?? "", srv, ex].join("|");
     };
 
 
@@ -1664,6 +1977,13 @@ const PresetSelectorTable: React.FC<Props> = ({
             });
         }
 
+        if (showLockedOnly) {
+            result = result.filter(row => {
+                const minId = getMinIdForRow(row);
+                return minId != null && !!allLocks[String(minId)];
+            });
+        }
+
         return result;
     }, [
         tableData,
@@ -1673,7 +1993,9 @@ const PresetSelectorTable: React.FC<Props> = ({
         selectedPreset,
         appliedLocalFilters,
         unreadOnly,
-        guidCounts
+        guidCounts,
+        showLockedOnly,
+        allLocks
     ]);
 
     const TOP_HSCROLL_H = 16;
@@ -1681,7 +2003,9 @@ const PresetSelectorTable: React.FC<Props> = ({
     const topHScrollRef = useRef<HTMLDivElement>(null);
     const gridScrollRef = useRef<HTMLDivElement>(null);
     const tableRef      = useRef<HTMLTableElement>(null);
+    const headerRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
+    const [colMinW, setColMinW] = useState<Record<string, number>>({});
     const [contentWidth, setContentWidth] = useState(0);
     const [viewportW, setViewportW] = useState(0);
     const [needsHScroll, setNeedsHScroll] = useState(false);
@@ -1731,26 +2055,65 @@ const PresetSelectorTable: React.FC<Props> = ({
         (currentPage - 1) * rowsPerPage,
         currentPage * rowsPerPage
     );
+    const locksPageIds = useMemo(() => {
+        return getMinIdsForPage(paginatedRows);
+    }, [currentPage, rowsPerPage, processedRows.length, selectedPreset?.preset?.id, unreadOnly, searchTerm, sortConfig?.key, sortConfig?.direction]);
+
+    const locksPageSig = useMemo(() => locksPageIds.join(','), [locksPageIds]);
+
+    // useEffect(() => {
+    //     if (!selectedPreset || !paginatedRows.length) return;
+    //
+    //     const idsOnPage = Array.from(
+    //         new Set(paginatedRows.flatMap(r => r.id_list))
+    //     );
+    //
+    //     void fetchFlatByIds(idsOnPage, true);
+    // }, [paginatedRows, selectedPreset?.preset?.id, role, fetchFlatByIds]);
+    //
+    //
+    // useEffect(() => {
+    //     if (!selectedPreset || selectedRows.size === 0) return;
+    //
+    //     const wantedIds = Array.from(selectedRows)
+    //         .flatMap(key => key.split(',').map(n => Number(n)))
+    //         .filter(Boolean);
+    //
+    //     void fetchFlatByIds(wantedIds, true);
+    // }, [selectedRows, selectedPreset?.preset?.id, role, fetchFlatByIds]);
+
     useEffect(() => {
-        if (!selectedPreset || !paginatedRows.length) return;
+        if (!selectedPreset) return;
 
-        const idsOnPage = Array.from(
-            new Set(paginatedRows.flatMap(r => r.id_list))
-        );
+        if (blockFlatFetchRef.current) return;
 
-        void fetchFlatByIds(idsOnPage, true);
-    }, [paginatedRows, selectedPreset?.preset?.id, role, fetchFlatByIds]);
+        const idsOnPage = paginatedRows.length
+            ? Array.from(new Set(paginatedRows.flatMap(r => r.id_list)))
+            : [];
 
+        const idsFromSelected = selectedRows.size
+            ? Array.from(new Set(
+                Array.from(selectedRows)
+                    .flatMap(k => k.split(',').map(n => Number(n)))
+                    .filter(n => Number.isFinite(n) && n > 0)
+            ))
+            : [];
 
-    useEffect(() => {
-        if (!selectedPreset || selectedRows.size === 0) return;
+        const ids = Array.from(new Set([...idsOnPage, ...idsFromSelected]));
+        if (!ids.length) return;
 
-        const wantedIds = Array.from(selectedRows)
-            .flatMap(key => key.split(',').map(n => Number(n)))
-            .filter(Boolean);
+        const sig = ids.slice().sort((a, b) => a - b).join(',');
+        if (sig === lastFlatSigRef.current) return;
+        lastFlatSigRef.current = sig;
 
-        void fetchFlatByIds(wantedIds, true);
-    }, [selectedRows, selectedPreset?.preset?.id, role, fetchFlatByIds]);
+        void fetchFlatByIds(ids, true);
+    }, [
+        selectedPreset?.preset?.id,
+        paginatedRows,
+        selectedRows,
+        role,
+        fetchFlatByIds,
+    ]);
 
     const totalRowsCount = processedRows.length;
     const showingFrom = totalRowsCount ? (currentPage - 1) * rowsPerPage + 1 : 0;
@@ -2112,8 +2475,8 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         setOpenFilterCol(null);
 
-        const extra = buildExtraFilterByFromMap(nextServer);
-        loadGroupedPhones(extra);
+        // const extra = buildExtraFilterByFromMap(nextServer);
+        // loadGroupedPhones(extra);
     };
 
     const isUsersDescriptor = (o: OptionDescriptor): o is { users: string[] } =>
@@ -2149,8 +2512,8 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         setOpenFilterCol(null);
 
-        const extra = buildExtraFilterByFromMap(nextServer);
-        loadGroupedPhones(extra);
+        // const extra = buildExtraFilterByFromMap(nextServer);
+        // loadGroupedPhones(extra);
     };
 
     useEffect(() => {
@@ -2203,6 +2566,83 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     useEffect(() => () => onDragEnd(), []);
 
+    useEffect(() => {
+        if (!selectedPreset) {
+            setTableLocks({});
+            return;
+        }
+        if (isCardUrl) {
+            setTableLocks({});
+            return;
+        }
+        if (showLockedOnly) {
+            setTableLocks({});
+            return;
+        }
+
+
+        if (!locksPageIds.length) {
+            setTableLocks({});
+            return;
+        }
+
+        const onLocks = (payload: any) => {
+            if (!payload || typeof payload !== "object") {
+                setTableLocks({});
+                return;
+            }
+            const out: Record<string, string> = {};
+            for (const [k, v] of Object.entries(payload)) {
+                const key = String(k);
+                const val = String(v ?? "");
+                if (key && val) out[key] = val;
+            }
+            setTableLocks(out);
+        };
+
+        socket.off("table_locks", onLocks);
+        socket.on("table_locks", onLocks);
+
+        const emitOnce = () => {
+            if (locksPageSig === lastLocksSigRef.current) return;
+            lastLocksSigRef.current = locksPageSig;
+
+            socket.emit("table_locks", {
+                ids: locksPageIds,
+                sip_login: sipLogin,
+                session_key: sessionKey,
+                worker,
+            });
+        };
+
+        emitOnce();
+
+        if (locksPollRef.current) window.clearInterval(locksPollRef.current);
+        locksPollRef.current = window.setInterval(() => {
+            socket.emit("table_locks", {
+                ids: locksPageIds,
+                sip_login: sipLogin,
+                session_key: sessionKey,
+                worker,
+            });
+        }, 5000);
+
+        return () => {
+            socket.off("table_locks", onLocks);
+            if (locksPollRef.current) {
+                window.clearInterval(locksPollRef.current);
+                locksPollRef.current = null;
+            }
+        };
+    }, [
+        selectedPreset?.preset?.id,
+        isCardUrl,
+        locksPageSig,
+        sipLogin,
+        sessionKey,
+        worker,
+        showLockedOnly
+    ]);
     const exportToExcel = (scope: ExportScope = 'all') => {
         if (!selectedPreset) return;
 
@@ -2321,6 +2761,10 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 isSearchable
                                 onChange={val => {
                                     if (selectedPreset && String(selectedPreset.preset.id) === val) return;
+                                    setServerFiltersReady(false);
+                                    setAppliedServerFilters({});
+                                    setAppliedLocalFilters({});
+
                                     const p = presets.find(x => String(x.preset.id) === val);
                                     if (p) {
                                         setTableData([]);
@@ -2349,6 +2793,29 @@ const PresetSelectorTable: React.FC<Props> = ({
                         >
                             {/*<span className="material-icons" style={{fontSize: 18, verticalAlign: 'middle'}}>restart_alt</span>*/}
                             <span className="ml-1">Фильтры: по умолчанию</span>
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-outline-info"
+                            disabled={!selectedPreset || allLocksLoading}
+                            onClick={async () => {
+                                if (showLockedOnly) {
+                                    setShowLockedOnly(false);
+                                    return;
+                                }
+
+                                await fetchAllLocks();
+                                setShowLockedOnly(true);
+                                setCurrentPage(1);
+                            }}
+                            title="Показать только залоченные карточки"
+                        >
+                            <span className="material-icons" style={{ fontSize: 18, verticalAlign: 'middle' }}>
+                                lock
+                            </span>
+                            <span className="ml-1">
+                                {showLockedOnly ? "Показать все" : `Закреплённые`}
+                            </span>
                         </button>
 
                         <div ref={exportMenuRef} style={{ position: 'relative', display: 'inline-block' }}>
@@ -2638,7 +3105,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 <table
                                     ref={tableRef}
                                     className="table-auto border-collapse"
-                                    style={{ width: 'max-content', minWidth: '100%' }}
+                                    style={{ width: 'max-content', minWidth: '100%', tableLayout: 'auto' }}
                                 >
                                 <thead>
                                 <tr>
@@ -2740,9 +3207,11 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                         top: 0,
                                                         zIndex: 15,
                                                         background: '#fff',
-                                                        width: getColW(colKey),          // <-- фикс
+                                                        // minWidth: getColW(colKey),
+                                                        minWidth: "10px",
+
                                                         maxWidth: getColW(colKey),
-                                                        whiteSpace: 'nowrap',            // заголовок пусть остаётся в одну строку
+                                                        whiteSpace: 'nowrap',
                                                         boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.08)'
                                                     }}
                                                     aria-sort={
@@ -2999,7 +3468,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                         );
                                                                                     }
 
-                                                                                    // 2) Опции-пользователи { users: [...] } → мультиселект
                                                                                     const wantedDepts = extractUsersDepartments(s.options);
                                                                                     if (wantedDepts) {
                                                                                         const userOptions = buildUserOptionsByDepartments(
@@ -3008,7 +3476,9 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                             selectedPreset?.preset?.projects ?? []
                                                                                         );
 
-                                                                                        const msOptions = userOptions.map((o) => ({ id: o.value, name: o.label }));
+                                                                                        const msOptions = withNoneOption(
+                                                                                            userOptions.map((o) => ({ id: o.value, name: o.label }))
+                                                                                        );
                                                                                         const msValue = (isMulti ? selectedVals : [selectedVals[0] ?? '']).filter(Boolean);
 
                                                                                         return (
@@ -3027,7 +3497,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                                                 ...(items[idx] ?? { key: s.key, method, values: [] }),
                                                                                                                 key: s.key,
                                                                                                                 method,
-                                                                                                                values: isMulti ? vals : [vals[0] ?? ''],
+                                                                                                                values: isMulti ? vals : (vals.length ? [vals[0]] : []),
                                                                                                             };
                                                                                                             return { ...prev, [colKey]: { ...cur, items } };
                                                                                                         })
@@ -3040,7 +3510,9 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                     // 3) Обычные строковые options → мультиселект
                                                                                     const plainOptions = toPlainOptions(s.options);
                                                                                     if (plainOptions.length) {
-                                                                                        const msOptions = plainOptions.map((v) => ({ id: v, name: v }));
+                                                                                        const msOptions = withNoneOption(
+                                                                                            plainOptions.map((v) => ({ id: v, name: v }))
+                                                                                        );
                                                                                         const msValue = (isMulti ? selectedVals : [selectedVals[0] ?? '']).filter(Boolean);
 
                                                                                         return (
@@ -3059,7 +3531,8 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                                                 ...(items[idx] ?? { key: s.key, method, values: [] }),
                                                                                                                 key: s.key,
                                                                                                                 method,
-                                                                                                                values: isMulti ? vals : [vals[0] ?? ''],
+                                                                                                                values: isMulti ? vals : (vals.length ? [vals[0]] : [])
+                                                                                                                ,
                                                                                                             };
                                                                                                             return { ...prev, [colKey]: { ...cur, items } };
                                                                                                         })
@@ -3069,9 +3542,8 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                         );
                                                                                     }
 
-                                                                                    // 4) Фолбэк: нет options → текстовое поле (для IN/NOT IN — CSV)
                                                                                     if (isMulti) {
-                                                                                        const csv = (selectedVals || []).join(', ');
+                                                                                        const csv = (selectedVals || []).map(toUiValue).join(', ');
                                                                                         return (
                                                                                             <input
                                                                                                 className="form-control"
@@ -3097,7 +3569,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                                                         );
                                                                                     }
 
-                                                                                    const val = selectedVals[0] ?? '';
+                                                                                    const val = toUiValue(selectedVals[0] ?? '');
                                                                                     return (
                                                                                         <input
                                                                                             className="form-control"
@@ -3141,15 +3613,28 @@ const PresetSelectorTable: React.FC<Props> = ({
                                             );
                                         })}
 
-
-                                    {/*<th className="border p-2">Действия</th>*/}
                                 </tr>
                                 </thead>
                                 <tbody>
                                 {paginatedRows.map(row => {
                                     const key = row.id_list.join(',');
+                                    const minId = getMinIdForRow(row);
+
+                                    const locksMap = showLockedOnly ? allLocks : tableLocks;
+                                    const presentBy = (minId != null) ? locksMap[String(minId)] : null;
+                                    const isPresent = !!presentBy;
+                                    const presentByMe = isPresent && String(presentBy) === String(sipLogin);
+
                                     return (
-                                        <tr key={key}>
+                                        <tr
+                                            key={key}
+                                            style={{
+                                                background: isPresent
+                                                    ? (presentByMe ? "rgba(16,185,129,0.08)" : "rgba(59,130,246,0.06)")
+                                                    : undefined,
+                                            }}
+                                            title={isPresent ? `В карточке сейчас: ${presentBy}` : undefined}
+                                        >
                                             {/* Чекбокс */}
                                             <td className="border p-2 text-center">
                                                 <input
@@ -3157,32 +3642,50 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                     className={styles.customCheckbox}
                                                     checked={selectedRows.has(key)}
                                                     onChange={() => toggleRow(key)}
-                                                    style={{cursor: "pointer"}}
+                                                    style={{ cursor: "pointer" }}
                                                 />
                                             </td>
 
-                                            {/* ДЕЙСТВИЯ — компактно, сразу после чекбокса */}
-                                            <td className="border p-2 align-top" style={{position: 'relative', width: 1, whiteSpace: 'nowrap'}}>
-                                                <div style={{display: 'inline-flex', gap: 6}}>
+                                            {/* ДЕЙСТВИЯ */}
+                                            <td
+                                                className="border p-2 align-top"
+                                                style={{
+                                                    position: 'relative',
+                                                    width: 1,
+                                                    whiteSpace: 'nowrap',
+                                                    opacity: 1,
+                                                }}
+                                            >
+                                                <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                                                    {isPresent && (
+                                                        <span
+                                                            className="material-icons"
+                                                            style={{
+                                                                fontSize: 18,
+                                                                lineHeight: 1,
+                                                                color: presentByMe ? "#10b981" : "#2563eb",
+                                                            }}
+                                                            title={presentByMe ? "Вы сейчас в карточке" : `Сейчас в карточке: ${presentBy}`}
+                                                        >
+                                                          person
+                                                        </span>
+                                                    )}
+
                                                     {/* Открыть */}
                                                     <button
                                                         className="btn btn-sm btn-outline-light text-dark"
-                                                        title="Открыть"
+                                                        title={isPresent ? `В карточке: ${presentBy}` : "Открыть"}
                                                         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                                                             const url = makeGroupCardUrl(row, selectedPreset, phonesData);
 
-                                                            // Ctrl (Windows/Linux) или ⌘ (macOS) — открыть в новой вкладке
                                                             if (e.ctrlKey || e.metaKey) {
                                                                 window.open(url, '_blank', 'noopener,noreferrer');
                                                                 return;
                                                             }
 
-                                                            // Обычный клик — открыть в этой же вкладке как и раньше
                                                             setOpenedGroup(row.id_list);
                                                             window.history.pushState({}, "", url);
                                                         }}
-
-                                                        // (необязательно) колесом-средней кнопкой мыши тоже открывать в новой вкладке
                                                         onMouseUp={(e: React.MouseEvent<HTMLButtonElement>) => {
                                                             if (e.button === 1) {
                                                                 const url = makeGroupCardUrl(row, selectedPreset, phonesData);
@@ -3191,17 +3694,20 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                         }}
                                                     >
                                                         <span className="material-icons" style={{ fontSize: 16, lineHeight: 1 }}>
-                                                            open_in_new
+                                                          open_in_new
                                                         </span>
                                                     </button>
+
                                                     {/* Меню действий */}
                                                     <button
                                                         className="btn btn-sm btn-outline-light text-dark"
-                                                        title="Действия"
+                                                        title={isPresent ? `В карточке: ${presentBy}` : "Действия"}
                                                         onClick={() => setOpenActionsRow(openActionsRow === key ? null : key)}
                                                         aria-expanded={openActionsRow === key}
                                                     >
-                                                        <span className="material-icons" style={{fontSize: 18, lineHeight: 1}}>more_horiz</span>
+                                                        <span className="material-icons" style={{ fontSize: 18, lineHeight: 1 }}>
+                                                          more_horiz
+                                                        </span>
                                                     </button>
                                                 </div>
 
@@ -3496,11 +4002,10 @@ const PresetSelectorTable: React.FC<Props> = ({
                     cursor: 'pointer',
                 }}
             >
-    <span className="material-icons" style={{ fontSize: 28, lineHeight: 1 }}>
-        skip_next
-    </span>
+                <span className="material-icons" style={{ fontSize: 28, lineHeight: 1 }}>
+                    skip_next
+                </span>
             </button>
-
         </div>
     );
 };

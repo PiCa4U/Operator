@@ -32,6 +32,14 @@ function toIsoFromServer(dt: string): string {
     return new Date(Date.UTC(y, (m || 1) - 1, day || 1, hh || 0, mm || 0, ss || 0)).toISOString();
 }
 
+const MemoCallControlPanel = React.memo(CallControlPanel);
+
+const ITSM_SPLIT_KEY = "itsm:chat_call_split:v1";
+
+function clamp(n: number, min: number, max: number) {
+    return Math.min(max, Math.max(min, n));
+}
+
 function mapRow(r: RawChatMessage): UiMessage {
     const isClient = r.sender === "client";
     const role: Role = isClient ? "client" : "operator";
@@ -48,6 +56,8 @@ function mapRow(r: RawChatMessage): UiMessage {
         attachments,
         status: "sent",
         isRead: false,
+
+        message_type: (r.message_type ?? "msg") as any,
     };
 }
 
@@ -186,10 +196,68 @@ function buildGroupByFilter(
     }
     return filter;
 }
+function fsStatusSig(msg: any): string {
+    return [
+        msg?.status ?? "",
+        msg?.state ?? "",
+        msg?.sip_login ?? "",
+    ].join("|");
+}
+
+function normalizeSofiaStatus(s: any): string {
+    const str = String(s ?? "");
+    // Убираем счётчик секунд и дату (они “тикают”)
+    return str
+        .replace(/\s+EXPSECS\(\d+\)/g, "")
+        .replace(/\s+EXP\([^)]+\)/g, "")
+        .trim();
+}
+
+function stripVolatileFromUser(u: any) {
+    if (!u || typeof u !== "object") return u;
+
+    return {
+        ...u,
+        sofia_status: normalizeSofiaStatus(u.sofia_status),
+    };
+}
+
+function sanitizeOtherUsers(msg: any) {
+    if (!msg || typeof msg !== "object") return msg;
+    const out: any = {};
+    for (const k of Object.keys(msg)) {
+        out[k] = stripVolatileFromUser(msg[k]);
+    }
+    return out;
+}
+
+function fsCallsSig(calls: any[]): string {
+    return (calls || [])
+        .map((c) => [
+            c?.uuid ?? c?.b_uuid ?? "",
+            c?.application ?? "",
+            c?.b_callstate ?? "",
+            c?.direction ?? "",
+            c?.cid_num ?? "",
+            c?.b_line_num ?? "",
+        ].join("~"))
+        .sort()
+        .join(";");
+}
+
+function otherUsersSig(msg: any): string {
+    if (!msg || typeof msg !== "object") return "";
+    return Object.keys(msg)
+        .sort()
+        .map((k) => `${k}:${msg?.[k]?.status ?? msg?.[k]?.state ?? ""}`)
+        .join("|");
+}
 
 export type MainAppProps = {
     isOwner: boolean;
 };
+
+const MemoLocalChat = React.memo(LocalChat) as typeof LocalChat;
 
 const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const {enabled, incoming, clearIncoming, remoteAudioRef, localAudioRef, answerCall, hangUp } = useSip();
@@ -233,6 +301,58 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         return saved !== null ? saved : null;
     });
 
+    const lastFsStatusSigRef = useRef<string | null>(null);
+    const lastFsCallsSigRef  = useRef<string | null>(null);
+    const lastOtherUsersSigRef = useRef<string | null>(null);
+
+    const splitWrapRef = useRef<HTMLDivElement | null>(null);
+    const splitDraggingRef = useRef(false);
+
+    const lastRedisGroupLockSigRef = useRef<string>("");
+
+    const [chatCallRatio, setChatCallRatio] = useState<number>(() => {
+        const raw = Number(localStorage.getItem(ITSM_SPLIT_KEY));
+        return Number.isFinite(raw) ? clamp(raw, 0.25, 0.75) : 0.5;
+    });
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(ITSM_SPLIT_KEY, String(chatCallRatio));
+        } catch {}
+    }, [chatCallRatio]);
+
+    useEffect(() => {
+        const onMove = (e: PointerEvent) => {
+            if (!splitDraggingRef.current) return;
+            const el = splitWrapRef.current;
+            if (!el) return;
+
+            const rect = el.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const ratio = x / rect.width;
+
+            setChatCallRatio(clamp(ratio, 0.25, 0.75));
+        };
+
+        const onUp = () => {
+            if (!splitDraggingRef.current) return;
+            splitDraggingRef.current = false;
+
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+        };
+
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointercancel", onUp);
+
+        return () => {
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+            window.removeEventListener("pointercancel", onUp);
+        };
+    }, []);
+
     const [openedGroup, setOpenedGroup] = useState<any[]>([]);
     const [phonesData, setPhonesData] = useState<any[]>([])
     const [openedPhones, setOpenedPhones] = useState<any[]>([])
@@ -243,12 +363,50 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         glagolParent = ''
     } = store.getState().credentials;
     const { data: operatorDict = {} } = useOperatorsDirectory();
+    const operatorDictStableRef = useRef(operatorDict);
+    useEffect(() => {
+        // обновляем только если реально поменялись ключи (быстро и достаточно)
+        const prevKeys = Object.keys(operatorDictStableRef.current).length;
+        const nextKeys = Object.keys(operatorDict).length;
+        if (nextKeys !== prevKeys) operatorDictStableRef.current = operatorDict;
+    }, [operatorDict]);
 
     const [managerPanel, setManagerPanel] = useState<boolean>(false)
 
     const momoProjectRepo = useRef<boolean>(false)
     const startModulesRanRef = useRef<boolean>(false);
     const { sessionKey } = store.getState().operator
+
+    useEffect(() => {
+        // только для express звонков
+        if (!expressCall) {
+            lastRedisGroupLockSigRef.current = "";
+            return;
+        }
+
+        if (!sessionKey || !worker || !sipLogin) return;
+
+        const ids = Array.from(
+            new Set(
+                (openedGroup ?? [])
+                    .map((x: any) => Number(x))
+                    .filter((n: number) => Number.isFinite(n))
+            )
+        ).sort((a, b) => a - b);
+
+        if (!ids.length) return;
+
+        const sig = ids.join(",");
+        if (sig === lastRedisGroupLockSigRef.current) return;
+        lastRedisGroupLockSigRef.current = sig;
+
+        socket.emit("group_lock_redis", {
+            session_key: sessionKey,
+            worker,
+            sip_login: sipLogin,
+            ids,
+        });
+    }, [expressCall, openedGroup, sessionKey, worker, sipLogin]);
 
     useEffect(() => {
         if (selectedStatus !== null) {
@@ -280,8 +438,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [data, setData] = useState<any[]>([]);
-    const sentReadRef = useRef<Set<number>>(new Set());   // уже отправляли в эту сессию
-    const queueRef = useRef<Set<number>>(new Set());      // очередь на отправку
+    const sentReadRef = useRef<Set<number>>(new Set());
+    const queueRef = useRef<Set<number>>(new Set());
     const timerRef = useRef<number | null>(null);
 
     const messages = useMemo(() => {
@@ -298,6 +456,15 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
 
     const collapsed = useChatCollapsed(firstGuid);
+
+    const toggleCollapsedRef = useRef<() => void>(() => {});
+    useEffect(() => {
+        toggleCollapsedRef.current = collapsed.toggle;
+    }, [collapsed.toggle]);
+
+    const onToggleCollapsed = React.useCallback(() => {
+        toggleCollapsedRef.current();
+    }, []);
 
     useEffect(() => {
         let alive = true;
@@ -343,9 +510,10 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         return saved ? JSON.parse(saved) as OptionType : null;
     });
 
-    const { monitorUsers } = useSelector(
-        (state: RootState) => state.operator.monitorData
-    );
+    const role = useSelector((state: RootState) =>
+        state.operator.monitorData.monitorUsers?.[sipLogin]?.type
+    ) || "operator";
+
     // useEffect(() => {
     //     setAppliedLocalFilters({});
     //     setAppliedServerFilters({});
@@ -458,6 +626,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const { connected, error: socketErr, send, markManyRead } = useChatSocket({
         guid: activeGuid,
         login: sipLogin,
+        glagol_parent: glagolParent,
 
         onIncoming: (msg: UiMessage) => {
             setLive((prev: UiMessage[]) => [...prev, msg]);
@@ -562,8 +731,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         if (!connected || !messages.length) return;
 
         const isIncomingForMe = (m: UiMessage) => {
-            if (sipLogin) return (m.authorLogin ?? null) !== sipLogin; // я оператор
-            return m.authorRole !== "client";                                 // я клиент
+            if (sipLogin) return (m.authorLogin ?? null) !== sipLogin;
+            return m.authorRole !== "client";
         };
 
         const idsToMark: number[] = [];
@@ -618,35 +787,40 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     useEffect(() => {
         if (activeGuid) void refreshContactFiles(activeGuid);
     }, [activeGuid]);
-    async function handleSend(text: string, files: File[] = []) {
-        if (!activeGuid) return;
-        const trimmed = text.trim();
-        if (!trimmed) return;
 
-        const tempId = crypto.randomUUID();
-        const atts = files.map((f, i) => ({ id: `${tempId}:${i}`, name: f.name, file: f } as any));
+    const handleSend = React.useCallback(
+        async (text: string, files: File[] = [], messageType: string = "msg") => {
+            if (!activeGuid) return;
+            const trimmed = text.trim();
+            if (!trimmed) return;
 
-        const msg: UiMessage = {
-            id: tempId,
-            tempId,
-            text: trimmed,
-            created_at: new Date().toISOString(),
-            authorLogin: sipLogin || null,
-            authorName:  sipLogin || "Клиент",
-            authorRole:  sipLogin ? "operator" : "client",
-            attachments: atts,
-            status: "pending",
-            isRead: false,
-        };
+            const tempId = crypto.randomUUID();
+            const atts = files.map((f, i) => ({ id: `${tempId}:${i}`, name: f.name, file: f } as any));
 
-        setOptimistic(prev => [...prev, msg]);
+            const msg: UiMessage = {
+                id: tempId,
+                tempId,
+                text: trimmed,
+                created_at: new Date().toISOString(),
+                authorLogin: sipLogin || null,
+                authorName: sipLogin || "Клиент",
+                authorRole: sipLogin ? "operator" : "client",
+                attachments: atts,
+                status: "pending",
+                isRead: false,
+                message_type: messageType,
+            };
 
-        try {
-            await send(tempId, trimmed, files);
-        } catch (e: any) {
-            console.error(e);
-        }
-    }
+            setOptimistic((prev) => [...prev, msg]);
+
+            try {
+                await send(tempId, trimmed, files, messageType);
+            } catch (e: any) {
+                console.error(e);
+            }
+        },
+        [activeGuid, sipLogin, send]
+    );
 
     useEffect(() => {
         const ids = messages.map(m => Number(m.id)).filter(n => Number.isFinite(n)) as number[];
@@ -727,12 +901,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         window.location.href = "https://my.glagol.ai/login_work/";
 };
 
-    useEffect(() => {
-        socket.on('logout', handleLogout);
-        return () => {
-            socket.off('logout', handleLogout);
-        };
-    }, []);
+    // useEffect(() => {
+    //     socket.on('logout', handleLogout);
+    //     return () => {
+    //         socket.off('logout', handleLogout);
+    //     };
+    // }, []);
 
     useEffect(() => {
         const now = new Date().toISOString();
@@ -760,10 +934,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         }
     },[openedPhones.length, selectedCall])
 
-
-    const role =
-        // "manager"
-        monitorUsers[sipLogin]?.type || "operator"
 
     const [outboundID, setOutboundID] = useState<number | null>(null)
     // const [selectedPreset, setSelectedPreset] = useState<OptionType | null>(null);
@@ -1023,14 +1193,14 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             setActiveCall(true);
         } else if (!activeCalls.length && activeCall) {
             setActiveCall(false);
-            if (openedPhones) {
-                const ids = openedPhones?.map((item) => item.id)
-                socket.emit("group_lock_off", {
-                    ids,
-                    session_key: sessionKey,
-                    worker
-                })
-            }
+            // if (openedPhones) {
+            //     const ids = openedPhones?.map((item) => item.id)
+            //     socket.emit("group_lock_off", {
+            //         ids,
+            //         session_key: sessionKey,
+            //         worker
+            //     })
+            // }
             // setOutboundCall(false);
             if (!isOwner || !enabled) return;
             setPostActive(true);
@@ -1275,30 +1445,43 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
         const handleFsCalls = (msg: any) => {
             if (!isOwner || !enabled) return;
-            const callsArray: any[] = Object.values(msg);
-            const noConferenceArray = callsArray.filter(item => item.application !== "conference")
+
+            const callsArray: any[] = Object.values(msg || {});
+            const noConferenceArray = callsArray.filter(
+                (item) => item?.application !== "conference"
+            );
+
+            const sig = fsCallsSig(noConferenceArray);
+            if (sig === lastFsCallsSigRef.current) return;
+            lastFsCallsSigRef.current = sig;
+
             dispatch(setActiveCalls(noConferenceArray));
         };
 
-        const handleOtherUsers = (msg:any) => {
-            dispatch(setUserStatuses(msg));
+        const handleOtherUsers = (msg: any) => {
+            if (!isOwner || !enabled) return;
+
+            const clean = sanitizeOtherUsers(msg);
+
+            const sig = otherUsersSig(clean);
+            if (sig === lastOtherUsersSigRef.current) return;
+            lastOtherUsersSigRef.current = sig;
+
+            dispatch(setUserStatuses(clean));
         };
 
         if (!isOwner || !enabled) {
-            socket.off('fs_status', handleFsStatus);
-            socket.off('fs_calls', handleFsCalls);
-            socket.off('other_users', handleOtherUsers);
+            socket.off("fs_status", handleFsStatus);
+            socket.off("fs_calls", handleFsCalls);
             return;
         }
 
-        socket.on('fs_status', handleFsStatus);
-        socket.on('fs_calls', handleFsCalls);
-        socket.on('other_users', handleOtherUsers);
+        socket.on("fs_status", handleFsStatus);
+        socket.on("fs_calls", handleFsCalls);
 
         return () => {
-            socket.off('fs_status', handleFsStatus);
-            socket.off('fs_calls', handleFsCalls);
-            socket.off('other_users', handleOtherUsers);
+            socket.off("fs_status", handleFsStatus);
+            socket.off("fs_calls", handleFsCalls);
         };
     }, [dispatch, isOwner, enabled]);
 
@@ -1349,34 +1532,31 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
     }
 
+
+    const onCloseCall = React.useCallback(() => {
+        setSelectedCall(null);
+    }, []);
+
     return (
         <div className="container-fluid">
             {enabled && (
                 <>
                     {/* Аудио для удалённого потока */}
-                <audio
-                    ref={remoteAudioRef}
-                    autoPlay
-                    hidden
-                />
+                    <audio ref={remoteAudioRef} autoPlay hidden />
 
-                {/* Аудио для локального потока (mute/unmute) */}
-                <audio
-                    ref={localAudioRef}
-                    autoPlay
-                    muted
-                    hidden
-                />
+                    {/* Аудио для локального потока (mute/unmute) */}
+                    <audio ref={localAudioRef} autoPlay muted hidden />
 
-                {incoming && incoming.state === SessionState.Initial && (
-                    <NotificationPopup
-                        from={incoming.remoteIdentity.uri.user}
-                        onAccept={onAccept}
-                        onReject={onReject}
-                    />
-                )}
+                    {incoming && incoming.state === SessionState.Initial && (
+                        <NotificationPopup
+                            from={incoming.remoteIdentity.uri.user}
+                            onAccept={onAccept}
+                            onReject={onReject}
+                        />
+                    )}
                 </>
             )}
+
             {/* Шапка с панелью управления (HeaderPanel) */}
             <HeaderPanel
                 setShowScriptPanel={setShowScriptPanel}
@@ -1411,175 +1591,173 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 groupProjects={groupProjects}
                 setManagerPanel={setManagerPanel}
                 managerPanel={managerPanel}
-                // setPhoneID={setPhoneID}
-                // phoneID={phoneID}
                 outActivePhoneData={outActivePhoneData}
                 setOutActivePhoneData={setOutActivePhoneData}
                 startModulesRanRef={startModulesRanRef}
             />
 
             {managerPanel ? (
-                    (<ManagerPanel/>)
-                ) :
-                showTasksDashboard ? (
-                    <>
-                        {/* Показываем Dashboard, если нет активного звонка */}
-                        {!(activeCall || postActive) && openedPhones.length === 0 && (
-                            <TasksDashboard
-                                openedGroup={openedGroup}
-                                setOpenedGroup={setOpenedGroup}
-                                phonesData={phonesData}
-                                setPhonesData={setPhonesData}
-                                setGroupIDs={setGroupIDs}
-                                selectedPreset={selectedPreset}
-                                setSelectedPreset={setSelectedPreset}
-                                role={role}
-                                currentPage={currentPresetPage}
-                                setCurrentPage={setCurrentPresetPage}
-                                startDate={startDate}
-                                setStartDate={setStartDate}
-                                endDate={endDate}
-                                setEndDate={setEndDate}
-                                selectedStatus={selectedStatus}
-                                setSelectedStatus={setSelectedStatus}
-                                appliedLocalFilters={appliedLocalFilters}
-                                setAppliedLocalFilters={setAppliedLocalFilters}
-                                appliedServerFilters={appliedServerFilters}
-                                setAppliedServerFilters={setAppliedServerFilters}
-                                localFilterDraft={localFilterDraft}
-                                setLocalFilterDraft={setLocalFilterDraft}
-                                serverFilterDraft={serverFilterDraft}
-                                setServerFilterDraft={setServerFilterDraft}
-                                unreadOnly={unreadOnly}
-                                setUnreadOnly={setUnreadOnly}
-                            />
-                        )
-                        }
-                        <div
-                            // общий «ряд», в котором скрипт и карточка
-                            style={{
-                                display: 'flex',
-                                flexWrap: 'wrap',
-                                gap: 16,
-                            }}
-                        >
-                            {openedPhones.length > 0 && activeGuid &&
+                <ManagerPanel />
+            ) : showTasksDashboard ? (
+                <>
+                    {/* Показываем Dashboard, если нет активного звонка */}
+                    {!(activeCall || postActive) && openedPhones.length === 0 && (
+                        <TasksDashboard
+                            openedGroup={openedGroup}
+                            setOpenedGroup={setOpenedGroup}
+                            phonesData={phonesData}
+                            setPhonesData={setPhonesData}
+                            setGroupIDs={setGroupIDs}
+                            selectedPreset={selectedPreset}
+                            setSelectedPreset={setSelectedPreset}
+                            role={role}
+                            currentPage={currentPresetPage}
+                            setCurrentPage={setCurrentPresetPage}
+                            startDate={startDate}
+                            setStartDate={setStartDate}
+                            endDate={endDate}
+                            setEndDate={setEndDate}
+                            selectedStatus={selectedStatus}
+                            setSelectedStatus={setSelectedStatus}
+                            appliedLocalFilters={appliedLocalFilters}
+                            setAppliedLocalFilters={setAppliedLocalFilters}
+                            appliedServerFilters={appliedServerFilters}
+                            setAppliedServerFilters={setAppliedServerFilters}
+                            localFilterDraft={localFilterDraft}
+                            setLocalFilterDraft={setLocalFilterDraft}
+                            serverFilterDraft={serverFilterDraft}
+                            setServerFilterDraft={setServerFilterDraft}
+                            unreadOnly={unreadOnly}
+                            setUnreadOnly={setUnreadOnly}
+                        />
+                    )}
+
+                    <div
+                        style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: 16,
+                        }}
+                    >
+                        {/* ====== SPLIT ROW (ТОЛЬКО КОГДА ЕСТЬ ЧАТ) ====== */}
+                        {openedPhones.length > 0 && activeGuid && (
                             <div
+                                ref={splitWrapRef}
                                 style={{
                                     order: 1,
-                                    flex: '0 0 calc(50% - 8px)',
+                                    flex: "0 0 100%",
                                     marginTop: 20,
                                     minWidth: 0,
+                                    display: "flex",
+                                    alignItems: "stretch",
                                 }}
                             >
-                                {guidsFromOpened && guidsFromOpened.length > 1 && (
-                                    <div className="pb-2">
-                                        <ul className={styles.chatTabs}>
-                                            {guidsFromOpened.map(g => {
-                                                const unread = unreadByGuid[g] ?? 0;
-                                                const isActive = activeGuid === g;
+                                {/* LEFT: CHAT */}
+                                <div
+                                    style={{
+                                        flex: `0 0 ${chatCallRatio * 100}%`,
+                                        minWidth: 320,
+                                        minHeight: 0,
+                                    }}
+                                >
+                                    {guidsFromOpened && guidsFromOpened.length > 1 && (
+                                        <div className="pb-2">
+                                            <ul className={styles.chatTabs}>
+                                                {guidsFromOpened.map((g) => {
+                                                    const unread = unreadByGuid[g] ?? 0;
+                                                    const isActive = activeGuid === g;
 
-                                                return (
-                                                    <li key={g} className={styles.chatTabsItem}>
-                                                        <button
-                                                            type="button"
-                                                            className={`${styles.chatTabsBtn} ${isActive ? styles.isActive : ""} ${unread ? styles.hasUnread : ""}`}
-                                                            onClick={() => setActiveGuid(g)}
-                                                            title={labelForGuid(g)}
-                                                            aria-label={`${labelForGuid(g)}${unread ? `, непрочитанных: ${unread}` : ""}`}
-                                                        >
-                                                            <span className={styles.chatTabsLabel}>{labelForGuid(g)}</span>
-                                                            {unread > 0 && <span className={styles.chatTabsBadge}>{unread}</span>}
-                                                        </button>
-                                                    </li>
-                                                );
-                                            })}
-                                        </ul>
-                                    </div>
-                                )}
-                                {/*<ContactFilesPanel*/}
-                                {/*    contacts={openedPhones}*/}
-                                {/*    serverFilesByGuid={serverFilesByGuid}*/}
-                                {/*/>*/}
-
-                                <LocalChat
-                                    guid={activeGuid}
-                                    selfLogin={viewer.login}
-                                    selfName={viewer.name}
-                                    selfRole={viewer.role}
-                                    collapsed={collapsed.value}
-                                    onToggle={collapsed.toggle}
-                                    messages={messages}
-                                    height={collapsed.value ? "52px" : "clamp(420px, 65vh, 820px)"}
-                                    onSend={handleSend}
-                                    operatorDict={operatorDict}
-                                    // formatOperatorFn={formatOperator}
-                                    title={`Чат · ${activeGuid ?? ""}`}
-                                    // subtitle={labelForGuid(activeGuid)}
-                                    readMap={readMap}
-                                />
-
-                            </div>
-                            }
-                            {/* ScriptPanel */}
-                            <div
-                                style={{
-                                    order: openedPhones.length > 0 && activeGuid ? 3 : fullWidthCard ? 2 : 1,
-                                    flex: openedPhones.length > 0 && activeGuid ? '0 0 98%' : fullWidthCard ? '0 0 100%' : '0 0 48%' ,
-                                    minWidth: 0,
-                                }}
-                            >
-                                {!postActive && !activeCall && openedPhones.length > 0 && (
-                                    <div style={{ marginLeft: 13, marginRight: 14 }}>
-                                        {groupProjects.length > 1 && (
-                                            <div style={{ display: "flex", gap: "8px", marginBottom: "6px", marginLeft: "25px" }}>
-                                                {groupProjects.map(proj => {
-                                                    const isActive = scriptProject === proj;
                                                     return (
-                                                        <button
-                                                            key={proj}
-                                                            className={`${stylesButton.projectButton} ${isActive ? stylesButton.active : ""}`}
-                                                            style={{
-                                                                color:        isActive ? "#fff" : projectColors[proj],
-                                                                background:   isActive ? projectColors[proj] : "transparent",
-                                                                borderColor:  projectColors[proj],
-                                                            }}
-                                                            onClick={() => setScriptProject(proj)}
-                                                        >
-                                                            {findNameProject(proj)}
-                                                        </button>
+                                                        <li key={g} className={styles.chatTabsItem}>
+                                                            <button
+                                                                type="button"
+                                                                className={`${styles.chatTabsBtn} ${isActive ? styles.isActive : ""} ${
+                                                                    unread ? styles.hasUnread : ""
+                                                                }`}
+                                                                onClick={() => setActiveGuid(g)}
+                                                                title={labelForGuid(g)}
+                                                                aria-label={`${labelForGuid(g)}${
+                                                                    unread ? `, непрочитанных: ${unread}` : ""
+                                                                }`}
+                                                            >
+                                                                <span className={styles.chatTabsLabel}>{labelForGuid(g)}</span>
+                                                                {unread > 0 && (
+                                                                    <span className={styles.chatTabsBadge}>{unread}</span>
+                                                                )}
+                                                            </button>
+                                                        </li>
                                                     );
                                                 })}
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                                {scriptProject && (
-                                    <ScriptPanel
-                                        key={scriptProject}
-                                        projectName={scriptProject}
-                                        onClose={() => setShowScriptPanel(false)}
-                                        direction={scriptDir}
-                                        uuid={postCallData?.uuid}
-                                        bUuid={postCallData?.b_uuid}
-                                        tuskMode={showTasksDashboard}
-                                    />
-                                )}
-                            </div>
+                                            </ul>
+                                        </div>
+                                    )}
 
-                            <div
-                                style={{
-                                    order: openedPhones.length > 0 && activeGuid ? 2 : fullWidthCard ? 2 : 1,
-                                    flex: openedPhones.length > 0 && activeGuid ? '0 0 48%' : fullWidthCard ? '0 0 100%' : '0 0 48%' ,
-                                    minWidth: 0,
-                                }}
-                            >
-                                {(openedPhones.length > 0 || activeCall || postActive) && (
-                                        <CallControlPanel
+                                    <MemoLocalChat
+                                        guid={activeGuid}
+                                        selfLogin={viewer.login}
+                                        selfName={viewer.name}
+                                        selfRole={viewer.role}
+                                        collapsed={collapsed.value}
+                                        onToggle={onToggleCollapsed}
+                                        messages={messages}
+                                        height={collapsed.value ? "52px" : "clamp(420px, 65vh, 820px)"}
+                                        onSend={handleSend}
+                                        operatorDict={operatorDictStableRef.current}
+                                        title={`Чат · ${activeGuid ?? ""}`}
+                                        readMap={readMap}
+                                    />
+                                </div>
+
+                                {/* DIVIDER */}
+                                <div
+                                    onPointerDown={(e) => {
+                                        splitDraggingRef.current = true;
+                                        (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+
+                                        document.body.style.cursor = "col-resize";
+                                        document.body.style.userSelect = "none";
+                                    }}
+                                    style={{
+                                        flex: "0 0 auto",
+                                        width: 10,
+                                        marginLeft: "20px",
+                                        cursor: "col-resize",
+                                        borderRadius: 8,
+                                        background: "rgba(0,0,0,0.08)",
+                                        position: "relative",
+                                        touchAction: "none",
+                                    }}
+                                    title="Потяни, чтобы изменить ширину"
+                                    aria-label="Resize"
+                                >
+                                    <div
+                                        style={{
+                                            position: "absolute",
+                                            top: "20%",
+                                            bottom: "20%",
+                                            left: "50%",
+                                            width: 2,
+                                            transform: "translateX(-50%)",
+                                            background: "rgba(0,0,0,0.25)",
+                                            borderRadius: 2,
+                                        }}
+                                    />
+                                </div>
+
+                                {/* RIGHT: CALL CONTROL */}
+                                <div
+                                    style={{
+                                        flex: `0 0 ${(0.97 - chatCallRatio) * 100}%`,
+                                        minWidth: 360,
+                                        minHeight: 0,
+                                    }}
+                                >
+                                    {(openedPhones.length > 0 || activeCall || postActive) && (
+                                        <MemoCallControlPanel
                                             call={selectedCall}
                                             hasActiveCall={activeCall}
                                             activeProject={scriptProject}
-                                            onClose={() => setSelectedCall(null)}
+                                            onClose={onCloseCall}
                                             postActive={postActive}
                                             setPostActive={setPostActive}
                                             currentPage={currentPage}
@@ -1616,14 +1794,132 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                             setPhoneID={setPhoneID}
                                             checkBox={activeGuid}
                                         />
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ====== ScriptPanel (как раньше, без разделителя) ====== */}
+                        <div
+                            style={{
+                                order: openedPhones.length > 0 && activeGuid ? 3 : fullWidthCard ? 2 : 1,
+                                flex:
+                                    openedPhones.length > 0 && activeGuid
+                                        ? "0 0 98%"
+                                        : fullWidthCard
+                                            ? "0 0 100%"
+                                            : "0 0 48%",
+                                minWidth: 0,
+                            }}
+                        >
+                            {!postActive && !activeCall && openedPhones.length > 0 && (
+                                <div style={{ marginLeft: 13, marginRight: 14 }}>
+                                    {groupProjects.length > 1 && (
+                                        <div
+                                            style={{
+                                                display: "flex",
+                                                gap: "8px",
+                                                marginBottom: "6px",
+                                                marginLeft: "25px",
+                                            }}
+                                        >
+                                            {groupProjects.map((proj) => {
+                                                const isActive = scriptProject === proj;
+                                                return (
+                                                    <button
+                                                        key={proj}
+                                                        className={`${stylesButton.projectButton} ${
+                                                            isActive ? stylesButton.active : ""
+                                                        }`}
+                                                        style={{
+                                                            color: isActive ? "#fff" : projectColors[proj],
+                                                            background: isActive ? projectColors[proj] : "transparent",
+                                                            borderColor: projectColors[proj],
+                                                        }}
+                                                        onClick={() => setScriptProject(proj)}
+                                                    >
+                                                        {findNameProject(proj)}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {scriptProject && (
+                                <ScriptPanel
+                                    key={scriptProject}
+                                    projectName={scriptProject}
+                                    onClose={() => setShowScriptPanel(false)}
+                                    direction={scriptDir}
+                                    uuid={postCallData?.uuid}
+                                    bUuid={postCallData?.b_uuid}
+                                    tuskMode={showTasksDashboard}
+                                />
+                            )}
+                        </div>
+
+                        {/* ====== CallControlPanel как раньше (когда НЕТ чата) ====== */}
+                        {!(openedPhones.length > 0 && activeGuid) && (
+                            <div
+                                style={{
+                                    order: fullWidthCard ? 2 : 1,
+                                    flex: fullWidthCard ? "0 0 100%" : "0 0 48%",
+                                    minWidth: 0,
+                                }}
+                            >
+                                {(openedPhones.length > 0 || activeCall || postActive) && (
+                                    <MemoCallControlPanel
+                                        call={selectedCall}
+                                        hasActiveCall={activeCall}
+                                        activeProject={scriptProject}
+                                        onClose={onCloseCall}
+                                        postActive={postActive}
+                                        setPostActive={setPostActive}
+                                        currentPage={currentPage}
+                                        outActivePhone={outActivePhone}
+                                        outActiveProjectName={outActiveProjectName}
+                                        assignedKey={assignedKey}
+                                        isLoading={isLoading}
+                                        setSelectedCall={setSelectedCall}
+                                        setIsLoading={setIsLoading}
+                                        specialKey={specialKey}
+                                        setModules={setModules}
+                                        modules={modules}
+                                        prefix={prefix}
+                                        outboundCall={outboundCall}
+                                        tuskMode={showTasksDashboard}
+                                        setTuskMode={setShowTasksDashboard}
+                                        fullWidthCard={fullWidthCard}
+                                        setFullWidthCard={setFullWidthCard}
+                                        openedPhones={openedPhones}
+                                        setOpenedPhones={setOpenedPhones}
+                                        monoModules={monoModules}
+                                        setMonoModules={setMonoModules}
+                                        setActiveProjectName={setActiveProjectName}
+                                        selectedPreset={selectedPreset}
+                                        postCallData={postCallData}
+                                        setPostCallData={setPostCallData}
+                                        role={role}
+                                        setOpenedGroup={setOpenedGroup}
+                                        setPhonesData={setPhonesData}
+                                        momoProjectRepo={momoProjectRepo}
+                                        startModulesRanRef={startModulesRanRef}
+                                        expressCall={expressCall}
+                                        phoneID={phoneID}
+                                        setPhoneID={setPhoneID}
+                                        checkBox={activeGuid}
+                                    />
                                 )}
                             </div>
-                        </div>
-                    </>
-                ) : <div className="row my-3">
-
+                        )}
+                    </div>
+                </>
+            ) : (
+                <div className="row my-3">
                     <div className="col-12 col-md-6">
-                        {(selectedCall && scriptDir && scriptProject && !postActive && !activeCalls.length) ?
+                        {selectedCall && scriptDir && scriptProject && !postActive && !activeCalls.length ? (
                             <ScriptPanel
                                 direction={scriptDir}
                                 projectName={scriptProject}
@@ -1631,36 +1927,32 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                 tuskMode={showTasksDashboard}
                                 selectedCall={selectedCall}
                             />
-                            :
-                            (
-                                showScriptPanel ||
-                                (activeCall && activeProjectName) ||
-                                (postActive && activeProjectName)
-                                    ? (
-                                        <ScriptPanel
-                                            direction={scriptDir}
-                                            projectName={activeProjectName}
-                                            onClose={() => setShowScriptPanel(false)}
-                                            tuskMode={showTasksDashboard}
-                                        />
-                                    ) : (
-                                        <CallsDashboard
-                                            setSelectedCall={setSelectedCall}
-                                            selectedCall={selectedCall}
-                                            currentPage={currentPage}
-                                            setCurrentPage={setCurrentPage}
-                                            isLoading={isLoading}
-                                            setIsLoading={setIsLoading}
-                                        />
-                                    ))}
+                        ) : showScriptPanel || (activeCall && activeProjectName) || (postActive && activeProjectName) ? (
+                            <ScriptPanel
+                                direction={scriptDir}
+                                projectName={activeProjectName}
+                                onClose={() => setShowScriptPanel(false)}
+                                tuskMode={showTasksDashboard}
+                            />
+                        ) : (
+                            <CallsDashboard
+                                setSelectedCall={setSelectedCall}
+                                selectedCall={selectedCall}
+                                currentPage={currentPage}
+                                setCurrentPage={setCurrentPage}
+                                isLoading={isLoading}
+                                setIsLoading={setIsLoading}
+                            />
+                        )}
                     </div>
+
                     <div className="col-12 col-md-6">
                         {(selectedCall || activeCall || postActive) && (
-                            <CallControlPanel
+                            <MemoCallControlPanel
                                 call={selectedCall}
                                 hasActiveCall={activeCall}
                                 activeProject={activeProjectName}
-                                onClose={() => setSelectedCall(null)}
+                                onClose={onCloseCall}
                                 postActive={postActive}
                                 setPostActive={setPostActive}
                                 currentPage={currentPage}
@@ -1686,9 +1978,10 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                         )}
                     </div>
                 </div>
-            }
+            )}
         </div>
     );
+
 };
 
 export default MainApp;

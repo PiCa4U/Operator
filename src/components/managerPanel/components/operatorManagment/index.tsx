@@ -1385,7 +1385,7 @@ export const OperatorsTab: React.FC = () => {
                                     <tr>
                                         <td
                                             colSpan={
-                                                1 + // Оператор
+                                                1 +
                                                 TIME_KEYS.length +
                                                 (["outbound", "inbound", "express", "missed"] as const).reduce(
                                                     (acc, cat) => acc + (1 + report.projects[cat].length) * CAT_SUBCOLS[cat].length,

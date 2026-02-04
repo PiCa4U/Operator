@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Swal from "sweetalert2";
 import { chatApi } from "./api";
 import ReactDOM from "react-dom";
-import {useOperatorsDirectory} from "../../signals/useOperatorsDirectory";
+import { useOperatorsDirectory } from "../../signals/useOperatorsDirectory";
 
 const DOWNLOAD_HOST_CC = "https://my.glagol.ai";
 
@@ -17,7 +17,8 @@ function readSocketHostForDownloads(): string {
     if (!raw) return "wwstest.glagol.ai/chat";
 
     if (raw.startsWith("//")) raw = `${window.location.protocol}${raw}`;
-    if (!/^[a-zA-Z][\w+.-]*:\/\//.test(raw)) raw = `${window.location.protocol}//${raw}`;
+    if (!/^[a-zA-Z][\w+.-]*:\/\//.test(raw))
+        raw = `${window.location.protocol}//${raw}`;
 
     try {
         const u = new URL(raw);
@@ -54,7 +55,7 @@ const extOf = (n: string) => (n.split(".").pop() || "").toLowerCase();
 const isImage = (n: string) => IMAGE_EXTS.includes(extOf(n));
 const isPdf = (n: string) => extOf(n) === "pdf";
 
-/** NEW: кто загрузил (оператор/клиент) */
+/** кто загрузил (оператор/клиент) */
 function formatCreatedBy(createdBy?: string, dict?: Record<string, string>) {
     const raw = String(createdBy ?? "").trim();
     if (!raw) return "—";
@@ -77,14 +78,70 @@ function formatCreatedBy(createdBy?: string, dict?: Record<string, string>) {
     return raw;
 }
 
-/** NEW: дата добавления */
+/** --- DATE/TIME: backend stores UTC, we must show in CLIENT local timezone --- */
+function hasExplicitTz(s: string): boolean {
+    return /([zZ]|[+\-]\d{2}:?\d{2})$/.test(s.trim());
+}
+
+function parseBackendUtcMs(s?: string): number {
+    if (!s) return 0;
+    const str = String(s).trim();
+    if (!str) return 0;
+
+    // unix seconds / ms (на всякий)
+    if (/^\d{10}$/.test(str)) return Number(str) * 1000;
+    if (/^\d{13}$/.test(str)) return Number(str);
+
+    // если вдруг сервер начал отдавать ISO с TZ — доверяем
+    if (hasExplicitTz(str)) {
+        const ms = new Date(str.replace(" ", "T")).getTime();
+        return Number.isFinite(ms) ? ms : 0;
+    }
+
+    // "YYYY-MM-DD HH:mm:ss(.fffffffff)" без TZ => считаем, что это UTC
+    const m = str.match(
+        /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d{1,9}))?$/
+    );
+    if (!m) return 0;
+
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    const hour = Number(m[4]);
+    const minute = Number(m[5]);
+    const second = Number(m[6] ?? "0");
+
+    // дробные секунды 1..9 знаков — берём миллисекунды (первые 3)
+    const frac = m[7] ?? "";
+    const milli = frac ? Number((frac + "000").slice(0, 3)) : 0;
+
+    const ms = Date.UTC(year, month - 1, day, hour, minute, second, milli);
+    return Number.isFinite(ms) ? ms : 0;
+}
+
+/** дата добавления: показываем в TZ клиента */
 function formatDt(s?: string) {
     if (!s) return "—";
-    // backend: "YYYY-MM-DD HH:mm:ss"
-    const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
-    if (!m) return String(s);
-    const [, yyyy, mm, dd, hh, mi] = m;
-    return `${dd}.${mm}.${yyyy} ${hh}:${mi}`;
+
+    const ms = parseBackendUtcMs(s);
+    if (!ms) return String(s);
+
+    const d = new Date(ms);
+
+    const parts = new Intl.DateTimeFormat("ru-RU", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+        // timeZone не задаём => локальная TZ клиента
+    }).formatToParts(d);
+
+    const p: Record<string, string> = {};
+    for (const it of parts) if (it.type !== "literal") p[it.type] = it.value;
+
+    return `${p.day}.${p.month}.${p.year} ${p.hour}:${p.minute}`;
 }
 
 function getContactGuid(c: any): string | null {
@@ -277,7 +334,9 @@ export function ContactFilesPanel({
     const [rows, setRows] = useState<StorageFileRow[]>([]);
     const [loading, setLoading] = useState(false);
     const [loadErr, setLoadErr] = useState<string | null>(null);
-    const { data: operatorDict = {} } = useOperatorsDirectory()
+
+    const { data: operatorDict = {} } = useOperatorsDirectory();
+
     const [busyDelete, setBusyDelete] = useState<Set<string>>(new Set());
     const [busyPut, setBusyPut] = useState<Set<string>>(new Set());
 
@@ -388,7 +447,7 @@ export function ContactFilesPanel({
                     out.push(f);
                 }
 
-                // сортировка: новые сверху
+                // сортировка: новые сверху (по сырой строке, достаточно)
                 out.sort((a, b) => {
                     const da = String(a.modified_dt || a.created_dt || "");
                     const db = String(b.modified_dt || b.created_dt || "");
@@ -509,7 +568,9 @@ export function ContactFilesPanel({
                 description: payloadDesc,
             });
 
-            setRows((prevRows) => prevRows.map((x) => (rowKeyOf(x) === k ? { ...x, description: payloadDesc } : x)));
+            setRows((prevRows) =>
+                prevRows.map((x) => (rowKeyOf(x) === k ? { ...x, description: payloadDesc } : x))
+            );
 
             lastSavedRef.current = payloadDesc ?? "";
             setEditingKey(null);
@@ -536,49 +597,6 @@ export function ContactFilesPanel({
     const cancelEditOnEsc = () => {
         setDraftDesc(lastSavedRef.current);
         setEditingKey(null);
-    };
-
-    const startEdit = (r: StorageFileRow) => {
-        const k = rowKeyOf(r);
-        setEditingKey(k);
-        setDraftDesc(r.description ?? "");
-    };
-
-    const cancelEdit = () => {
-        setEditingKey(null);
-        setDraftDesc("");
-    };
-
-    const saveDesc = async (r: StorageFileRow) => {
-        const k = rowKeyOf(r);
-        const next = draftDesc.trim();
-        const payloadDesc = next ? next : null; // пусто => стираем
-
-        setBusyPut((prev) => new Set(prev).add(k));
-        try {
-            await chatApi.put("/api/v1/storage/file", {
-                glagol_parent: glagolParent,
-                guid: r.guid,
-                inner_name: r.inner_name,
-                description: payloadDesc,
-            });
-
-            setRows((prev) => prev.map((x) => (rowKeyOf(x) === k ? { ...x, description: payloadDesc } : x)));
-            setEditingKey(null);
-            setDraftDesc("");
-        } catch (e: any) {
-            await Swal.fire({
-                icon: "error",
-                title: "Не удалось сохранить описание",
-                text: e?.response?.data?.detail || e?.response?.data?.message || e?.message || "Ошибка",
-            });
-        } finally {
-            setBusyPut((prev) => {
-                const n = new Set(prev);
-                n.delete(k);
-                return n;
-            });
-        }
     };
 
     const Ico = {
@@ -646,10 +664,20 @@ export function ContactFilesPanel({
         setRows((prev) => prev.filter((x) => rowKeyOf(x) !== k));
 
         try {
-            await chatApi.delete("/api/v1/contacts/storage/remove", { data: { guid: r.guid, storage: [nameForOps] } });
-            await chatApi.delete("/api/v1/storage/delete", { data: { guid: r.guid, storage: [nameForOps] } });
+            await chatApi.delete("/api/v1/contacts/storage/remove", {
+                data: { guid: r.guid, storage: [nameForOps] },
+            });
+            await chatApi.delete("/api/v1/storage/delete", {
+                data: { guid: r.guid, storage: [nameForOps] },
+            });
 
-            await Swal.fire({ icon: "success", title: "Готово", text: "Файл удалён", timer: 1200, showConfirmButton: false });
+            await Swal.fire({
+                icon: "success",
+                title: "Готово",
+                text: "Файл удалён",
+                timer: 1200,
+                showConfirmButton: false,
+            });
         } catch (e: any) {
             setRows((prev) => {
                 const exists = prev.some((x) => rowKeyOf(x) === k);
@@ -748,7 +776,6 @@ export function ContactFilesPanel({
             >
                 <div className="table-responsive" style={{ paddingTop: 6 }}>
                     <table className="table table-sm align-middle mb-0" style={{ tableLayout: "fixed", width: "100%" }}>
-                        {/* NEW: добавили 2 колонки (кто + дата) */}
                         <colgroup>
                             <col style={{ width: 44 }} />
                             <col style={{ width: 260 }} />
@@ -806,7 +833,6 @@ export function ContactFilesPanel({
                                 <tr key={k} style={{ opacity: delBusy ? 0.7 : 1 }}>
                                     <td style={{ fontSize: 18, lineHeight: 1, verticalAlign: "top" }}>{emoji}</td>
 
-                                    {/* FILE (узкая, ellipsis, всегда слева) */}
                                     <td style={{ overflow: "hidden", textAlign: "left", verticalAlign: "top" }}>
                                         <button
                                             type="button"
@@ -839,8 +865,10 @@ export function ContactFilesPanel({
                                         {formatCreatedBy(r.created_by, operatorDict)}
                                     </td>
 
-
-                                    <td style={{ verticalAlign: "top", whiteSpace: "nowrap" }}>
+                                    <td
+                                        style={{ verticalAlign: "top", whiteSpace: "nowrap" }}
+                                        title={String(r.created_dt || r.modified_dt || "")}
+                                    >
                                         {formatDt(r.created_dt || r.modified_dt)}
                                     </td>
 
@@ -887,7 +915,6 @@ export function ContactFilesPanel({
                                                 style={{ resize: "vertical" }}
                                                 onChange={(e) => setDraftDesc(e.target.value)}
                                                 onBlur={() => {
-                                                    // autosave on blur
                                                     void commitEdit(r);
                                                 }}
                                                 onKeyDown={(e) => {
@@ -895,7 +922,6 @@ export function ContactFilesPanel({
                                                         stop(e);
                                                         cancelEditOnEsc();
                                                     }
-                                                    // можно сохранить Ctrl+Enter, но основное — blur
                                                     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
                                                         stop(e);
                                                         void commitEdit(r);
@@ -906,7 +932,6 @@ export function ContactFilesPanel({
                                         )}
                                     </td>
 
-                                    {/* ACTIONS */}
                                     <td style={{ verticalAlign: "top" }}>
                                         <div className="d-flex justify-content-end flex-wrap" style={{ gap: 10 }}>
                                             {(img || pdf) && (

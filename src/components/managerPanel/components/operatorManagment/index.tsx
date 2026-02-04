@@ -140,6 +140,7 @@ export const OperatorsTab: React.FC = () => {
         glagolParent = '',
     } = store.getState().credentials;
 
+
     const [selected, setSelected] = useState<Record<Agent["login"], boolean>>({});
     const selectedLogins = useMemo(() => Object.keys(selected).filter((l) => selected[l]), [selected]);
 
@@ -215,7 +216,7 @@ export const OperatorsTab: React.FC = () => {
         prevSearchRef.current = cur;
     }, [filters.name, pageCount, page]);
 
-    const { userAgent, enabled: webrtcEnabled } = useSip();
+    const { userAgent, enabled: webrtcEnabled, callOperator, makeCall, status: sipStatus } = useSip();
     const {
         status: screenStatus,
         error: screenError,
@@ -227,6 +228,22 @@ export const OperatorsTab: React.FC = () => {
     const [activeScreenOperator, setActiveScreenOperator] = useState<string | null>(null);
 
     const lastRoomRef = useRef<string | null>(null);
+
+    const handleCallOperator = useCallback(async (operatorLogin: string) => {
+        if (!webrtcEnabled) {
+            Swal.fire({ icon: "info", title: "Телефония выключена", timer: 1500, showConfirmButton: false });
+            return;
+        }
+
+        try {
+            // приоритет: новый метод
+            if (callOperator) await callOperator(operatorLogin);
+            else await makeCall(String(operatorLogin)); // fallback
+        } catch (e: any) {
+            console.error(e);
+            Swal.fire({ icon: "error", title: "Не удалось позвонить", text: String(e?.message || e) });
+        }
+    }, [webrtcEnabled, sipStatus, callOperator, makeCall]);
 
     useEffect(() => {
         if (!webrtcEnabled) return;
@@ -998,6 +1015,14 @@ export const OperatorsTab: React.FC = () => {
                                         <div className="btn-group btn-group-sm">
                                             <button className="btn btn-outline-success" onClick={() => openEdit(a)}>
                                                 Редактировать
+                                            </button>
+                                            <button
+                                                className="btn btn-outline-primary"
+                                                disabled={!webrtcEnabled /* || a.role !== "operator" */ }
+                                                onClick={() => handleCallOperator(a.login)}
+                                                title={`Позвонить оператору ${a.login}`}
+                                            >
+                                                Позвонить
                                             </button>
 
                                             {a.status === "Logged Out" && a.fs_status && (

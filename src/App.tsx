@@ -527,7 +527,8 @@ export default function App() {
     const name = userInfo?.name ?? "—";
     const glagol = userInfo?.glagol_service ?? "—";
     const phoneLogin = userInfo?.login ?? "—";
-    const role = userInfo?.type === "manager" ? "Менеджер" : "Оператор";
+    const role =
+        userInfo?.type === "manager" ? "Менеджер" : "Оператор";
 
     const [infoOpen, setInfoOpen] = useState(false);
     const infoRef = useRef<HTMLDivElement | null>(null);

@@ -18,6 +18,8 @@ import { chatApi } from '../../features/itsm/chat/api';
 import {makeId} from "../../utils";
 import {OperatorScreenSharePanel} from "../../screenShare/OperatorScreenSharePanel";
 import ContactUsersPresence from "./components/ContactUsersPresence";
+import CallDurationText from "./components/CallDurationText/CallDurationText";
+import PostCountdown from "./components/PostCountdown/PostCountdown";
 
 const IcoClip = (p: React.SVGProps<SVGSVGElement>) => (
     <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" {...p}>
@@ -717,7 +719,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         () => cardUsers.filter(u => String(u) !== String(sipLogin)),
         [cardUsers, sipLogin]
     );
+    const POST_LIMIT = worker.includes('fs@akc24.ru') ? 12000 : 1200;
 
+    const postSecondsRef = useRef<number>(POST_LIMIT);
 
     const debounceOnchangeTimersRef = useRef<Record<string, any>>({});
     const valuesRef = useRef(values);
@@ -1173,8 +1177,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     // Активные звонки
     // const hasActiveCall = Array.isArray(activeCalls) ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
 
-    const POST_LIMIT = worker.includes('fs@akc24.ru') ? 12000 : 1200;
-    const [postSeconds, setPostSeconds] = useState(POST_LIMIT);
 
     const forbiddenProjects = ['api_call', 'no_project_out'];
     const project = call?.project_name || '';
@@ -1872,27 +1874,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             })
             setIsParams(false)
             setPostActive(true);
-            setPostSeconds(POST_LIMIT)
+            postSecondsRef.current = POST_LIMIT
         }
         if (hasActiveCall) {
             setIsParams(true)
             setPostActive(false);
-            setPostSeconds(POST_LIMIT);
+            postSecondsRef.current = POST_LIMIT;
         }
         prevCallRef.current = thisCall;
-    }, [hasActiveCall, activeCalls, POST_LIMIT]);
-
-    useEffect(() => {
-        let timer: NodeJS.Timeout | null = null;
-        if (postActive && postSeconds > 0) {
-            timer = setInterval(() => setPostSeconds(sec => sec - 1), 1000);
-        } else if (postActive && postSeconds <= 0) {
-            handleAutoReturn();
-        }
-        return () => {
-            if (timer) clearInterval(timer);
-        };
-    }, [postActive, postSeconds]);
+    }, [hasActiveCall, activeCalls]);
 
     const handleAutoReturn = () => {
         Swal.fire({
@@ -1910,7 +1900,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         });
         setPostActive(false);
         setIsParams(true)
-        setPostSeconds(POST_LIMIT);
+        postSecondsRef.current = POST_LIMIT;
         setCallReason('');
         setCallResult('');
         setComment('');
@@ -1964,7 +1954,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
             setIsParams(false)
             setPostActive(true)
-            setPostSeconds(POST_LIMIT);
+            postSecondsRef.current = POST_LIMIT;
         }
     };
 
@@ -2044,7 +2034,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         //     setOpenedPhones([])
         // }
 
-        const post_time = POST_LIMIT - postSeconds
+        const post_time = Math.max(0, Math.min(POST_LIMIT, POST_LIMIT - postSecondsRef.current));
 
         const selectedContacts = getPhonesByIds(groupSelectedIds);
         const statusText = callResults.find(r => String(r.id) === String(callResult))?.name || '';
@@ -2141,7 +2131,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         setIsLoading(true);
         // setOpenedPhones?.([])
         setPostActive(false);
-        setPostSeconds(POST_LIMIT);
+        postSecondsRef.current = POST_LIMIT;;
         onClose();
     };
     const availableTabs = useMemo(() => {
@@ -2168,7 +2158,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         //     return;
         // }
 
-        const post_time = POST_LIMIT - postSeconds
+        const post_time = Math.max(0, Math.min(POST_LIMIT, POST_LIMIT - postSecondsRef.current));
         if(tuskMode) {
             handleGroupSave()
         } else {
@@ -2251,50 +2241,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             });
             setIsParams(true)
             setPostActive(false);
-            setPostSeconds(POST_LIMIT);
+            postSecondsRef.current = POST_LIMIT;
             onClose();
         }
     };
 
-
-    const [callDuration, setCallDuration] = useState(0);
-    const [secondCallDuration, setSecondCallDuration] = useState(0)
-
-    useEffect(() => {
-        let interval: NodeJS.Timeout | null = null;
-        if (hasActiveCall) {
-            interval = setInterval(() => {
-                // const startTimeStr = activeCalls[0].b_created;
-                const startTimeStr = activeCalls[0].created;
-                if (startTimeStr) {
-                    const startMs = new Date(startTimeStr).getTime();
-                    const now = Date.now();
-                    const diffSec = Math.floor((now - startMs) / 1000);
-                    setCallDuration(diffSec);
-                }
-                if (activeCalls.length > 1) {
-                    const startTimeStr = activeCalls[1].created;
-                    if (startTimeStr) {
-                        const startMs = new Date(startTimeStr).getTime();
-                        const now = Date.now();
-                        const diffSec = Math.floor((now - startMs) / 1000);
-                        setSecondCallDuration(diffSec);
-                    }
-                }
-            }, 1000);
-        } else {
-            setCallDuration(0);
-        }
-        return () => {
-            if (interval) clearInterval(interval);
-        };
-    }, [hasActiveCall, activeCalls]);
-
-    function formatDuration(sec: number): string {
-        const minutes = Math.floor(sec / 60);
-        const seconds = sec % 60;
-        return `${minutes} мин. ${seconds} сек.`;
-    }
 
     function extractSuffix(input?: string | null): string {
         return input?.split(' ').pop() ?? '';
@@ -2671,7 +2622,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         color: isHeld ? "#cba200" : "#0BB918"
                     }}
                     >
-                        {isHeld ? 'На удержании' : 'Вызов активен'}:</strong> {formatDuration(callDuration)}
+                        {isHeld ? 'На удержании' : 'Вызов активен'}:</strong>{" "}
+                        <CallDurationText created={mainActiveCall.created} />
                 </div>
                 {!tuskMode && <strong style={{whiteSpace: 'nowrap', marginTop: "4px", fontWeight: 600, fontSize: 16}}>
                     {`Проект: ${findNameProject(activeProject)}`}
@@ -2747,7 +2699,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 <strong style={{ fontSize: 16, fontWeight: 400 }}>
                                     {isHeld ? 'На удержании' : 'Вызов активен'}:
                                 </strong>{' '}
-                                {formatDuration(secondCallDuration)}
+                                <CallDurationText created={sc.created} />
                             </div>
                         </div>
                     </div>
@@ -3559,6 +3511,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     }
 
 
+    // @ts-ignore
     return (
         <div>
             {/*{renderModules()}*/}
@@ -4118,11 +4071,17 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         <div style={{display: "flex", flexDirection: "column", gap: 16}}>
                             {postActive && (
                                 <div className="mt-3">
-                                    <p>Постобработка: осталось {postSeconds} сек.</p>
+                                    <PostCountdown
+                                        // key нужен, чтобы компонент гарантированно сбрасывался на новый пост-звонок
+                                        key={`${postCallData?.call_uuid ?? ""}:${postActive ? 1 : 0}:${POST_LIMIT}`}
+                                        enabled={postActive}
+                                        limitSec={POST_LIMIT}
+                                        secondsRef={postSecondsRef}
+                                        onExpire={handleAutoReturn}
+                                    />
                                     <button
                                         className="btn btn-outline-success"
                                         onClick={handlePostSave}
-                                        // disabled={isLoading}
                                     >
                                         Сохранить и вернуться на линию
                                     </button>

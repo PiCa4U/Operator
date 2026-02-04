@@ -24,6 +24,7 @@ export interface SipUA {
     answerCall(): Promise<void>;
     hangUp(): void;
     holdCall(): Promise<void>;
+    callOperator?: (sipLogin: string | number) => Promise<void>;
     unholdCall(): Promise<void>;
     muteLocal(muted: boolean): void;
     incoming: Invitation | null;
@@ -46,21 +47,56 @@ function safeSetSrcObject(ref: AnyAudioRef, val: MediaStream | null) {
 }
 async function safePlay(ref: AnyAudioRef) { try { await ref.current?.play(); } catch {} }
 
-const filterG711: SessionDescriptionHandlerModifier = desc => {
+const filterG711: SessionDescriptionHandlerModifier = (desc) => {
     if (!desc.sdp) return Promise.resolve(desc);
-    const keep = ['0', '8', '101'];
-    const lines = desc.sdp.split(/\r?\n/);
-    const mIdx = lines.findIndex(l => l.startsWith('m=audio'));
-    if (mIdx !== -1) {
-        const parts = lines[mIdx].split(' ');
-        lines[mIdx] = [...parts.slice(0, 3), ...parts.slice(3).filter(pt => keep.includes(pt))].join(' ');
+
+    const lines = desc.sdp.split(/\r\n/);
+
+    // 1) собираем payload types по rtpmap
+    const keepCodecNames = new Set(["PCMU", "PCMA", "telephone-event"]);
+    const keepPts = new Set<string>();
+
+    for (const l of lines) {
+        const m = l.match(/^a=rtpmap:(\d+)\s+([A-Za-z0-9\-]+)/i);
+        if (!m) continue;
+        const pt = m[1];
+        const codec = m[2];
+        if (keepCodecNames.has(codec)) keepPts.add(pt);
     }
-    desc.sdp = lines
-        .filter(l => {
-            const m = l.match(/^a=(?:rtpmap|fmtp):([0-9]+)/);
-            return !m || keep.includes(m[1]);
-        })
-        .join('\r\n');
+
+    // На всякий случай держим статические 0/8 даже если rtpmap не распарсился
+    keepPts.add("0");
+    keepPts.add("8");
+
+    // если вдруг ничего не нашли — не трогаем SDP
+    if (keepPts.size === 0) return Promise.resolve(desc);
+
+    // 2) правим m=audio
+    const mIdx = lines.findIndex((l) => l.startsWith("m=audio"));
+    if (mIdx !== -1) {
+        const parts = lines[mIdx].trim().split(/\s+/);
+        const head = parts.slice(0, 3);
+        const pts = parts.slice(3);
+        const kept = pts.filter((pt) => keepPts.has(pt));
+        lines[mIdx] = [...head, ...kept].join(" ");
+    }
+
+    // 3) вычищаем строки, которые ссылаются на выкинутые PT
+    const cleaned = lines.filter((l) => {
+        // rtpmap/fmtp/rtcp-fb:PT ...
+        let m = l.match(/^a=(rtpmap|fmtp|rtcp-fb):(\d+)\b/i);
+        if (m) return keepPts.has(m[2]);
+
+        // rtcp-fb:* ... — оставляем (это валидно)
+        if (/^a=rtcp-fb:\*\b/i.test(l)) return true;
+
+        return true;
+    });
+
+    // 4) собираем обратно
+    desc.sdp = cleaned.join("\r\n");
+    if (!desc.sdp.endsWith("\r\n")) desc.sdp += "\r\n";
+
     return Promise.resolve(desc);
 };
 
@@ -483,6 +519,23 @@ export function useSipUA(config: {
         });
     };
 
+    const callOperator = async (sipLoginTarget: string | number) => {
+        if (!enabled) return;
+
+        // принимаем "1012", 1012, "sip:1012", "1012@domain" и т.п.
+        let v = String(sipLoginTarget ?? "").trim();
+        if (!v) return;
+
+        v = v.replace(/^sip:/i, "");   // убрали "sip:"
+        v = v.replace(/@.*$/, "");     // убрали домен, если вдруг есть
+
+        // оставим цифры (и на всякий случай *#+ если у вас есть такие внутренние коды)
+        const ext = v.replace(/[^\d*#+]/g, "");
+        if (!ext) return;
+
+        await makeCall(ext);
+    };
+
     const answerCall = async (): Promise<void> => {
         if (!enabled) return;
         if (!incoming || incoming.state !== SessionState.Initial) return;
@@ -525,6 +578,7 @@ export function useSipUA(config: {
         makeCall, answerCall, hangUp, holdCall, unholdCall, muteLocal,
         incoming, status,
         remoteAudioRef, localAudioRef,
-        userAgent: uaRef.current
+        userAgent: uaRef.current,
+        callOperator
     };
 }

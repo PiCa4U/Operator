@@ -53,6 +53,9 @@ const ContactUsersPresence: React.FC<Props> = React.memo(
         const [unlocking, setUnlocking] = React.useState(false);
         const [unlockErr, setUnlockErr] = React.useState<string | null>(null);
 
+        const hasLock = !!lockedBy;
+        const lockedByMe = hasLock && String(lockedBy) === String(sipLogin);
+
         const applyResp = React.useCallback((resp: any) => {
             const users = normalizeUsers(resp);
             const lock = readLockedBy(resp);
@@ -117,10 +120,7 @@ const ContactUsersPresence: React.FC<Props> = React.memo(
 
         if (!stableIds.length) return null;
 
-        const hasLock = !!lockedBy;
-        const lockedByMe = hasLock && String(lockedBy) === String(sipLogin);
 
-        // ✅ кнопка только: (лок есть) && (я владелец лока || я менеджер)
         const canUnlock = hasLock && (lockedByMe || isManager);
 
         const toName = (login: string) => operatorDict?.[login] || login;
@@ -229,9 +229,9 @@ const ContactUsersPresence: React.FC<Props> = React.memo(
                         zIndex: 1,
                     }}
                 >
-                                    <span className="material-icons" style={{ marginTop: 4 }}>
-                                        close
-                                    </span>
+                    <span className="material-icons" style={{ marginTop: 4 }}>
+                        close
+                    </span>
                 </button>
             </div>
         );

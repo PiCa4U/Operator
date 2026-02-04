@@ -2730,6 +2730,8 @@ const PresetSelectorTable: React.FC<Props> = ({
         });
     }, [worker, sipLogin, sessionKey, projectNames]);
 
+    console.log("__BUILD_MARK_2026_02_03__");
+
     return (
         <div>
             {renderExpressCards()}
@@ -2791,7 +2793,6 @@ const PresetSelectorTable: React.FC<Props> = ({
                             className="btn btn-outline-light text text-dark mx-1 ml-2"
                             title="Применить значения по умолчанию из search (например, {today})"
                         >
-                            {/*<span className="material-icons" style={{fontSize: 18, verticalAlign: 'middle'}}>restart_alt</span>*/}
                             <span className="ml-1">Фильтры: по умолчанию</span>
                         </button>
                         <button
@@ -3243,7 +3244,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                             style={{
                                                                 fontSize: 18,
                                                                 lineHeight: 1,
-                                                                opacity: sortConfig?.key === colKey ? 1 : 0.35, // бледная, если не активный столбец
+                                                                opacity: sortConfig?.key === colKey ? 1 : 0.35,
                                                                 verticalAlign: 'middle'
                                                             }}
                                                         >

@@ -1,5 +1,5 @@
 // HeaderPanel.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, {useCallback, useEffect, useMemo, useState} from "react";
 import { useDispatch, useSelector } from "react-redux";
 import Swal from "sweetalert2";
 import axios from "axios";
@@ -17,6 +17,7 @@ import { makeSelectFullProjectPool, setUserStatuses } from "../../redux/operator
 import { SignalsToaster } from "../../features/signals/SignalsToaster";
 import { NotificationsPanel } from "../../features/signals/NotificationsPanel";
 import { SignalsBell } from "../../features/signals/SignalsBell";
+import {useSip} from "../../context/SipContext";
 
 /** ===== helpers ===== */
 
@@ -40,6 +41,25 @@ function normalizeToArray(val: any): any[] {
         return [trimmed];
     }
     return [val];
+}
+
+function pickPrimaryInterCall(list: any[]) {
+    const arr = (list || []).filter(Boolean);
+    if (!arr.length) return null;
+
+    const weight = (c: any) => {
+        const st = String(c?.callstate ?? "").toUpperCase();
+        if (st === "ACTIVE") return 30;
+        if (st === "EARLY") return 20;
+        return 10;
+    };
+    const epoch = (c: any) => Number(c?.created_epoch ?? 0) || 0;
+
+    return [...arr].sort((a, b) => {
+        const dw = weight(b) - weight(a);
+        if (dw) return dw;
+        return epoch(b) - epoch(a);
+    })[0];
 }
 
 function makeCardUrl(openedPhones: any[], matchedPreset: OptionType | null) {
@@ -280,6 +300,42 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const [callTimer, setCallTimer] = useState<string>("00:00");
 
     const lastOtherUsersSigRef = React.useRef<string | null>(null);
+
+    const { enabled: webrtcEnabled, callOperator, makeCall } = useSip();
+
+// interCalls из redux
+    const rawInterCalls = useSelector((state: RootState) => (state.operator as any).interCalls);
+
+    const interCalls: any[] = useMemo(() => {
+        return Array.isArray(rawInterCalls) ? rawInterCalls : Object.values(rawInterCalls || {});
+    }, [rawInterCalls]);
+
+    const interCall = useMemo(() => pickPrimaryInterCall(interCalls), [interCalls]);
+    const hasInterCall = !!interCall;
+
+    const [dialingLogin, setDialingLogin] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (hasInterCall) setDialingLogin(null);
+    }, [hasInterCall]);
+
+    const handleCallOperator = useCallback(async (operatorLogin: string) => {
+        if (!webrtcEnabled) {
+            Swal.fire({ icon: "info", title: "Телефония выключена", timer: 1500, showConfirmButton: false });
+            return;
+        }
+
+        setDialingLogin(operatorLogin);
+
+        try {
+            if (callOperator) await callOperator(operatorLogin);
+            else await makeCall(String(operatorLogin));
+        } catch (e: any) {
+            console.error(e);
+            setDialingLogin(null);
+            Swal.fire({ icon: "error", title: "Не удалось позвонить", text: String(e?.message || e) });
+        }
+    }, [webrtcEnabled, callOperator, makeCall]);
 
     /** ===== other_users слушаем ТОЛЬКО когда открыто "Кто онлайн?" ===== */
     useEffect(() => {
@@ -1012,7 +1068,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
         const renderGroup = (entries: [string, any][]) =>
             entries.map(([login, user]) => {
-                const sipKey = String(user?.sip_login || login); // ✅ FIX
+                const sipKey = String(user?.sip_login || login);
 
                 // Проекты по sipKey
                 const projectNames: string[] = Array.isArray(monitorCallcenter?.[sipKey])
@@ -1022,7 +1078,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     : [];
 
                 // Статусы тоже по sipKey
-                const statusObj = userStatuses?.[sipKey] || {}; // ✅ FIX
+                const statusObj = userStatuses?.[sipKey] || {};
                 const { sofia_status, status: fsSt, state: fsState } = statusObj;
 
                 const sofiaText = String(sofia_status || "").includes("Registered") ? "Авторизован" : "Выключен";
@@ -1049,6 +1105,14 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 }
 
                 const ready = String(fsSt || "").includes("Available") && fsState === "Waiting";
+                const sofiaRegistered = String(sofia_status || "").includes("Registered");
+                const fsLoggedOut = String(fsSt || "").includes("Logged Out");
+                const isOnline = sofiaRegistered && !fsLoggedOut;
+
+                const isHuman = user?.post_obrabotka !== false;
+                const canCalling = isHuman && isOnline && String(sipKey) !== String(sipLogin) && !hasInterCall;
+
+                const isDialingThis = dialingLogin === sipKey;
 
                 return (
                     <div key={sipKey} className="col-sm-6 col-md-4 col-lg-3 mb-3">
@@ -1057,16 +1121,36 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                 <h6 className="card-title">
                                     {user?.name} ({sipKey})
                                 </h6>
+                                <div style={{display: "flex", justifyContent: "space-between"}}>
+                                    <div>
+                                        <p className="mb-1" style={{ color: sofiaColor }}>
+                                            {sofiaText}
+                                        </p>
 
-                                <p className="mb-1" style={{ color: sofiaColor }}>
-                                    {sofiaText}
-                                </p>
+                                        <p className="mb-2" style={{ color: fsColor }}>
+                                            {fsText}
+                                        </p>
 
-                                <p className="mb-2" style={{ color: fsColor }}>
-                                    {fsText}
-                                </p>
-
-                                {ready && <span style={{ color: fsColor }}>Готов</span>}
+                                    </div>
+                                    {canCalling && (
+                                        <button
+                                            className="btn btn-sm btn-outline-success"
+                                            disabled={!webrtcEnabled || !!dialingLogin}
+                                            onClick={() => handleCallOperator(sipKey)}
+                                            title={isDialingThis ? "Идёт вызов…" : `Позвонить ${user?.name || sipKey}`}
+                                        >
+                                            {isDialingThis ? (
+                                                <>
+                                                    <span className="spinner-border spinner-border-sm mr-2" role="status" aria-hidden="true" />
+                                                    Идёт вызов…
+                                                </>
+                                            ) : (
+                                                "Позвонить"
+                                            )}
+                                        </button>
+                                    )}
+                                </div>
+                                {/*{ready && <span style={{ color: fsColor }}>Готов</span>}*/}
 
                                 <div className="d-flex flex-wrap">
                                     {projectNames.length
@@ -1076,8 +1160,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                 className="mb-1 mr-1 px-2 py-1 rounded text-primary"
                                                 style={{ border: "1px solid" }}
                                             >
-                          {prj}
-                        </span>
+                                              {prj}
+                                            </span>
                                         ))
                                         : "Проекты не назначены"}
                                 </div>
@@ -1217,34 +1301,34 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 </div>
             </div>
 
-            {hasActiveCall && (
-                <div id="start_section" className="card ml-3 mr-0">
-                    <div className="card-body pr-0" id="glagol_actions">
-                        <div className="row col-12 pr-0" id="start_inner">
-                            <input
-                                type="text"
-                                className="form-control col input mb-0 mr-2"
-                                style={{ height: "40px" }}
-                                placeholder="Номер для вызова"
-                                value={phone}
-                                onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
-                            />
-                            <button
-                                name="start_calls"
-                                id="start_call"
-                                className="btn btn-outline-success mx-1 ml-2"
-                                title="Вызов по введенному номеру телефона"
-                                onClick={handleCallByNumber}
-                            >
-                                <i className="align-middle mr-1 fas fa-fw fa-address-book"></i>
-                                <span className="align-middle" id="vizov_btn">
-                  {"Вызов по номеру"}
-                </span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            {/*<>{hasActiveCall && (*/}
+            {/*    <div id="start_section" className="card ml-3 mr-0">*/}
+            {/*        <div className="card-body pr-0" id="glagol_actions">*/}
+            {/*            <div className="row col-12 pr-0" id="start_inner">*/}
+            {/*                <input*/}
+            {/*                    type="text"*/}
+            {/*                    className="form-control col input mb-0 mr-2"*/}
+            {/*                    style={{ height: "40px" }}*/}
+            {/*                    placeholder="Номер для вызова"*/}
+            {/*                    value={phone}*/}
+            {/*                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}*/}
+            {/*                />*/}
+            {/*                <button*/}
+            {/*                    name="start_calls"*/}
+            {/*                    id="start_call"*/}
+            {/*                    className="btn btn-outline-success mx-1 ml-2"*/}
+            {/*                    title="Вызов по введенному номеру телефона"*/}
+            {/*                    onClick={handleCallByNumber}*/}
+            {/*                >*/}
+            {/*                    <i className="align-middle mr-1 fas fa-fw fa-address-book"></i>*/}
+            {/*                    <span className="align-middle" id="vizov_btn">*/}
+            {/*      {"Вызов по номеру"}*/}
+            {/*    </span>*/}
+            {/*                </button>*/}
+            {/*            </div>*/}
+            {/*        </div>*/}
+            {/*    </div>*/}
+            {/*)}</>*/}
 
             <div className="card ml-3 mr-0">
                 <div className="card-body mt-0">

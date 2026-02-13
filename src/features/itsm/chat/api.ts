@@ -58,8 +58,10 @@ function normalizeUploadResponse(raw: any): UploadItem[] {
     return [];
 }
 
-export async function fetchChatHistory(guid: string): Promise<RawChatMessage[]> {
-    const { data } = await chatApi.get(`/api/v1/chat/${encodeURIComponent(guid)}`);
+export async function fetchChatHistory(guid: string, sessionKey: string): Promise<RawChatMessage[]> {
+    const { data } = await chatApi.get(`/api/v1/chat/${encodeURIComponent(guid)}`, {
+        headers: sessionKey ? { Authorization: `Bearer ${sessionKey}` } : undefined,
+    });
     const rows = Array.isArray(data?.data) ? data.data : [];
     return rows as RawChatMessage[];
 }

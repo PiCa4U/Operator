@@ -20,6 +20,8 @@ import {OperatorScreenSharePanel} from "../../screenShare/OperatorScreenSharePan
 import ContactUsersPresence from "./components/ContactUsersPresence";
 import CallDurationText from "./components/CallDurationText/CallDurationText";
 import PostCountdown from "./components/PostCountdown/PostCountdown";
+import InternalOperatorsDialer from "./components/InternalOperatorsDialer/InternalOperatorsDialer";
+import InterCallBanner from "./components/InterCallBanner/InterCallBanner";
 
 const IcoClip = (p: React.SVGProps<SVGSVGElement>) => (
     <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" {...p}>
@@ -367,6 +369,9 @@ interface CallControlPanelProps {
     isChating?: boolean
     isClient?: boolean
     checkBox?: string | null
+    interCall?: any;
+    showInterCallHeader?: boolean;
+    onHangupInterCall?: (uuid: string) => void;
 }
 
 type PhoneGroup = {
@@ -658,8 +663,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                setSelectedCall,
                                                                isChating,
                                                                isClient,
-                                                               checkBox= null
-                                                           }) => {
+                                                               checkBox= null,
+                                                               interCall,
+                                                               showInterCallHeader,
+                                                               onHangupInterCall,
+}) => {
     const {
         sipLogin   = '',
         worker     = '',
@@ -673,7 +681,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const activeCalls: ActiveCall[] = useSelector((state: RootState) => state.operator.activeCalls);
 
     const [manualNumber, setManualNumber] = useState('');
-    // Состояния для формы
+
     const [dockOpen, setDockOpen] = useState(false);
 
     const [callReason, setCallReason] = useState('');
@@ -682,15 +690,14 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [baseFieldValues, setBaseFieldValues] = useState<{ [fieldId: string]: string }>(
         call?.base_fields || {}
     );
-    // Списки причин, результатов и полей для заполнения
+
     const [callReasons, setCallReasons] = useState<ReasonItem[]>([]);
     const [callResults, setCallResults] = useState<ResultItem[]>([]);
     const [group_instructions, setGroup_instructions] = useState<any>(null)
-    const [mergedFieldsAll, setMergedFieldsAll] = useState<MergedField[]>([]); // ВСЕ поля
-    const [mergedFields,    setMergedFields]    = useState<MergedField[]>([]); // Поля, которые рендерим
+    const [mergedFieldsAll, setMergedFieldsAll] = useState<MergedField[]>([]);
+    const [mergedFields,    setMergedFields]    = useState<MergedField[]>([]);
     const [values, setValues] = useState<GroupFieldValues>({});
-    // Состояние для списка модулей, полученных с сервера
-    // const [modules, setModules] = useState<ModuleData[]>([]);
+
     const [isParams, setIsParams] = useState<boolean>(true)
     const [groupSelectedIds, setGroupSelectedIds] = useState<number[]>([]);
     const swalRef = useRef<any>(null);
@@ -1972,6 +1979,26 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         });
     };
 
+    const handleRedirectToInterCall = () => {
+        const uuid1 = activeCalls[0].direction === "outbound" ? activeCalls[0]?.b_uuid : activeCalls[0]?.uuid;
+        const uuid2 = interCall?.dest === sipLogin ? interCall?.uuid : interCall?.b_uuid
+
+        if (!uuid1 || !uuid2) return;
+        socket.emit('transfer_data', {
+            worker,
+            session_key: sessionKey,
+            target_sip_login: interCall.dest === sipLogin ? interCall.cid_num : interCall.dest,
+            data: openedPhones
+        })
+        socket.emit('sofia_operations', {
+            worker,
+            session_key: sessionKey,
+            uuid: uuid1,
+            uuid_2: uuid2,
+            action: 'uuid_bridge'
+        });
+    };
+
     const handleSave = () => {
         // if (!callReason || !callResult) {
         //     Swal.fire({ title: "Ошибка", text: "Проверьте заполнение обязательных полей", icon: "error" });
@@ -2623,7 +2650,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     }}
                     >
                         {isHeld ? 'На удержании' : 'Вызов активен'}:</strong>{" "}
-                        <CallDurationText created={mainActiveCall.created} />
+                        <CallDurationText created={mainActiveCall.created} glagol_parent={glagolParent}/>
                 </div>
                 {!tuskMode && <strong style={{whiteSpace: 'nowrap', marginTop: "4px", fontWeight: 600, fontSize: 16}}>
                     {`Проект: ${findNameProject(activeProject)}`}
@@ -3519,18 +3546,33 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 <div className="card col ml-0">
                     <div className="card-body">
                         <div style={{display: "flex", flexDirection: "row", }}>
-                        <ContactUsersPresence
-                            enabled={Boolean(sipLogin) && presenceIds.length > 0}
-                            sipLogin={sipLogin}
-                            ids={presenceIds}
-                            pollMs={5000}
-                            role={role}
-                            closeButton={closeButton}
-                            setIsLocker={setIsLocker}
-                        />
-
+                            <ContactUsersPresence
+                                enabled={Boolean(sipLogin) && presenceIds.length > 0}
+                                sipLogin={sipLogin}
+                                ids={presenceIds}
+                                pollMs={5000}
+                                role={role}
+                                closeButton={closeButton}
+                                setIsLocker={setIsLocker}
+                            />
                         </div>
 
+                        {showInterCallHeader && interCall && (
+                            <InterCallBanner
+                                interCall={interCall}
+                                canTransfer={activeCalls.length > 0}
+                                onTransfer={handleRedirectToInterCall}
+                                onHangup={(uuid) => onHangupInterCall?.(uuid)}
+                                style={{ marginBottom: 10 }}
+                            />
+                        )}
+
+                        {hasActiveCall && !interCall && (
+                            <InternalOperatorsDialer
+                                enabled={hasActiveCall}
+                                currentLogin={sipLogin}
+                            />
+                        )}
                         {hasActiveCall && renderActiveCallHeader(activeCalls[0])}
                         {!hasActiveCall && postActive && renderPostCallHeader()}
                         {tuskMode && !hasActiveCall && !postActive && !isChating && renderGroupPhones()}

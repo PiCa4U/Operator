@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createChatSocket } from "./socket";
 import { uploadAndAttach, type UploadItem } from "./api";
+import { store } from "../../../redux/store";
 
 export type UiAttachment = { id: string; name: string; url?: string };
 export type Role = "client" | "operator" | "manager";
@@ -29,14 +30,25 @@ function toIso(s: string): string {
 type Handlers = {
     onIncoming?: (msg: UiMessage) => void;
     onAck?: (ack: { tempId: string; message_id: number }) => void;
-    onRead?: (ids: number[]) => void;
+    onRead?: (e: ReadEvent) => void;
     onUploaded?: (p: { tempId: string; filenames: string[] }) => void;
+};
+
+export type ReadByType = Record<string, number[]>;
+export type ReadEvent = {
+    ids: number[];
+    byType: ReadByType;
+    /** кто прочитал (как на скрине login: "1000") */
+    login?: string | null;
 };
 
 export function useChatSocket(
     opts: { guid: string; login: string | null; glagol_parent: string | null } & Handlers
 ) {
     const { guid, login, glagol_parent, onIncoming, onAck, onRead, onUploaded } = opts;
+
+    const { sipLogin = "", worker = "" } = store.getState().credentials;
+    const { sessionKey } = store.getState().operator;
 
     const sockRef = useRef<ReturnType<typeof createChatSocket> | null>(null);
     const [connected, setConnected] = useState(false);
@@ -55,7 +67,7 @@ export function useChatSocket(
         const s = createChatSocket();
         sockRef.current = s;
 
-        const doLogin = () => s.emit("login", { guid, login });
+        const doLogin = () => s.emit("login", { guid, login, worker, session_key: sessionKey });
 
         s.on("connect", () => {
             setConnected(true);
@@ -96,15 +108,61 @@ export function useChatSocket(
                 authorRole: role,
                 attachments,
                 isRead: false,
-                message_type: (p.message_type ?? "msg"),
+                message_type: (p.message_type ?? "message"),
             };
 
             handlersRef.current.onIncoming?.(ui);
         });
 
-        s.on("message:read", (p: { ids: number[] }) => {
-            const ids = Array.isArray(p?.ids) ? p.ids : [];
-            if (ids.length) handlersRef.current.onRead?.(ids);
+        // ✅ READ RECEIPTS (кто прочитал)
+        s.on("message:read", (p: any) => {
+            // варианты входа:
+            // 1) { ids:[1,2], login:"1000" }
+            // 2) { ids:{ message:[1,2], comment:[3] }, login:"1000" }
+            // 3) { message:[1,2], comment:[3], login:"1000" } (редко, но поддержим)
+
+            let reader: string | null | undefined =
+                (typeof p?.login === "string" && p.login.trim()) ? p.login.trim()
+                    : (typeof p?.reader === "string" && p.reader.trim()) ? p.reader.trim()
+                        : undefined;
+
+            const byType: ReadByType = {};
+            let flat: number[] = [];
+
+            const takeArray = (arr: any): number[] =>
+                (Array.isArray(arr) ? arr : [])
+                    .map((n) => +n)
+                    .filter((n) => Number.isFinite(n));
+
+            // src — то, где реально лежат ids: либо p.ids, либо p сам
+            const src = (p && typeof p === "object" && "ids" in p) ? p.ids : p;
+
+            if (Array.isArray(src)) {
+                flat = takeArray(src);
+            } else if (src && typeof src === "object" && !Array.isArray(src)) {
+                for (const [k, v] of Object.entries(src)) {
+                    // пропускаем служебные ключи
+                    if (k === "login" || k === "reader") continue;
+
+                    // если это { ids: { message:[..] } } — сюда попадёт message/comment/...
+                    if (!Array.isArray(v)) continue;
+
+                    const arr = takeArray(v);
+                    if (arr.length) byType[k] = arr;
+                }
+                flat = Object.values(byType).flat();
+            }
+
+            // fallback: если пришло { ids:[..], login:"..." } мы уже обработали,
+            // если вдруг ничего не распарсили — попробуем p.ids как массив
+            if (!flat.length && Array.isArray(p?.ids)) {
+                flat = takeArray(p.ids);
+            }
+
+            const ids = Array.from(new Set(flat));
+            if (!ids.length) return;
+
+            handlersRef.current.onRead?.({ ids, byType, login: reader ?? null });
         });
 
         if ((s as any).connected === false && typeof s.connect === "function") {
@@ -117,7 +175,7 @@ export function useChatSocket(
             sockRef.current = null;
             setConnected(false);
         };
-    }, [guid, login]);
+    }, [guid, login, sessionKey, worker]);
 
     async function send(tempId: string, text: string, files: File[] = [], messageType: string = "msg") {
         try {
@@ -147,15 +205,47 @@ export function useChatSocket(
         }
     }
 
-    function markRead(message_id: number) {
-        sockRef.current?.emit("message:read", { ids: [message_id] });
+    function normalizeReadKey(t?: string | null) {
+        const s = String(t ?? "message").trim().toLowerCase();
+        if (s === "msg" || s === "chat") return "message";
+        return s || "message";
+    }
+
+    function markRead(message_id: number, messageType?: string) {
+        const id = +message_id;
+        if (!Number.isFinite(id)) return;
+
+        const key = normalizeReadKey(messageType);
+        sockRef.current?.emit("message:read", { ids: { [key]: [id] } });
+    }
+
+    function markManyReadByType(byType: ReadByType) {
+        const payload: ReadByType = {};
+
+        for (const [k, ids] of Object.entries(byType || {})) {
+            const key = normalizeReadKey(k);
+
+            const arr = Array.from(
+                new Set(
+                    (ids || [])
+                        .map((n: any) => +n)
+                        .filter((n: any) => Number.isFinite(n))
+                )
+            );
+
+            if (arr.length) payload[key] = arr;
+        }
+
+        if (!Object.keys(payload).length) return;
+
+        sockRef.current?.emit("message:read", { ids: payload });
     }
 
     function markManyRead(ids: number[]) {
-        const distinct = Array.from(new Set(ids.filter((n) => Number.isFinite(n))));
+        const distinct = Array.from(new Set((ids || []).map((n: any) => +n).filter((n: any) => Number.isFinite(n))));
         if (!distinct.length) return;
-        sockRef.current?.emit("message:read", { ids: distinct });
+        markManyReadByType({ message: distinct });
     }
 
-    return { connected, error, send, markRead, markManyRead };
+    return { connected, error, send, markRead, markManyRead, markManyReadByType };
 }

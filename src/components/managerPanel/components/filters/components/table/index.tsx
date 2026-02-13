@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import DataTable from "react-data-table-component";
 import { CSVLink } from "react-csv";
 import * as XLSX from "xlsx";
@@ -12,35 +12,39 @@ interface Props {
 }
 
 export const ChartDataTable: React.FC<Props> = ({ charts }) => {
-    if (!charts.length) return null;
 
-    // Предполагаем, что X — это общий интервал (0, 1, 2... 23)
-    const xValues = charts[0].data.map((point) => point.x);
+    // ✅ Берём все X-значения из всех серий, чтобы не было "кривой" таблицы
+    const xValues = useMemo(() => {
+        const set = new Set<string>();
+        charts.forEach((c) => c.data.forEach((p) => set.add(p.x)));
+        return Array.from(set);
+    }, [charts]);
 
-    // Построим строки таблицы
-    const rows = xValues.map((x, idx) => {
-        const row: Record<string, any> = { Интервал: x };
-        charts.forEach((chart) => {
-            row[chart.label] = chart.data[idx]?.y ?? 0;
+    const rows = useMemo(() => {
+        return xValues.map((x) => {
+            const row: Record<string, any> = { Интервал: x };
+            charts.forEach((chart) => {
+                const found = chart.data.find((p) => p.x === x);
+                row[chart.label] = found?.y ?? 0;
+            });
+            return row;
         });
-        return row;
-    });
+    }, [xValues, charts]);
 
-    // Колонки
-    const columns = [
-        { name: "Интервал", selector: (row: any) => row["Интервал"], sortable: true },
-        ...charts.map((chart) => ({
-            name: chart.label,
-            selector: (row: any) => row[chart.label],
-            sortable: true,
-        })),
-    ];
+    const columns = useMemo(() => {
+        return [
+            { name: "Интервал", selector: (row: any) => row["Интервал"], sortable: true },
+            ...charts.map((chart) => ({
+                name: chart.label,
+                selector: (row: any) => row[chart.label],
+                sortable: true,
+            })),
+        ];
+    }, [charts]);
 
-    // CSV
-    const csvHeaders = columns.map(col => ({ label: col.name, key: col.name }));
+    const csvHeaders = columns.map((col) => ({ label: col.name as string, key: col.name as string }));
     const csvData = rows;
 
-    // Excel
     const exportToExcel = () => {
         const worksheet = XLSX.utils.json_to_sheet(rows);
         const workbook = XLSX.utils.book_new();
@@ -50,35 +54,31 @@ export const ChartDataTable: React.FC<Props> = ({ charts }) => {
         saveAs(data, "chart-data.xlsx");
     };
 
-    // PDF
     const exportToPDF = () => {
         const doc = new jsPDF();
-        const tableColumn = columns.map((col) => col.name);
-        const tableRows = rows.map((row) => columns.map((col) => row[col.name]));
-
-        autoTable(doc, {
-            head: [tableColumn],
-            body: tableRows,
-        });
+        const tableColumn = columns.map((col: any) => col.name);
+        const tableRows = rows.map((row) => columns.map((col: any) => row[col.name]));
+        autoTable(doc, { head: [tableColumn], body: tableRows });
         doc.save("chart-data.pdf");
     };
+    if (!charts.length) return null;
 
     return (
         <div style={{ marginTop: 16 }}>
             <div style={{ marginBottom: 8, display: "flex", gap: 8 }}>
-                <CSVLink
-                    data={csvData}
-                    headers={csvHeaders}
-                    filename="chart-data.csv"
-                    className="btn btn-outline-secondary"
-                >
+                <CSVLink data={csvData} headers={csvHeaders} filename="chart-data.csv" className="btn btn-outline-secondary">
                     CSV
                 </CSVLink>
-                <button onClick={exportToExcel} className="btn btn-outline-secondary">Excel</button>
-                <button onClick={exportToPDF} className="btn btn-outline-secondary">PDF</button>
+                <button onClick={exportToExcel} className="btn btn-outline-secondary">
+                    Excel
+                </button>
+                <button onClick={exportToPDF} className="btn btn-outline-secondary">
+                    PDF
+                </button>
             </div>
+
             <DataTable
-                columns={columns}
+                columns={columns as any}
                 data={rows}
                 pagination
                 dense

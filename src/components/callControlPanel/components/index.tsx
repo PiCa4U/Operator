@@ -30,6 +30,21 @@ function parseMapConfig(raw: unknown): { mapping: MapFieldMapping; defaults: Map
 
 const TEXTAREA_MAX_HEIGHT = 360;
 
+const MAP_KEYS = [
+    "lat",
+    "lon",
+    "country",
+    "state",
+    "city",
+    "city_district",
+    "road",
+    "house_number",
+    "postcode",
+    "q",
+] as const;
+
+type MapKey = typeof MAP_KEYS[number];
+
 function autosizeTextarea(el: HTMLTextAreaElement | null) {
     if (!el) return;
     el.style.height = "auto";
@@ -156,6 +171,53 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
         width: 120,
         flex: "0 0 auto",
     };
+
+    useEffect(() => {
+        let changed = false;
+        const next = { ...fieldValues };
+
+        for (const param of visibleParams) {
+            if (param.field_type !== "map") continue;
+
+            const { mapping, defaults } = parseMapConfig(param.field_vals);
+            const isDefaultsOnly = !mapping || Object.keys(mapping).length === 0;
+            if (!isDefaultsOnly) continue;
+
+            const storeFieldId = param.field_id;
+
+            let prevObj: Record<string, string> = {};
+            const rawPrev = String(next[storeFieldId] || "").trim();
+            if (
+                (rawPrev.startsWith("{") && rawPrev.endsWith("}")) ||
+                (rawPrev.startsWith("[") && rawPrev.endsWith("]"))
+            ) {
+                try {
+                    const p = JSON.parse(rawPrev);
+                    if (p && typeof p === "object") prevObj = p as any;
+                } catch {}
+            }
+
+            const full: Record<string, string> = {};
+            for (const k of MAP_KEYS) {
+                full[k] = String((prevObj as any)[k] ?? (defaults as any)?.[k] ?? "");
+            }
+
+            const json = JSON.stringify(full);
+
+            // не перетираем пустотой, если вообще ничего нет
+            const hasAny = Object.values(full).some(v => String(v).trim() !== "");
+            if (hasAny && json !== rawPrev) {
+                next[storeFieldId] = json;
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            setFieldValues(next);
+            onChange?.(next);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [visibleParams]);
 
     function ReadonlyTextareaView({ value }: { value: string }) {
         const v = normalizeNewlines(value);
@@ -305,8 +367,8 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                             const initial: Record<string, string> = {};
                             Object.entries(mappingForChild).forEach(([key, fid]) => {
                                 if (!fid) return;
-                                const fromForm = fieldValues[fid];                   // явные поля (если mapping задан)
-                                const fromSaved = isDefaultsOnly ? String(savedObj[key] ?? "") : ""; // из JSON
+                                const fromForm = fieldValues[fid];
+                                const fromSaved = isDefaultsOnly ? String(savedObj[key] ?? "") : "";
                                 const fromDef  = (defaults as any)?.[key];
                                 initial[fid] = (fromForm ?? fromSaved ?? fromDef ?? "") as string;
                             });
@@ -328,12 +390,32 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                         compact={compact}
                                         onPatch={(patch) => {
                                             if (isDefaultsOnly) {
-                                                const result: Record<string,string> = {};
-                                                for (const [fid, v] of Object.entries(patch)) {
-                                                    const k = keyByFid[fid];
-                                                    if (k) result[k] = String(v ?? "");
+                                                // 1) читаем уже сохранённый объект из storeFieldId (если был)
+                                                let prevObj: Record<string, string> = {};
+                                                const rawPrev = String(fieldValues[storeFieldId] || "").trim();
+                                                if (
+                                                    (rawPrev.startsWith("{") && rawPrev.endsWith("}")) ||
+                                                    (rawPrev.startsWith("[") && rawPrev.endsWith("]"))
+                                                ) {
+                                                    try {
+                                                        const p = JSON.parse(rawPrev);
+                                                        if (p && typeof p === "object") prevObj = p as any;
+                                                    } catch {}
                                                 }
-                                                const json = JSON.stringify(result);
+
+                                                // 2) собираем ПОЛНЫЙ объект со всеми ключами (пустые строки + defaults)
+                                                const full: Record<string, string> = {};
+                                                for (const k of MAP_KEYS) {
+                                                    full[k] = String((prevObj as any)[k] ?? (defaults as any)?.[k] ?? "");
+                                                }
+
+                                                // 3) накатываем patch (обычно он частичный — lat/lon и т.п.)
+                                                for (const [fid, v] of Object.entries(patch)) {
+                                                    const k = keyByFid[fid] as MapKey | undefined;
+                                                    if (k) full[k] = String(v ?? "");
+                                                }
+
+                                                const json = JSON.stringify(full);
 
                                                 const nextAll = { ...fieldValues, [storeFieldId]: json };
                                                 setFieldValues(nextAll);

@@ -331,17 +331,17 @@ export default function ItsmGuidScreen() {
         let alive = true;
         setChatError(null);
         (async () => {
-            try {
-                const rows = await fetchChatHistory(activeGuid);
-                if (!alive) return;
-                setHistory(rows.map(mapRow));
-                setLive([]);
-                setOptimistic([]);
-            } catch {
-                if (!alive) return;
-                setChatError("Не удалось загрузить историю чата");
-                setHistory([]); setLive([]); setOptimistic([]);
-            }
+            // try {
+            //     const rows = await fetchChatHistory(activeGuid);
+            //     if (!alive) return;
+            //     setHistory(rows.map(mapRow));
+            //     setLive([]);
+            //     setOptimistic([]);
+            // } catch {
+            //     if (!alive) return;
+            //     setChatError("Не удалось загрузить историю чата");
+            //     setHistory([]); setLive([]); setOptimistic([]);
+            // }
         })();
         return () => { alive = false; };
     }, [activeGuid]);
@@ -460,13 +460,13 @@ export default function ItsmGuidScreen() {
         },
 
         // входящие статусы прочтения — только отмечаем локально, БЕЗ дополнительных эмитов
-        onRead: (ids: number[]) => {
-            if (!ids?.length) return;
-            setHistory(prev => markReadMany(prev, ids));
-            setLive(prev => markReadMany(prev, ids));
-            setOptimistic(prev => markReadMany(prev, ids));
-            if (activeGuid) void refreshUnreadCounts([activeGuid], hasSip, loginForUnread);
-        },
+        // onRead: (ids: number[]) => {
+        //     if (!ids?.length) return;
+        //     setHistory(prev => markReadMany(prev, ids));
+        //     setLive(prev => markReadMany(prev, ids));
+        //     setOptimistic(prev => markReadMany(prev, ids));
+        //     if (activeGuid) void refreshUnreadCounts([activeGuid], hasSip, loginForUnread);
+        // },
 
         onUploaded: ({ tempId, filenames }) => {
             setOptimistic(prev =>

@@ -6,7 +6,13 @@ import CallsDashboard from '../callsDashboard';
 import ScriptPanel from '../scriptPanel';
 import { socket } from "../../socket";
 import { getCookies, makeId } from "../../utils";
-import {makeSelectFullProjectPool, setActiveCalls, setFsStatus, setUserStatuses} from '../../redux/operatorSlice';
+import {
+    makeSelectFullProjectPool,
+    setActiveCalls,
+    setFsStatus,
+    setInterCalls,
+    setUserStatuses
+} from '../../redux/operatorSlice';
 import {RootState, store} from '../../redux/store';
 import TasksDashboard, {ApiRow, ColumnCfgWithSearch, OptionType, Preset} from "../taskDashboard";
 import stylesButton from '../callControlPanel/index.module.css';
@@ -36,6 +42,30 @@ const MemoCallControlPanel = React.memo(CallControlPanel);
 
 const ITSM_SPLIT_KEY = "itsm:chat_call_split:v1";
 
+function is4Digits(val: any) {
+    return /^\d{4}$/.test(String(val ?? "").trim());
+}
+function hasLetters(val: any) {
+    return /[a-z]/i.test(String(val ?? "").trim());
+}
+
+function isInterWebRtcLeg(c: any) {
+    const dest = String(c?.dest ?? "").trim();
+    return !!dest && hasLetters(dest);
+}
+
+function isInterOperatorLeg(c: any) {
+    const cid = String(c?.cid_num ?? "").trim();
+    const dest = String(c?.dest ?? "").trim();
+    return is4Digits(cid) && is4Digits(dest);
+}
+
+function splitFsCalls(all: any[]) {
+    const inter = all.filter(isInterOperatorLeg);
+    const rest  = all.filter(c => !isInterOperatorLeg(c) && !isInterWebRtcLeg(c));
+    return { interCalls: inter, activeCalls: rest };
+}
+
 function clamp(n: number, min: number, max: number) {
     return Math.min(max, Math.max(min, n));
 }
@@ -57,7 +87,7 @@ function mapRow(r: RawChatMessage): UiMessage {
         status: "sent",
         isRead: false,
 
-        message_type: (r.message_type ?? "msg") as any,
+        message_type: (r.message_type ?? "message") as any,
     };
 }
 
@@ -146,6 +176,70 @@ function dedupeByKey(list: UiMessage[]) {
 
 type ReadStatus = { watched: string[]; responsible_watch: boolean };
 type ReadMap = Record<string, ReadStatus>;
+
+function normalizeLogins(val: any): string[] {
+    if (!val) return [];
+    if (Array.isArray(val)) return val.map(String).map(s => s.trim()).filter(Boolean);
+
+    if (typeof val === "string") {
+        const t = val.trim();
+        if (!t) return [];
+        return t.includes(",") ? t.split(",").map(s => s.trim()).filter(Boolean) : [t];
+    }
+
+    // иногда может прилетать объект-словарь { "1000": true, "client": true }
+    if (typeof val === "object") {
+        return Object.keys(val).filter(k => Boolean((val as any)[k]));
+    }
+
+    return [String(val)].map(s => s.trim()).filter(Boolean);
+}
+
+function extractReadStatusFromRaw(r: any): ReadStatus | null {
+    if (!r || typeof r !== "object") return null;
+
+    // самый вероятный вариант — вложенный объект статуса
+    const obj =
+        r.watch_status ??
+        r.read_status ??
+        r.readStatus ??
+        r.watch ??
+        r.read ??
+        null;
+
+    if (obj && typeof obj === "object") {
+        const watched = normalizeLogins(
+            (obj as any).watched ?? (obj as any).watchers ?? (obj as any).read_by ?? (obj as any).readers ?? (obj as any).seen_by
+        );
+        const responsible = Boolean((obj as any).responsible_watch ?? (obj as any).responsibleWatch ?? (obj as any).responsible);
+        if (watched.length || responsible) return { watched, responsible_watch: responsible };
+    }
+
+    const watched = normalizeLogins(r.watched ?? r.watchers ?? r.read_by ?? r.readers ?? r.seen_by ?? r.seenBy);
+    const responsible = Boolean(r.responsible_watch ?? r.responsibleWatch ?? false);
+    if (watched.length || responsible) return { watched, responsible_watch: responsible };
+
+    return null;
+}
+
+function mergeReadMap(prev: ReadMap, ids: number[], readerLogin?: string | null): ReadMap {
+    const who = String(readerLogin ?? "").trim();
+    if (!who) return prev;
+
+    let changed = false;
+    const next: ReadMap = { ...prev };
+
+    for (const id of ids) {
+        const key = String(id);
+        const cur = next[key] ?? { watched: [], responsible_watch: false };
+        if (!cur.watched.includes(who)) {
+            next[key] = { ...cur, watched: [...cur.watched, who] };
+            changed = true;
+        }
+    }
+
+    return changed ? next : prev;
+}
 
 export interface ModuleData {
     button_name: string | null;
@@ -291,7 +385,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const [appliedServerFilters, setAppliedServerFilters] = useState<Record<string, ServerAppliedByCol>>({});
     const [localFilterDraft, setLocalFilterDraft] = useState<Record<string, string>>({});
     const [serverFilterDraft, setServerFilterDraft] = useState<Record<string, ServerDraftByCol>>({});
-    const [unreadOnly, setUnreadOnly] = useState(false); // если нужно сохранять этот фильтр
+    const [unreadOnly, setUnreadOnly] = useState(false);
 
     const { start: defaultStart, end: defaultEnd } = getInitialDateRange();
     const [startDate, setStartDate] = useState<Date | null>(defaultStart);
@@ -314,6 +408,129 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         const raw = Number(localStorage.getItem(ITSM_SPLIT_KEY));
         return Number.isFinite(raw) ? clamp(raw, 0.25, 0.75) : 0.5;
     });
+    const { sessionKey } = store.getState().operator
+
+    const {
+        sipLogin   = '',
+        worker     = '',
+        glagolParent = ''
+    } = store.getState().credentials;
+
+    const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
+    const activeCalls: any[] = useMemo(() => {
+        return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
+    }, [rawActiveCalls]);
+
+    const rawInterCalls = useSelector((state: RootState) => (state.operator as any).interCalls);
+    const interCalls: any[] = useMemo(() => {
+        return Array.isArray(rawInterCalls) ? rawInterCalls : Object.values(rawInterCalls || {});
+    }, [rawInterCalls]);
+
+    function pickPrimaryInterCall(list: any[]) {
+        const arr = (list || []).filter(Boolean);
+        if (!arr.length) return null;
+
+        const weight = (c: any) => {
+            const st = String(c?.callstate ?? "").toUpperCase();
+            if (st === "ACTIVE") return 30;
+            if (st === "EARLY") return 20;
+            return 10;
+        };
+        const epoch = (c: any) => Number(c?.created_epoch ?? 0) || 0;
+
+        return [...arr].sort((a, b) => {
+            const dw = weight(b) - weight(a);
+            if (dw) return dw;
+            return epoch(b) - epoch(a);
+        })[0];
+    }
+
+    const interCall = useMemo(() => pickPrimaryInterCall(interCalls), [interCalls]);
+
+    const hasExternalActive = activeCalls.length > 0 || activeCall || postActive;
+    const showInterOverlay = !!interCall && !hasExternalActive;
+    const showInterInCardHeader = !!interCall && hasExternalActive;
+
+
+    const hangupInterCall = React.useCallback((uuid: string) => {
+        if (!uuid) return;
+        if (!sessionKey || !worker || !sipLogin) return;
+        socket.emit('sofia_operations', {
+            worker,
+            sip_login: sipLogin,
+            session_key: sessionKey,
+            uuid: uuid,
+            action: 'uuid_break',
+            idle_set: false
+        });
+    }, [sessionKey, worker, sipLogin]);
+
+
+    function interStateLabel(c: any) {
+        const st = String(c?.callstate ?? "").toUpperCase();
+        if (st === "ACTIVE") return "разговор";
+        if (st === "EARLY")  return "звонит";
+        return st || "статус неизвестен";
+    }
+
+    function interPeerText(c: any, myLogin: string, dict: Record<string, string>) {
+        const from = String(c?.cid_num ?? "").trim();
+        const to   = String(c?.dest ?? "").trim();
+
+        const pretty = (ext: string) => {
+            try {
+                // у тебя уже импортирован formatOperator + есть operatorDictStableRef
+                return formatOperator(ext, dict ) || ext;
+            } catch {
+                return ext;
+            }
+        };
+
+        if (to === myLogin) return `Внутренний вызов от ${pretty(from)} → вам (${myLogin})`;
+        if (from === myLogin) return `Внутренний вызов на ${pretty(to)} (от вас ${myLogin})`;
+        return `Внутренний вызов: ${pretty(from)} → ${pretty(to)}`;
+    }
+
+    const InterCallOverlay: React.FC<{ call: any; onHangup: (uuid: string) => void }> = ({ call, onHangup }) => {
+        return (
+            <div
+                style={{
+                    position: "fixed",
+                    top: 12,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    zIndex: 99999,
+                    width: "min(920px, calc(100% - 24px))",
+                    boxShadow: "0 8px 22px rgba(0,0,0,0.18)",
+                    borderRadius: 12,
+                    background: "#fff",
+                    border: "1px solid rgba(0,0,0,0.1)",
+                    padding: "10px 12px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                }}
+            >
+                <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, lineHeight: 1.2 }}>
+                        {interPeerText(call, sipLogin, operatorDictStableRef.current)}
+                    </div>
+                    <div style={{ opacity: 0.75, fontSize: 13, marginTop: 2 }}>
+                        Статус: {interStateLabel(call)} · uuid: {String(call?.uuid ?? "").slice(0, 8)}…
+                    </div>
+                </div>
+
+                <button
+                    className="btn btn-outline-danger"
+                    onClick={() => onHangup(String(call?.uuid ?? ""))}
+                >
+                    Сбросить
+                </button>
+            </div>
+        );
+    };
+
 
     useEffect(() => {
         try {
@@ -357,11 +574,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const [phonesData, setPhonesData] = useState<any[]>([])
     const [openedPhones, setOpenedPhones] = useState<any[]>([])
     const [GroupIDs, setGroupIDs] = useState<any[]>([])
-    const {
-        sipLogin   = '',
-        worker     = '',
-        glagolParent = ''
-    } = store.getState().credentials;
     const { data: operatorDict = {} } = useOperatorsDirectory();
     const operatorDictStableRef = useRef(operatorDict);
     useEffect(() => {
@@ -375,7 +587,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
     const momoProjectRepo = useRef<boolean>(false)
     const startModulesRanRef = useRef<boolean>(false);
-    const { sessionKey } = store.getState().operator
 
     useEffect(() => {
         // только для express звонков
@@ -439,8 +650,14 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const [error, setError] = useState<string | null>(null);
     const [data, setData] = useState<any[]>([]);
     const sentReadRef = useRef<Set<number>>(new Set());
-    const queueRef = useRef<Set<number>>(new Set());
+    const queueByTypeRef = useRef<Record<string, Set<number>>>({});
     const timerRef = useRef<number | null>(null);
+
+    const normalizeReadKey = (t?: string | null) => {
+        const s = String(t ?? "message").trim().toLowerCase();
+        if (s === "msg" || s === "chat") return "message";
+        return s || "message";
+    };
 
     const messages = useMemo(() => {
         const merged = [...history, ...live, ...optimistic];
@@ -521,23 +738,57 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
     useEffect(() => {
         if (!activeGuid) return;
+
+        // ✅ при смене чата сбрасываем “что уже отправляли как read”
+        sentReadRef.current = new Set();
+        queueByTypeRef.current = {};
+        if (timerRef.current) {
+            clearTimeout(timerRef.current);
+            timerRef.current = null;
+        }
+
         let alive = true;
         setChatError(null);
+
         (async () => {
             try {
-                const rows = await fetchChatHistory(activeGuid);
+                const rawRows = await fetchChatHistory(activeGuid, sessionKey);
                 if (!alive) return;
-                setHistory(rows.map(mapRow));
+
+                const myLogin = viewer.login ?? "client";
+                const nextReadMap: ReadMap = {};
+                const mapped = rawRows.map((r: any) => {
+                    const ui = mapRow(r);
+
+                    const st = extractReadStatusFromRaw(r);
+                    if (st) nextReadMap[String(ui.id)] = st;
+
+                    // ✅ isRead = “прочитал ли Я” (а не кто-то другой)
+                    if (st?.watched?.length) {
+                        ui.isRead = st.watched.includes(myLogin);
+                    } else {
+                        ui.isRead = false;
+                    }
+
+                    return ui;
+                });
+
+                setHistory(mapped);
+                setReadMap(nextReadMap);
                 setLive([]);
                 setOptimistic([]);
             } catch {
                 if (!alive) return;
                 setChatError("Не удалось загрузить историю чата");
-                setHistory([]); setLive([]); setOptimistic([]);
+                setHistory([]);
+                setReadMap({});
+                setLive([]);
+                setOptimistic([]);
             }
         })();
+
         return () => { alive = false; };
-    }, [activeGuid]);
+    }, [activeGuid, sessionKey, viewer.login]);
 
 
     useEffect(() => {
@@ -623,7 +874,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         }
     }
 
-    const { connected, error: socketErr, send, markManyRead } = useChatSocket({
+    const { connected, error: socketErr, send, markManyReadByType } = useChatSocket({
         guid: activeGuid,
         login: sipLogin,
         glagol_parent: glagolParent,
@@ -639,12 +890,17 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             );
         },
 
-        onRead: (ids: number[]) => {
+        onRead: ({ ids, login: who }: { ids: number[]; login?: string | null }) => {
             if (!ids?.length) return;
-            setHistory(prev => markReadMany(prev, ids));
-            setLive(prev => markReadMany(prev, ids));
-            setOptimistic(prev => markReadMany(prev, ids));
-            // if (activeGuid) void refreshUnreadCounts([activeGuid], true, sipLogin);
+
+            setReadMap(prev => mergeReadMap(prev, ids, who));
+
+            const my = viewer.login ?? "client";
+            if (!who || String(who) === my) {
+                setHistory(prev => markReadMany(prev, ids));
+                setLive(prev => markReadMany(prev, ids));
+                setOptimistic(prev => markReadMany(prev, ids));
+            }
         },
 
         onUploaded: ({ tempId, filenames }) => {
@@ -723,6 +979,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     useEffect(() => {
         if (!isOwner || !enabled) {
             dispatch(setActiveCalls([]));
+            dispatch(setInterCalls([]));
             setPostActive(false);
         }
     }, [isOwner, enabled, dispatch]);
@@ -735,36 +992,61 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             return m.authorRole !== "client";
         };
 
-        const idsToMark: number[] = [];
+        const byType: Record<string, number[]> = {};
+        const flat: number[] = [];
+
         for (const m of messages) {
             const numId = Number(m.id);
             if (!Number.isFinite(numId)) continue;
             if (!isIncomingForMe(m)) continue;
             if (m.isRead) continue;
             if (sentReadRef.current.has(numId)) continue;
-            idsToMark.push(numId);
+
+            const key = normalizeReadKey(m.message_type ?? "message");
+            (byType[key] ||= []).push(numId);
+            flat.push(numId);
         }
-        if (!idsToMark.length) return;
 
-        setHistory(prev => markReadMany(prev, idsToMark));
-        setLive(prev => markReadMany(prev, idsToMark));
-        setOptimistic(prev => markReadMany(prev, idsToMark));
+        if (!flat.length) return;
 
-        enqueueReads(idsToMark);
+        // локально отмечаем read по ids (как у тебя было)
+        setHistory(prev => markReadMany(prev, flat));
+        setLive(prev => markReadMany(prev, flat));
+        setOptimistic(prev => markReadMany(prev, flat));
+
+        enqueueReadsByType(byType);
     }, [connected, messages, sipLogin]);
 
     const flushReads = () => {
-        if (queueRef.current.size === 0) return;
-        const ids = Array.from(queueRef.current);
-        queueRef.current.clear();
-        markManyRead(ids);
-        ids.forEach(id => sentReadRef.current.add(id));
+        const byType: Record<string, number[]> = {};
+        const flat: number[] = [];
+
+        for (const [t, set] of Object.entries(queueByTypeRef.current)) {
+            if (!set.size) continue;
+            const arr = Array.from(set);
+            set.clear();
+            byType[t] = arr;
+            flat.push(...arr);
+        }
+
+        const distinctFlat = Array.from(new Set(flat));
+        if (!distinctFlat.length) return;
+
+        markManyReadByType(byType);
+        distinctFlat.forEach((id) => sentReadRef.current.add(id));
     };
 
-    const enqueueReads = (ids: number[]) => {
-        ids.forEach(id => {
-            if (!sentReadRef.current.has(id)) queueRef.current.add(id);
-        });
+    const enqueueReadsByType = (byType: Record<string, number[]>) => {
+        for (const [t0, ids] of Object.entries(byType)) {
+            const t = normalizeReadKey(t0);
+            if (!Array.isArray(ids) || !ids.length) continue;
+
+            const set = (queueByTypeRef.current[t] ||= new Set<number>());
+            for (const id of ids) {
+                if (!sentReadRef.current.has(id)) set.add(id);
+            }
+        }
+
         if (timerRef.current) return;
         timerRef.current = window.setTimeout(() => {
             timerRef.current = null;
@@ -823,32 +1105,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     );
 
     useEffect(() => {
-        const ids = messages.map(m => Number(m.id)).filter(n => Number.isFinite(n)) as number[];
-        if (!ids.length) { setReadMap({}); return; }
-
-        let cancelled = false;
-        const t = setTimeout(async () => {
-            try {
-                const query = ids.map(id => `ids=${encodeURIComponent(id)}`).join("&");
-                const { data } = await chatApi.get(`/api/v1/chat/messages/status?${query}`);
-                if (cancelled) return;
-
-                const map: ReadMap = {};
-                Object.entries<any>(data || {}).forEach(([k, v]) => {
-                    if (k === "status") return;
-                    if (v && typeof v === "object") map[k] = v as ReadStatus;
-                });
-                setReadMap(map);
-            } catch (e) {
-                setReadMap({});
-                console.warn("read-status fetch failed", e);
-            }
-        }, 200);
-
-        return () => { clearTimeout(t); cancelled = true; };
-    }, [messages, activeGuid]);
-
-    useEffect(() => {
         setSelectedStatus(null)
     },[selectedPreset])
     function getInitialDateRange(): { start: Date; end: Date } {
@@ -901,12 +1157,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         window.location.href = "https://my.glagol.ai/login_work/";
 };
 
-    // useEffect(() => {
-    //     socket.on('logout', handleLogout);
-    //     return () => {
-    //         socket.off('logout', handleLogout);
-    //     };
-    // }, []);
+    useEffect(() => {
+        socket.on('logout', handleLogout);
+        return () => {
+            socket.off('logout', handleLogout);
+        };
+    }, []);
 
     useEffect(() => {
         const now = new Date().toISOString();
@@ -993,10 +1249,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         }
     });
 
-    const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
-    const activeCalls: any[] = useMemo(() => {
-        return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
-    }, [rawActiveCalls]);
 
     function cleanProjectName(name?: string | null): string {
         const _name = name ?? '';
@@ -1131,20 +1383,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         } catch {}
     }, [fullWidthCard]);
 
-
-    useEffect(() => {
-        // TODO fix check_express
-        // if (activeCalls.length > 0) {
-        //     socket.emit('check_express', {
-        //         phone,
-        //         project_name,
-        //         session_key,
-        //         worker
-        //     })
-        // }
-    },[activeCalls])
-
-
     useEffect(()=> {
         if (!activeCall && !postActive && (modules.length || Object.keys(monoModules).length) && !openedPhones.length && !selectedCall) {
             setModules([])
@@ -1186,26 +1424,100 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             });
         }
     },[activeCall, postActive, activeCalls, sessionKey])
+
     useEffect(() => {
         const first = activeCalls && activeCalls.length ? activeCalls[0] : {};
 
         if (activeCalls.length > 0 && !activeCall && (first?.application || first?.b_callstate === "ACTIVE")) {
+            if (first.direction === "outbound") {
+                socket.emit("get_data", {
+                    worker,
+                    session_key: sessionKey,
+                    sip_login: sipLogin,
+                })
+            }
             setActiveCall(true);
         } else if (!activeCalls.length && activeCall) {
             setActiveCall(false);
-            // if (openedPhones) {
-            //     const ids = openedPhones?.map((item) => item.id)
-            //     socket.emit("group_lock_off", {
-            //         ids,
-            //         session_key: sessionKey,
-            //         worker
-            //     })
-            // }
-            // setOutboundCall(false);
             if (!isOwner || !enabled) return;
             setPostActive(true);
         }
     }, [activeCall, activeCalls]);
+
+    function normalizeGetDataRows(payload: any) {
+        const arr =
+            Array.isArray(payload) ? payload :
+                Array.isArray(payload?.data) ? payload.data :
+                    Array.isArray(payload?.result) ? payload.result :
+                        [];
+
+        return arr
+            .filter(Boolean)
+            .map((r: any, i: number) => {
+                const id = Number(r?.id ?? r?.phone_id ?? r?.contact_id ?? (i + 1));
+                const phone = String(r?.phone ?? r?.contact_info?.phone ?? r?.b_line_num ?? r?.a_line_num ?? "");
+                const project = String(r?.project ?? r?.project_name ?? r?.contact_info?.project ?? r?.projectName ?? "");
+                const guid = r?.guid ?? r?.contact_info?.guid ?? null;
+
+                return {
+                    ...r,
+                    id,
+                    phone,
+                    project,
+                    contact_info: r?.contact_info ?? {},
+                    guid,
+                    storage: Array.isArray(r?.storage) ? r.storage : [],
+                };
+            });
+    }
+
+    function sigByIds(rows: any[]) {
+        const ids = (rows ?? [])
+            .map((x: any) => Number(x?.id))
+            .filter((n: number) => Number.isFinite(n))
+            .sort((a, b) => a - b);
+        return ids.join(",");
+    }
+
+    const lastGetDataSigRef = useRef<string>("");
+
+    useEffect(() => {
+        if (!sessionKey || !worker || !sipLogin) return;
+
+        const onGetData = (payload: any) => {
+            const rows = normalizeGetDataRows(payload);
+            if (!rows.length) return;
+
+            const sig = sigByIds(rows);
+            if (sig && sig === lastGetDataSigRef.current) return;
+            lastGetDataSigRef.current = sig;
+
+            setShowTasksDashboard(true);
+
+            setPhonesData(rows);
+
+            const ids = rows
+                .map((r: any) => Number(r?.id))
+                .filter((n: number) => Number.isFinite(n));
+
+            setOpenedGroup(ids);
+            setGroupIDs(ids.length ? [ids] : []);
+
+            setOpenedPhones(rows);
+
+            const g = rows.find((r: any) => r?.guid)?.guid ?? rows.find((r: any) => r?.contact_info?.guid)?.contact_info?.guid;
+            if (g) setActiveGuid(String(g));
+            if (managerPanel) {
+                setManagerPanel(false)
+            }
+            setOutActivePhoneData(rows[0] ?? null);
+        };
+
+        socket.on("get_data", onGetData);
+        return () => {
+            socket.off("get_data", onGetData);
+        };
+    }, [sessionKey, worker, sipLogin]);
 
     useEffect(()=> {
         const getOuboundProject = (msg:any) => {
@@ -1220,18 +1532,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             socket.off('get_out_start', getOuboundProject);
         };
     },[expressCall])
-    // useEffect(()=> {
-    //     if (postActive && sessionKey) {
-    //         socket.emit('get_fs_report', {
-    //             session_key: sessionKey,
-    //             sip_login: sipLogin,
-    //             level: 0,
-    //             date_range: "",
-    //             phone_search: "",
-    //         });
-    //         setCurrentPage(1)
-    //     }
-    // },[showScriptPanel, postActive, sessionKey])
 
     useEffect(() => {
         const handleFsDiaDes = (msg: any) => {
@@ -1451,11 +1751,14 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 (item) => item?.application !== "conference"
             );
 
-            const sig = fsCallsSig(noConferenceArray);
+            const { interCalls, activeCalls } = splitFsCalls(noConferenceArray);
+
+            const sig = fsCallsSig(activeCalls) + "||" + fsCallsSig(interCalls);
             if (sig === lastFsCallsSigRef.current) return;
             lastFsCallsSigRef.current = sig;
 
-            dispatch(setActiveCalls(noConferenceArray));
+            dispatch(setInterCalls(interCalls));
+            dispatch(setActiveCalls(activeCalls));
         };
 
         const handleOtherUsers = (msg: any) => {
@@ -1498,6 +1801,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 session_key: sessionKey,
                 worker,
                 phone: activeCalls[0].cid_num,
+                uuid: activeCalls[0].direction === "inbound" ? activeCalls[0].uuid : activeCalls[0].b_uuid
             };
             socket.emit('get_callcenter_queues', requestParams);
         }
@@ -1539,6 +1843,9 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
     return (
         <div className="container-fluid">
+            {showInterOverlay && interCall && (
+                <InterCallOverlay call={interCall} onHangup={hangupInterCall} />
+            )}
             {enabled && (
                 <>
                     {/* Аудио для удалённого потока */}
@@ -1793,6 +2100,10 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                             phoneID={phoneID}
                                             setPhoneID={setPhoneID}
                                             checkBox={activeGuid}
+                                            interCall={interCall}
+                                            showInterCallHeader={showInterInCardHeader}
+                                            onHangupInterCall={hangupInterCall}
+
                                         />
                                     )}
                                 </div>
@@ -1910,6 +2221,10 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                         phoneID={phoneID}
                                         setPhoneID={setPhoneID}
                                         checkBox={activeGuid}
+                                        interCall={interCall}
+                                        showInterCallHeader={showInterInCardHeader}
+                                        onHangupInterCall={hangupInterCall}
+
                                     />
                                 )}
                             </div>
@@ -1974,6 +2289,10 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                 monoModules={monoModules}
                                 setMonoModules={setMonoModules}
                                 expressCall={expressCall}
+                                interCall={interCall}
+                                showInterCallHeader={showInterInCardHeader}
+                                onHangupInterCall={hangupInterCall}
+
                             />
                         )}
                     </div>

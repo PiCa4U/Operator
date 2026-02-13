@@ -47,54 +47,45 @@ function safeSetSrcObject(ref: AnyAudioRef, val: MediaStream | null) {
 }
 async function safePlay(ref: AnyAudioRef) { try { await ref.current?.play(); } catch {} }
 
-const filterG711: SessionDescriptionHandlerModifier = (desc) => {
+const filterG711: SessionDescriptionHandlerModifier = desc => {
+    if (!desc.sdp) return Promise.resolve(desc);
+    const keep = ['0', '8', '101'];
+    const lines = desc.sdp.split(/\r?\n/);
+    const mIdx = lines.findIndex(l => l.startsWith('m=audio'));
+    if (mIdx !== -1) {
+        const parts = lines[mIdx].split(' ');
+        lines[mIdx] = [...parts.slice(0, 3), ...parts.slice(3).filter(pt => keep.includes(pt))].join(' ');
+    }
+    desc.sdp = lines
+        .filter(l => {
+            const m = l.match(/^a=(?:rtpmap|fmtp):([0-9]+)/);
+            return !m || keep.includes(m[1]);
+        })
+        .join('\r\n');
+    return Promise.resolve(desc);
+};
+
+const preferG711: SessionDescriptionHandlerModifier = (desc) => {
     if (!desc.sdp) return Promise.resolve(desc);
 
-    const lines = desc.sdp.split(/\r\n/);
+    const lines = desc.sdp.split(/\r\n|\n/);
 
-    // 1) собираем payload types по rtpmap
-    const keepCodecNames = new Set(["PCMU", "PCMA", "telephone-event"]);
-    const keepPts = new Set<string>();
+    const mIdx = lines.findIndex(l => l.startsWith("m=audio "));
+    if (mIdx === -1) return Promise.resolve(desc);
 
-    for (const l of lines) {
-        const m = l.match(/^a=rtpmap:(\d+)\s+([A-Za-z0-9\-]+)/i);
-        if (!m) continue;
-        const pt = m[1];
-        const codec = m[2];
-        if (keepCodecNames.has(codec)) keepPts.add(pt);
-    }
+    const m = lines[mIdx].trim().split(/\s+/);
+    const header = m.slice(0, 3);
+    const pts = m.slice(3);
 
-    // На всякий случай держим статические 0/8 даже если rtpmap не распарсился
-    keepPts.add("0");
-    keepPts.add("8");
+    // хотим, чтобы 0 и 8 (PCMU/PCMA) шли первыми, но остальные оставляем
+    const preferred = ["0", "8"];
+    const newPts = [
+        ...preferred.filter(p => pts.includes(p)),
+        ...pts.filter(p => !preferred.includes(p)),
+    ];
 
-    // если вдруг ничего не нашли — не трогаем SDP
-    if (keepPts.size === 0) return Promise.resolve(desc);
-
-    // 2) правим m=audio
-    const mIdx = lines.findIndex((l) => l.startsWith("m=audio"));
-    if (mIdx !== -1) {
-        const parts = lines[mIdx].trim().split(/\s+/);
-        const head = parts.slice(0, 3);
-        const pts = parts.slice(3);
-        const kept = pts.filter((pt) => keepPts.has(pt));
-        lines[mIdx] = [...head, ...kept].join(" ");
-    }
-
-    // 3) вычищаем строки, которые ссылаются на выкинутые PT
-    const cleaned = lines.filter((l) => {
-        // rtpmap/fmtp/rtcp-fb:PT ...
-        let m = l.match(/^a=(rtpmap|fmtp|rtcp-fb):(\d+)\b/i);
-        if (m) return keepPts.has(m[2]);
-
-        // rtcp-fb:* ... — оставляем (это валидно)
-        if (/^a=rtcp-fb:\*\b/i.test(l)) return true;
-
-        return true;
-    });
-
-    // 4) собираем обратно
-    desc.sdp = cleaned.join("\r\n");
+    lines[mIdx] = [...header, ...newPts].join(" ");
+    desc.sdp = lines.join("\r\n");
     if (!desc.sdp.endsWith("\r\n")) desc.sdp += "\r\n";
 
     return Promise.resolve(desc);
@@ -156,6 +147,63 @@ export function useSipUA(config: {
     const pingTimerRef         = useRef<ReturnType<typeof setInterval> | null>(null);
     const regListenerRef       = useRef<((st: RegistererState)=>void) | null>(null);
     const transportListenerRef = useRef<((st: TransportState)=>void) | null>(null);
+
+    // ===== AUTO PAUSE (missed / rejected incoming) =====
+    const INCOMING_IGNORE_MS = 10_000;
+    const IGNORE_GRACE_MS = 9000; // чтобы не ловить "клиент сам сбросил быстро"
+
+    type PauseReason = "бездействие оператора" | "сброс вызова";
+
+    const incomingMetaRef = useRef<{
+        id: string;
+        startedAt: number;
+        timer: number | null;
+        handled: "none" | "accepted" | "rejected";
+    } | null>(null);
+
+    const pauseSentIdsRef = useRef<Set<string>>(new Set());
+
+    function getAuthForPause() {
+        const st = store.getState();
+        return {
+            session_key: st.operator.sessionKey,
+            worker: st.credentials.worker || worker,
+            sip_login: st.credentials.sipLogin || userId,
+        };
+    }
+
+    function emitPause(reason: PauseReason) {
+        const { session_key, worker: w, sip_login } = getAuthForPause();
+        if (!session_key || !w || !sip_login) return;
+
+        socket.emit("change_status_fs", {
+            sip_login,
+            worker: w,
+            session_key,
+            action: "pause",
+            reason,
+            page: "online",
+        });
+    }
+
+    function sendPauseOnce(id: string, reason: PauseReason) {
+        if (!id) return;
+        if (pauseSentIdsRef.current.has(id)) return;
+        pauseSentIdsRef.current.add(id);
+        emitPause(reason);
+    }
+
+    function clearIncomingTimer() {
+        const m = incomingMetaRef.current;
+        if (m?.timer != null) {
+            window.clearTimeout(m.timer);
+            m.timer = null;
+        }
+    }
+
+    function sessionId(s: Session): string {
+        return String((s as any)?.id ?? (s as any)?.request?.callId ?? "");
+    }
 
     // мягко дожимаем REGISTER, пока не зарегистрируемся
     const regKeepaliveRef      = useRef<number | null>(null);
@@ -230,7 +278,15 @@ export function useSipUA(config: {
         s.stateChange.addListener(st => {
             setStatus(st);
 
+            const sid = sessionId(s);
+            const meta = incomingMetaRef.current;
+            const isThisIncoming = !!meta && meta.id === sid;
+
             if (st === SessionState.Established) {
+                if (isThisIncoming) {
+                    meta.handled = "accepted";
+                    clearIncomingTimer();
+                }
                 const pc = (s.sessionDescriptionHandler as any).peerConnection as RTCPeerConnection;
                 const stream = new MediaStream();
                 pc.getReceivers().forEach(r => r.track && stream.addTrack(r.track));
@@ -239,6 +295,18 @@ export function useSipUA(config: {
             }
 
             if (st === SessionState.Terminated) {
+                if (isThisIncoming) {
+                    clearIncomingTimer();
+
+                    if (meta.handled === "none") {
+                        const dt = Date.now() - meta.startedAt;
+                        if (dt >= IGNORE_GRACE_MS) {
+                            sendPauseOnce(meta.id, "бездействие оператора");
+                        }
+                    }
+
+                    incomingMetaRef.current = null;
+                }
                 const remaining = endToneUntilRef.current - Date.now();
                 if (remaining > 0) {
                     setTimeout(() => tonesRef.current?.stopAll(), remaining);
@@ -369,7 +437,7 @@ export function useSipUA(config: {
                             creds || undefined,
                         ].filter(Boolean) as RTCIceServer[],
                     },
-                    modifiers: [filterG711]
+                    modifiers: [preferG711]
                 }
             };
 
@@ -382,6 +450,29 @@ export function useSipUA(config: {
                 onInvite: (inc) => {
                     sessionRef.current = inc;
                     setIncoming(inc);
+
+                    const id = sessionId(inc) || String((inc as any)?.request?.callId ?? "");
+                    incomingMetaRef.current = {
+                        id,
+                        startedAt: Date.now(),
+                        timer: null,
+                        handled: "none",
+                    };
+
+                    // если 10 секунд никто не нажал — шлём pause (бездействие)
+                    const t = window.setTimeout(() => {
+                        const m = incomingMetaRef.current;
+                        if (!m || m.id !== id) return;
+                        if (m.handled !== "none") return;
+
+                        // всё ещё "звонит" (мы не приняли)
+                        if (inc.state === SessionState.Initial) {
+                            sendPauseOnce(id, "бездействие оператора");
+                        }
+                    }, INCOMING_IGNORE_MS);
+
+                    incomingMetaRef.current.timer = t;
+
                     bind(inc);
                 }
             };
@@ -487,7 +578,7 @@ export function useSipUA(config: {
         bind(inviter);
 
         await inviter.invite({
-            sessionDescriptionHandlerModifiers: [filterG711],
+            // sessionDescriptionHandlerModifiers: [filterG711],
             requestDelegate: {
                 onProgress: (response: SipResponseLite) => {
                     const status = Number(response?.message?.statusCode ?? response?.statusCode ?? 0);
@@ -540,21 +631,106 @@ export function useSipUA(config: {
         if (!enabled) return;
         if (!incoming || incoming.state !== SessionState.Initial) return;
         tonesRef.current?.stopAll();
-        await incoming.accept({ sessionDescriptionHandlerModifiers: [filterG711] });
+        await incoming.accept({
+            // sessionDescriptionHandlerModifiers: [filterG711]
+        });
     };
+
+    // const hangUp = () => {
+    //     if (!enabled) return;
+    //     tonesRef.current?.stopAll();
+    //
+    //     const s = sessionRef.current || incoming;
+    //     if (!s) return;
+    //     switch (s.state) {
+    //         case SessionState.Established:  s.bye(); break;
+    //         case SessionState.Initial:
+    //         default:                        s.dispose();
+    //     }
+    // };
 
     const hangUp = () => {
         if (!enabled) return;
         tonesRef.current?.stopAll();
+
         const s = sessionRef.current || incoming;
         if (!s) return;
-        switch (s.state) {
-            case SessionState.Established:  s.bye(); break;
-            case SessionState.Initial:
-            default:                        s.dispose();
+
+        if (s.state === SessionState.Established) {
+            try { s.bye(); } catch {}
+            return;
         }
+
+        const sid = sessionId(s);
+
+        if (incoming && s === incoming && s.state === SessionState.Initial) {
+            const meta = incomingMetaRef.current;
+            if (meta && meta.id === sid) meta.handled = "rejected";
+
+            const anyS: any = s;
+
+            const PAUSE_DELAY_MS = 250;
+
+            const sendPauseLater = () => {
+                window.setTimeout(() => {
+                    sendPauseOnce(sid, "сброс вызова");
+                }, PAUSE_DELAY_MS);
+            };
+
+            try {
+                if (typeof anyS.reject === "function") {
+                    Promise.resolve(anyS.reject({ statusCode: 480 }))
+                        .catch(() => {})
+                        .finally(() => {
+                            sendPauseLater();
+                        });
+                } else {
+                    try { s.dispose(); } catch {}
+                    sendPauseLater();
+                }
+            } catch {
+                try { s.dispose(); } catch {}
+                sendPauseLater();
+            }
+
+            return;
+        }
+
+        try { s.dispose(); } catch {}
     };
 
+    // const hangUp = () => {
+    //     if (!enabled) return;
+    //     tonesRef.current?.stopAll();
+    //
+    //     const s = sessionRef.current || incoming;
+    //     if (!s) return;
+    //
+    //     // 1) если уже разговор — bye как и было
+    //     if (s.state === SessionState.Established) {
+    //         s.bye();
+    //         return;
+    //     }
+    //
+    //     // 2) если это входящий и ещё "звонит" — это ОТКЛОНЕНИЕ оператором
+    //     const anyS: any = s;
+    //     const sid = sessionId(s);
+    //
+    //     if (incoming && s === incoming && s.state === SessionState.Initial) {
+    //         const meta = incomingMetaRef.current;
+    //         if (meta && meta.id === sid) meta.handled = "rejected";
+    //
+    //         // шлём перерыв "сброс вызова"
+    //         // sendPauseOnce(sid, "сброс вызова");
+    //
+    //         // корректно отклоняем SIP
+    //         if (typeof anyS.reject === "function") {
+    //             anyS.reject({ statusCode: 486 }).catch(() => {});
+    //         } else {
+    //             s.dispose();
+    //         }
+    //         return;
+    //     }
     const holdCall = async () => {
         if (!enabled) return;
         const s = sessionRef.current;

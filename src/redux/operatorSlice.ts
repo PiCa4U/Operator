@@ -43,6 +43,7 @@ export interface TurnCredentials {
 export interface OperatorState {
     fsReport: any;
     fsStatus: any;
+    interCalls: any
     activeCalls: any;
     roomId: string;
     sessionKey: string;
@@ -70,6 +71,7 @@ export interface UserStatus {
 const initialState: OperatorState = {
     fsReport: {},
     fsStatus: {},
+    interCalls: {},
     activeCalls: {},
     roomId: '',
     sessionKey: '',
@@ -133,6 +135,11 @@ const operatorSlice = createSlice({
                 state.activeCalls = action.payload;
             }
         },
+        setInterCalls(state, action: PayloadAction<any>) {
+            if (!isEqual(state.interCalls, action.payload)) {
+                state.interCalls = action.payload;
+            }
+        },
         setRoomId(state, action: PayloadAction<string>) {
             if (state.roomId !== action.payload) {
                 state.roomId = action.payload;
@@ -180,6 +187,7 @@ export const {
     setFsReport,
     setFsStatus,
     setActiveCalls,
+    setInterCalls,
     setRoomId,
     setName,
     setMonitorData,

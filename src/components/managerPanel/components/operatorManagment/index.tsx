@@ -7,13 +7,14 @@ import axios from "axios";
 import OperatorsSelect from "./components/select";
 import Swal from "sweetalert2";
 import { socket, stopScreenShareSession } from "../../../../socket";
-import { store } from "../../../../redux/store";
+import {RootState, store} from "../../../../redux/store";
 import { OperatorLogModal } from "./components/operatorLogModal";
 import { OperatorActivityModal } from "./components/operatorActivityModal";
 import {useSip} from "../../../../context/SipContext";
 import {useScreenShareViewer} from "../../../../screenShare/useScreenShareViewer";
 import {VideoTile} from "../../../../screenShare/VideoTile";
 import {markViewerInitiated} from "../../../../screenShare/screenShareLocalIntent";
+import {useSelector} from "react-redux";
 
 type Metrics = {
     count?: number | string;
@@ -51,6 +52,24 @@ type StatesAndStatusesResp = {
     message?: string;
 };
 
+function pickPrimaryInterCall(list: any[]) {
+    const arr = (list || []).filter(Boolean);
+    if (!arr.length) return null;
+
+    const weight = (c: any) => {
+        const st = String(c?.callstate ?? "").toUpperCase();
+        if (st === "ACTIVE") return 30;
+        if (st === "EARLY") return 20;
+        return 10;
+    };
+    const epoch = (c: any) => Number(c?.created_epoch ?? 0) || 0;
+
+    return [...arr].sort((a, b) => {
+        const dw = weight(b) - weight(a);
+        if (dw) return dw;
+        return epoch(b) - epoch(a);
+    })[0];
+}
 const n = (v: any): number => (typeof v === "number" ? v : Number(v) || 0);
 const secToHMS = (sec?: number | string) => {
     const s = n(sec);
@@ -156,6 +175,23 @@ export const OperatorsTab: React.FC = () => {
     const [page, setPage] = useState(1);
     const [pageInput, setPageInput] = useState("1");
 
+    const rawInterCalls = useSelector((state: RootState) => (state.operator as any).interCalls);
+
+    const interCalls: any[] = useMemo(() => {
+        return Array.isArray(rawInterCalls) ? rawInterCalls : Object.values(rawInterCalls || {});
+    }, [rawInterCalls]);
+
+    const interCall = useMemo(() => pickPrimaryInterCall(interCalls), [interCalls]);
+
+    const hasInterCall = !!interCall;
+
+    const [dialingLogin, setDialingLogin] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (hasInterCall) setDialingLogin(null);
+    }, [hasInterCall]);
+
+
     useEffect(() => {
         localStorage.setItem(OPERATORS_ROWS_PER_PAGE_KEY, String(rowsPerPage));
         setPage(1);
@@ -235,15 +271,18 @@ export const OperatorsTab: React.FC = () => {
             return;
         }
 
+        setDialingLogin(operatorLogin);
+
         try {
-            // приоритет: новый метод
             if (callOperator) await callOperator(operatorLogin);
-            else await makeCall(String(operatorLogin)); // fallback
+            else await makeCall(String(operatorLogin));
+
         } catch (e: any) {
             console.error(e);
+            setDialingLogin(null);
             Swal.fire({ icon: "error", title: "Не удалось позвонить", text: String(e?.message || e) });
         }
-    }, [webrtcEnabled, sipStatus, callOperator, makeCall]);
+    }, [webrtcEnabled, callOperator, makeCall]);
 
     useEffect(() => {
         if (!webrtcEnabled) return;
@@ -886,11 +925,14 @@ export const OperatorsTab: React.FC = () => {
                                 const isOnline =
                                     !!a.fs_status && !norm(a.status).includes("logged out"); // онлайн
 
+                                const canCalling = isHuman && isOnline && sipLogin !== a.login;
                                 const canHaveScreen = isOperator && isHuman && isOnline;
                                 const isScreenActiveHere = activeScreenOperator === a.login;
 
                                 const screenBtnDisabled =
                                     !webrtcEnabled || !sessionKey || !worker || !sipLogin;
+
+                                const isDialingThis = dialingLogin === a.login;
 
                                 return (
                                     <React.Fragment key={a.login}>
@@ -1010,21 +1052,28 @@ export const OperatorsTab: React.FC = () => {
                                         })()}
                                     </td>
 
-
                                     <td>
                                         <div className="btn-group btn-group-sm">
                                             <button className="btn btn-outline-success" onClick={() => openEdit(a)}>
                                                 Редактировать
                                             </button>
-                                            <button
-                                                className="btn btn-outline-primary"
-                                                disabled={!webrtcEnabled /* || a.role !== "operator" */ }
-                                                onClick={() => handleCallOperator(a.login)}
-                                                title={`Позвонить оператору ${a.login}`}
-                                            >
-                                                Позвонить
-                                            </button>
-
+                                            {canCalling && !hasInterCall && (
+                                                <button
+                                                    className="btn btn-outline-primary"
+                                                    disabled={!webrtcEnabled || !!dialingLogin}
+                                                    onClick={() => handleCallOperator(a.login)}
+                                                    title={isDialingThis ? "Идёт вызов…" : `Позвонить оператору ${a.name}`}
+                                                >
+                                                    {isDialingThis ? (
+                                                        <>
+                                                            <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
+                                                            Идёт вызов…
+                                                        </>
+                                                    ) : (
+                                                        "Позвонить"
+                                                    )}
+                                                </button>
+                                            )}
                                             {a.status === "Logged Out" && a.fs_status && (
                                                 <button className="btn btn-outline-success" onClick={() => handleStartFs(a.login)}>
                                                     На линию

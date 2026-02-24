@@ -725,12 +725,10 @@ export const Filters = () => {
     const [data, setData] = useState<string>("");
     const [line, setLine] = useState<string>("Линия");
 
-    // строковый modify
     const [modify, setModify] = useState<string>("none");
 
     const [color, setColor] = useState("#e66464");
 
-    // ✅ новые: режим и параметры modify-объекта
     const [modifyMode, setModifyMode] = useState<ModifyMode>("string");
     const [modifyObjInner, setModifyObjInner] = useState<InnerInterval>("hour");
     const [modifyObjRange, setModifyObjRange] = useState<string[]>([]);
@@ -738,10 +736,8 @@ export const Filters = () => {
     const [charts, setCharts] = useState<MyChartData[]>([]);
     const [chartConfigs, setChartConfigs] = useState<ChartConfig[]>([]);
 
-    // ✅ сюда складываем понятные сообщения, если какие-то графики не обновились
     const [chartErrorText, setChartErrorText] = useState("");
 
-    // ✅ templates
     const [reportTemplates, setReportTemplates] = useState<ReportTemplate[]>([]);
     const [templatesLoading, setTemplatesLoading] = useState(false);
     const [templatesError, setTemplatesError] = useState("");
@@ -776,23 +772,31 @@ export const Filters = () => {
                     break;
 
                 case "date": {
-                    if (value.preset === "custom" && value.start && value.end) {
-                        let startStr = formatLocalYMD(value.start);
-                        let endStr = formatLocalYMD(value.end);
+                    if (value.preset === "custom" && value.start) {
+                        const start = value.start;
+                        const end = value.end ?? value.start;
+
+                        let startStr = formatLocalYMD(start);
+                        let endStr = formatLocalYMD(end);
+
                         if (startStr > endStr) {
                             const tmp = startStr;
                             startStr = endStr;
                             endStr = tmp;
                         }
+
                         if (!result.dates) result.dates = [];
-                        if (startStr === endStr) result.dates.push(startStr);
-                        else result.dates.push(`${startStr} TO ${endStr}`);
-                    } else if (value.preset) {
+                        result.dates.push(`${startStr} TO ${endStr}`);
+                        break;
+                    }
+
+                    if (value.preset) {
                         if (!result.dates) result.dates = [];
                         result.dates.push(value.preset);
                     }
                     break;
                 }
+
 
                 case "comment":
                     if (value) {

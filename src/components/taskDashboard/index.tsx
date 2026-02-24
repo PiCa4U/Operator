@@ -849,7 +849,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                     : { id: ['IN', need] };
 
                 const { data } = await axios.post<Record<string, any[]>>(
-                    '/api/v1/get_grouped_phones',
+                    '/api/v1/grouped_contacts',
                     {
                         glagol_parent: glagolParent,
                         group_by: ['project'],
@@ -1545,7 +1545,7 @@ const PresetSelectorTable: React.FC<Props> = ({
             resetPhonesCache();
 
             const response1 = await axios.post<ApiRow[]>(
-                "/api/v1/get_grouped_phones",
+                "/api/v1/grouped_contacts",
                 {
                     glagol_parent: glagolParent,
                     group_table: preset.group_table,

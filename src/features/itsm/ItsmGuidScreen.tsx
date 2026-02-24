@@ -235,7 +235,7 @@ export default function ItsmGuidScreen() {
             if (!matchedPreset) return;
 
             // 3) берём группы телефонов
-            const resp2 = await axios.post<any>("/api/v1/get_grouped_phones", {
+            const resp2 = await axios.post<any>("/api/v1/grouped_contacts", {
                 glagol_parent: "fs.at.glagol.ai",
                 group_by: matchedPreset.preset.group_by,
                 filter_by: { project: ["IN", matchedPreset.preset.projects]},

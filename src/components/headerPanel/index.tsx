@@ -582,7 +582,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     ...groupFilter,
                 };
 
-                const response = await axios.post<any>("/api/v1/get_grouped_phones", {
+                const response = await axios.post<any>("/api/v1/grouped_contacts", {
                     glagol_parent: (projectPool?.[0] as any)?.scheme || "",
                     group_by: matchedPreset.preset.group_by,
                     filter_by,

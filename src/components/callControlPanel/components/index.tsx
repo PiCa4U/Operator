@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useRef, useLayoutEffect} from 'react';
+import React, {useState, useEffect, useRef, useLayoutEffect, memo, useMemo} from 'react';
 import { FieldDefinition } from "../index";
 import SearchableSelect from './select';
 import DatePicker, {registerLocale, setDefaultLocale} from 'react-datepicker';

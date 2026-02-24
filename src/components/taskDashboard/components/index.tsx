@@ -363,7 +363,7 @@ const GroupActionModal: React.FC<Props> = ({
                     filterBy.project = ['IN', projectNames];
                 }
 
-                const response = await axios.post<Nested>('/api/v1/get_grouped_phones', {
+                const response = await axios.post<Nested>('/api/v1/grouped_contacts', {
                     glagol_parent: glagolParent,
                     group_by: preset?.group_by,
                     group_table: preset?.group_table,

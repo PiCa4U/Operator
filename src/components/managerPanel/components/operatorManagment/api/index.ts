@@ -82,26 +82,27 @@ export async function getActivityLog(params: {
     return data as ActivityLogPerUser;
 }
 
-export async function getAgents(): Promise<Agent[]> {
+export async function getAgents(params?: { field_filters?: string | null }): Promise<Agent[]> {
     const glagol_parent = getGlagolParent();
 
     const resp: AxiosResponse<ApiUsersResponse> = await axios.get("/api/v1/users", {
-        params: { glagol_parent },
+        params: {
+            glagol_parent,
+            ...(params?.field_filters ? { field_filters: params.field_filters } : {}),
+        },
     });
 
     const usersObj = resp.data?.users ?? {};
 
     const agents: Agent[] = Object.entries(usersObj).map(([login, u]) => {
-        const talk =
-            u?.talk && typeof u.talk === "object" ? (u.talk as ApiUser["talk"]) : null;
+        const talk = u?.talk && typeof u.talk === "object" ? (u.talk as ApiUser["talk"]) : null;
 
         return {
             login,
             ...u,
             talk,
             role: (u?.type ?? "operator") as Role,
-            postobrabotka:
-                typeof u?.post === "boolean" ? u.post : Boolean(u?.post_obrabotka),
+            postobrabotka: typeof u?.post === "boolean" ? u.post : Boolean(u?.post_obrabotka),
         } as Agent;
     });
 

@@ -137,7 +137,7 @@ async function fetchGroupPhonesByIdsUsingPreset(
         ids: ids.join(","),
     };
 
-    const { data } = await axios.get("/api/v1/get_grouped_phones", { params });
+    const { data } = await axios.get("/api/v1/grouped_contacts", { params });
 
     const rows = Array.isArray(data?.data) ? data.data : [];
 
@@ -1684,7 +1684,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 };
 
 
-                const response2 = await axios.post<any>("/api/v1/get_grouped_phones", {
+                const response2 = await axios.post<any>("/api/v1/grouped_contacts", {
                     glagol_parent: projectPool[0].scheme || "",
                     group_by: matchedPreset.preset.group_by,
                     filter_by,

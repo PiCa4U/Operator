@@ -4,26 +4,37 @@ import Select, {
     SingleValue,
     MultiValue,
     GroupBase,
+    components,
+    OptionProps,
 } from "react-select";
 
-type Option = { value: string; label: string };
+export type Option = { value: string; label: string };
+type OptionsProp = string[] | Option[];
 
 type PropsSingle = {
     isMulti?: false;
     value: string | null;
     onChange: (val: string | null) => void;
 };
+
 type PropsMulti = {
     isMulti: true;
     value: string[];
     onChange: (val: string[]) => void;
 };
+
 type Common = {
-    options: string[];
+    options: OptionsProp;
     placeholder?: string;
     isSearchable?: boolean;
     isClearable?: boolean;
+    isDisabled?: boolean;
+
+    /** ✅ Для multi: показывать галочки в меню и не закрывать меню */
+    withCheckboxes?: boolean;
+    classNamePrefix?: string;
 };
+
 type Props = Common & (PropsSingle | PropsMulti);
 
 const buildStyles = (
@@ -95,7 +106,6 @@ const buildStyles = (
         color: "#999",
         "&:hover": { color: "#333" },
     }),
-    // меню такой же ширины, как инпут
     menuPortal: (base) => ({
         ...base,
         zIndex: 2000,
@@ -115,6 +125,18 @@ const buildStyles = (
     }),
 });
 
+// ✅ чекбокс-опция для multi
+const CheckboxOption = (props: OptionProps<Option, true>) => {
+    return (
+        <components.Option {...props}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" checked={props.isSelected} readOnly />
+                <span>{props.label}</span>
+            </div>
+        </components.Option>
+    );
+};
+
 const OperatorsSelect: React.FC<Props> = ({
                                               isMulti,
                                               value,
@@ -123,8 +145,10 @@ const OperatorsSelect: React.FC<Props> = ({
                                               placeholder = "Выберите…",
                                               isSearchable = true,
                                               isClearable = true,
+                                              isDisabled = false,
+                                              withCheckboxes = false,
+                                              classNamePrefix = "ops",
                                           }) => {
-    // меряем ширину контейнера: меню будет ровно этой ширины
     const wrapRef = useRef<HTMLDivElement>(null);
     const [menuWidth, setMenuWidth] = useState<number | undefined>(undefined);
 
@@ -141,17 +165,35 @@ const OperatorsSelect: React.FC<Props> = ({
     }, []);
 
     const styles = useMemo(() => buildStyles(menuWidth), [menuWidth]);
-    const opts = useMemo<Option[]>(() => options.map((d) => ({ value: d, label: d })), [options]);
+
+    // ✅ поддержка options: string[] | {value,label}[]
+    const opts = useMemo<Option[]>(() => {
+        if (!Array.isArray(options) || options.length === 0) return [];
+        const first = (options as any)[0];
+        if (typeof first === "string") {
+            return (options as string[]).map((d) => ({ value: d, label: d }));
+        }
+        return (options as Option[]).map((o) => ({ value: o.value, label: o.label }));
+    }, [options]);
+
+    const labelByValue = useMemo(() => {
+        const m = new Map<string, string>();
+        opts.forEach((o) => m.set(o.value, o.label));
+        return m;
+    }, [opts]);
+
+    const toOpt = (v: string) => ({ value: v, label: labelByValue.get(v) ?? v });
 
     return (
         <div ref={wrapRef} style={{ width: "100%" }}>
             {isMulti ? (
                 <Select<Option, true>
-                    value={(value as string[]).map((v) => ({ value: v, label: v }))}
+                    value={(value as string[]).map(toOpt)}
                     options={opts}
                     isMulti
                     isSearchable={isSearchable}
                     isClearable={isClearable}
+                    isDisabled={isDisabled}
                     onChange={(items: MultiValue<Option>) => onChange(items.map((o) => o.value))}
                     styles={styles}
                     placeholder={placeholder}
@@ -159,13 +201,19 @@ const OperatorsSelect: React.FC<Props> = ({
                     menuPortalTarget={document.body}
                     menuPosition="fixed"
                     menuShouldScrollIntoView={false}
+                    // ✅ чекбоксы
+                    closeMenuOnSelect={!withCheckboxes}
+                    hideSelectedOptions={false}
+                    components={withCheckboxes ? { Option: CheckboxOption } : undefined}
+                    classNamePrefix={classNamePrefix}
                 />
             ) : (
                 <Select<Option, false>
-                    value={(value as string | null) ? { value: value as string, label: value as string } : null}
+                    value={(value as string | null) ? toOpt(value as string) : null}
                     options={opts}
                     isSearchable={isSearchable}
                     isClearable={isClearable}
+                    isDisabled={isDisabled}
                     onChange={(opt: SingleValue<Option>) =>
                         (onChange as PropsSingle["onChange"])(opt?.value ?? null)
                     }
@@ -175,6 +223,7 @@ const OperatorsSelect: React.FC<Props> = ({
                     menuPortalTarget={document.body}
                     menuPosition="fixed"
                     menuShouldScrollIntoView={false}
+                    classNamePrefix={classNamePrefix}
                 />
             )}
         </div>

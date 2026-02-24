@@ -72,14 +72,14 @@
 //         label: "1012 / 1.fs@akc24.ru",
 //         sipLogin: "1012",
 //         worker: "1.fs@akc24.ru",
-//         sessionKey: "s:1.fs@akc24.ru:997cde66b3ecd7ae6139f87396ffd528a0e22edc2b648705",
+//         sessionKey: "s:1.fs@akc24.ru:b78b1c6023ab9650bb85c7da1bdee69f5d3d9035cec6ee59",
 //     },
 //     {
 //         id: "1000",
 //         label: "1000 / 4.fs@akc24.ru",
 //         sipLogin: "1000",
 //         worker: "4.fs@akc24.ru",
-//         sessionKey: "s:4.fs@akc24.ru:5e4efcee0e0a5b5f0a8ee0a45f0754e98bc3a5349ed8f7e8",
+//         sessionKey: "s:4.fs@akc24.ru:6391c0fdadbdac9d4b821e81448b1758ae5e2e11e1ca23d3",
 //     },
 // ] as const;
 //
@@ -92,7 +92,7 @@
 //         label: "1112 / 113.privet@pm.ru",
 //         sipLogin: "1112",
 //         worker: "113.privet@pm.ru",
-//         sessionKey: "s:113.privet@pm.ru:ea8dac8e3efed70469fbaef13a4b1cee5870c9df5e8cc965",
+//         sessionKey: "s:113.privet@pm.ru:56dd0c95375b004d4ce59dec90c8b5953fae6e1814541474",
 //     },
 // ] as const;
 //

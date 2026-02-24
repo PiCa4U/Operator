@@ -1,5 +1,26 @@
 export type Role = "operator" | "manager";
 export type AgentPresence = string;
+export type UserFieldType = "regular" | "textarea" | "select" | "number" | "date" | "many";
+
+export type UserFieldDef = {
+    id?: number;
+    slug: string;
+    name: string;
+    description?: string | null;
+    field_type: UserFieldType;
+    field_value?: string | null; // опции для select/many (строка)
+    active: boolean;
+};
+
+export type UserFieldsMap = Record<string, string>;
+
+export type CreateUserFieldPayload = {
+    name: string;
+    description?: string | null;
+    field_type: UserFieldType;
+    field_value?: string | null;
+    active?: boolean;
+};
 
 export interface Agent {
     fs_status: boolean;
@@ -19,7 +40,7 @@ export interface Agent {
         duration?: string;
         [k: string]: unknown;
     } | null;
-
+    user_fields?: UserFieldsMap
 }
 
 
@@ -61,6 +82,7 @@ export interface CreateAgentPayload {
     postobrabotka: boolean;
     department?: string;
     login?: string;
+    user_fields?: UserFieldsMap
 }
 
 export interface UpdateAgentPayload {
@@ -70,6 +92,7 @@ export interface UpdateAgentPayload {
     role?: Role;
     postobrabotka?: boolean;
     department?: string;
+    user_fields?: UserFieldsMap
 }
 
 export interface TierMutationPayload {
@@ -86,4 +109,5 @@ export interface FiltersState {
     departments: string[];
     robot: RobotFilter;
     online: OnlineFilter;
+    field_filters?: string | null;
 }

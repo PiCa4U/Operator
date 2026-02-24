@@ -26,11 +26,12 @@ export function useOperators() {
         departments: [],
         robot: "all",
         online: "all",
+        field_filters: null,
     });
 
     const query = useQuery<Agent[], unknown>({
-        queryKey: ["users"],
-        queryFn: getAgents,
+        queryKey: ["users", filters.field_filters ?? ""],
+        queryFn: () => getAgents({ field_filters: filters.field_filters ?? null }),
         staleTime: 5_000,
         refetchInterval: 10_000,
         refetchOnWindowFocus: true,

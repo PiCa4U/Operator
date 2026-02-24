@@ -93,7 +93,7 @@ function makeSocket(): IOSocket {
     const fromRedux = sanitizeHost(getCreds().fsServer);
     console.log("fromRedux: ", fromRedux)
     const fromDOM = readFsServerFromDOM();
-    const host = (fromRedux || fromDOM || "pmpbx.glagol.ai").trim();
+    const host = (fromRedux || fromDOM || "wwstest.glagol.ai").trim();
 
     const url = `wss://${host}`;
     if (process.env.NODE_ENV !== "production") {

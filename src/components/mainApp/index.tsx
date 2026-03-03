@@ -271,7 +271,83 @@ function normalizeToArray(val: any): any[] {
     }
     return [val];
 }
+function normalizeStringArray(val: any): string[] {
+    if (!val) return [];
+    if (Array.isArray(val)) return val.map(String).map(s => s.trim()).filter(Boolean);
+    if (typeof val === "string") return val.split(",").map(s => s.trim()).filter(Boolean);
+    return [String(val)].map(s => s.trim()).filter(Boolean);
+}
 
+function sortGroupFactorKeys(keys: string[]) {
+    const num = (k: string) => {
+        const m = k.match(/group_factor_(\d+)/);
+        return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+    };
+    return [...keys].sort((a, b) => num(a) - num(b));
+}
+
+function pickGroupLockFactors(selectedPreset: OptionType | null, row: any): string[] {
+    // ✅ сначала пробуем достать реальные group_factor_* которые есть в row / contact_info
+    const ci = row?.contact_info && typeof row.contact_info === "object" ? row.contact_info : {};
+    const merged = { ...row, ...ci };
+
+    const fromRow = Object.keys(merged).filter(k => k.startsWith("group_factor_"));
+    if (fromRow.length) return sortGroupFactorKeys(fromRow);
+
+    // fallback (если вдруг row не содержит group_factor_*): берём из пресета, но только group_factor_*
+    const fromPreset = normalizeStringArray(selectedPreset?.preset?.group_by)
+        .filter((k) => String(k).startsWith("group_factor_"));
+
+    return sortGroupFactorKeys(fromPreset);
+}
+
+function pickFactorValue(row: any, factor: string): string | null {
+    const ci = row?.contact_info && typeof row.contact_info === "object" ? row.contact_info : {};
+
+    // ✅ приоритет contact_info, потом root
+    const raw =
+        factor.includes(".")
+            ? getByPath(ci, factor) ?? getByPath(row, factor)
+            : ci?.[factor] ?? row?.[factor];
+
+    const arr = normalizeToArray(raw).map(v => String(v).trim()).filter(Boolean);
+    return arr.length ? arr[0] : null;
+}
+
+function normalizeLockFactorsFromPreset(preset: any): string[] {
+    // что именно хранит бек — не уверен, поэтому поддержим варианты
+    const raw =
+        preset?.lock_factors ??
+        preset?.group_lock_factors ??
+        preset?.factors ??
+        preset?.group_factors ??
+        preset?.group_by; // fallback (если у вас group_by = ["group_factor_1", ...])
+
+    const arr = normalizeStringArray(raw);
+
+    // приводим к виду group_factor_N
+    const out = arr
+        .map((x) => String(x).trim())
+        .filter(Boolean)
+        .map((x) => {
+            if (/^group_factor_\d+$/i.test(x)) return x;
+            if (/^\d+$/.test(x)) return `group_factor_${x}`; // если вдруг приходит ["1","2"]
+            return x; // на всякий (но тогда pickFactorValue может не найти)
+        });
+
+    // критично: если вышли не group_factor_* — лучше не лочить вообще
+    const onlyGf = out.filter((x) => /^group_factor_\d+$/i.test(x));
+    return onlyGf;
+}
+
+function resolvePresetForProject(projectName: string, presets: OptionType[], selectedPreset: OptionType | null) {
+    const p = String(projectName || "").trim();
+    if (!p) return null;
+
+    if (selectedPreset?.preset?.projects?.includes(p)) return selectedPreset;
+    const found = (presets || []).find(x => x?.preset?.projects?.includes(p));
+    return found ?? null;
+}
 function buildGroupByFilter(
     groupBy: unknown,
     contact: Record<string, any>
@@ -402,7 +478,24 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const splitWrapRef = useRef<HTMLDivElement | null>(null);
     const splitDraggingRef = useRef(false);
 
-    const lastRedisGroupLockSigRef = useRef<string>("");
+    const lastGroupLockOnSigRef = useRef<string>("");
+    const lockCtxRef = useRef<{
+        assignedKey: string;
+        projectName: string;
+        factors: string[];
+        sent: boolean;
+        sig: string;
+    }>({
+        assignedKey: "",
+        projectName: "",
+        factors: [],
+        sent: false,
+        sig: "",
+    });
+    const expressProjectRef = useRef<string>("");
+    const lockSourceRowRef = useRef<any>(null);
+
+    const lastOutStartTokenRef = useRef<string>("");
 
     const [chatCallRatio, setChatCallRatio] = useState<number>(() => {
         const raw = Number(localStorage.getItem(ITSM_SPLIT_KEY));
@@ -450,6 +543,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const hasExternalActive = activeCalls.length > 0 || activeCall || postActive;
     const showInterOverlay = !!interCall && !hasExternalActive;
     const showInterInCardHeader = !!interCall && hasExternalActive;
+
 
 
     const hangupInterCall = React.useCallback((uuid: string) => {
@@ -587,37 +681,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
     const momoProjectRepo = useRef<boolean>(false)
     const startModulesRanRef = useRef<boolean>(false);
-
-    useEffect(() => {
-        // только для express звонков
-        if (!expressCall) {
-            lastRedisGroupLockSigRef.current = "";
-            return;
-        }
-
-        if (!sessionKey || !worker || !sipLogin) return;
-
-        const ids = Array.from(
-            new Set(
-                (openedGroup ?? [])
-                    .map((x: any) => Number(x))
-                    .filter((n: number) => Number.isFinite(n))
-            )
-        ).sort((a, b) => a - b);
-
-        if (!ids.length) return;
-
-        const sig = ids.join(",");
-        if (sig === lastRedisGroupLockSigRef.current) return;
-        lastRedisGroupLockSigRef.current = sig;
-
-        socket.emit("group_lock_redis", {
-            session_key: sessionKey,
-            worker,
-            sip_login: sipLogin,
-            ids,
-        });
-    }, [expressCall, openedGroup, sessionKey, worker, sipLogin]);
 
     useEffect(() => {
         if (selectedStatus !== null) {
@@ -826,6 +889,58 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         return clientTop || clientInUnwatched || 0;
     }
 
+    const emitGroupLockOn = React.useCallback((row: any) => {
+        if (!expressCall) return;
+        if (!sessionKey || !worker || !sipLogin) return;
+
+        const ctx = lockCtxRef.current;
+        if (!ctx.assignedKey) return;    // ждём assignedKey
+        if (ctx.sent) return;            // ✅ уже отправили лок — больше не шлём
+
+        if (!row) return;
+
+        const factorsRaw = lockCtxRef.current.factors;
+        if (!factorsRaw.length) return; // нет факторов из пресета — не лочим
+
+        const pairs = factorsRaw
+            .map((f) => [f, pickFactorValue(row, f)] as const)
+            .filter(([, v]) => Boolean(v));
+
+        if (pairs.length !== factorsRaw.length) {
+            return;
+        }
+
+        const factors = pairs.map(([f]) => f);
+        const group_by = pairs.map(([, v]) => String(v));
+        const sig = `${factors.join("|")}::${group_by.join("|")}`;
+
+        if (sig === ctx.sig) return;
+
+        ctx.sig = sig;
+        ctx.sent = true;
+
+        socket.emit("group_lock_on", {
+            session_key: sessionKey,
+            worker,
+            sip_login: sipLogin,
+            group_by,
+            factors,
+        });
+    }, [expressCall, sessionKey, worker, sipLogin, selectedPreset]);
+
+    useEffect(() => {
+        if (!expressCall) return;
+
+        const ctx = lockCtxRef.current;
+        if (!ctx.assignedKey || ctx.sent) return;
+
+        if (!openedPhones || openedPhones.length === 0) return;
+
+        const row = lockSourceRowRef.current ?? (openedPhones ?? []).find(Boolean);
+        if (!row) return;
+
+        emitGroupLockOn(row);
+    }, [expressCall, openedPhones, emitGroupLockOn]);
     // async function fetchUnreadForGuid(g: string, hasSipLogin: boolean, login: string) {
     //     try {
     //         const params = hasSipLogin ? { logins: login } : undefined;
@@ -1157,12 +1272,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         window.location.href = "https://my.glagol.ai/login_work/";
 };
 
-    useEffect(() => {
-        socket.on('logout', handleLogout);
-        return () => {
-            socket.off('logout', handleLogout);
-        };
-    }, []);
+    // useEffect(() => {
+    //     socket.on('logout', handleLogout);
+    //     return () => {
+    //         socket.off('logout', handleLogout);
+    //     };
+    // }, []);
 
     useEffect(() => {
         const now = new Date().toISOString();
@@ -1535,6 +1650,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
     useEffect(() => {
         const handleFsDiaDes = (msg: any) => {
+            expressProjectRef.current = String(msg?.project_name ?? "").trim();
             setActiveProjectName(msg.project_name);
 
             if (activeCalls[0]?.cid_num) {
@@ -1573,33 +1689,60 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                     phones: [activeCalls[0].cid_num],
                     express: check.express
                 });
+                const projectName = expressProjectRef.current || String(activeProjectName ?? "").trim();
+                const matchedPreset = resolvePresetForProject(projectName, presets, selectedPreset);
+
+                const factors = matchedPreset ? normalizeLockFactorsFromPreset(matchedPreset.preset) : [];
+
+                lockCtxRef.current = {
+                    assignedKey: String(check.assigned_key),
+                    projectName,
+                    factors,
+                    sent: false,
+                    sig: "",
+                };
+
+                lockSourceRowRef.current = null;
+                lastOutStartTokenRef.current = "";
             }
         };
 
         const handleGetPhoneLine = (msg: any) => {
+            const pl = msg?.phone_line?.[0];
 
-            if (msg.phone_line[0]?.special_key) {
-                setSpecialKey(msg.phone_line[0].special_key);
-                if (assignedKey && msg.phone_line[0].special_key) {
-                    socket.emit('outbound_call_update', {
+            // ✅ дедуп по special_key / id (чтобы accept/lock не повторялись при повторных get_out_start)
+            const token = String(pl?.special_key ?? pl?.id ?? "");
+            if (token && token === lastOutStartTokenRef.current) return;
+            if (token) lastOutStartTokenRef.current = token;
+
+            if (pl?.special_key) {
+                setSpecialKey(pl.special_key);
+                if (assignedKey && pl.special_key) {
+                    socket.emit("outbound_call_update", {
                         worker,
                         session_key: sessionKey,
                         ...(assignedKey ? { assigned_key: assignedKey } : {}),
-                        log_status: 'ringing',
-                        phone_status: 'ringing',
-                        special_key: msg.phone_line[0].special_key,
+                        log_status: "ringing",
+                        phone_status: "ringing",
+                        special_key: pl.special_key,
                     });
-
                 }
             }
+
             if (expressCall) {
-                socket.emit("accept_express_call",{
+                // ✅ сохраняем “источник правды” для лока
+                lockSourceRowRef.current = pl;
+
+                socket.emit("accept_express_call", {
                     worker,
                     session_key: sessionKey,
                     assigned_key: assignedKey,
                     sip_login: sipLogin,
-                    project_name: msg.project_name
-                })
+                    project_name: msg.project_name,
+                });
+
+                // ❌ НЕ вызываем emitGroupLockOn здесь
+                // emitGroupLockOn(pl);
             }
         };
 
@@ -1612,7 +1755,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             socket.off('check_express', handleCheckExpress);
             socket.off('get_out_start', handleGetPhoneLine);
         };
-    }, [outboundCall, sessionKey, worker, activeCalls, assignedKey, activeProjectName, expressCall]);
+    }, [outboundCall, sessionKey, worker, activeCalls, assignedKey, activeProjectName, expressCall, emitGroupLockOn]);
 
     function extractPhoneGroups(obj: any): any[][] {
         const groups: any[][] = [];
@@ -1683,9 +1826,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                     ...groupFilter,
                 };
 
-
                 const response2 = await axios.post<any>("/api/v1/grouped_contacts", {
-                    glagol_parent: projectPool[0].scheme || "",
+                    glagol_parent: glagolParent,
                     group_by: matchedPreset.preset.group_by,
                     filter_by,
                     group_table: matchedPreset.preset.group_table,

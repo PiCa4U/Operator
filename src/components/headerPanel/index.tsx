@@ -1,23 +1,25 @@
 // HeaderPanel.tsx
-import React, {useCallback, useEffect, useMemo, useState} from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import Swal from "sweetalert2";
 import axios from "axios";
 import isEqual from "lodash/isEqual";
 
-import { RootState, store } from "../../redux/store";
+import { RootState } from "../../redux/store";
 import { socket } from "../../socket";
 
 import ModeSwitch, { Mode } from "./components/switch";
 import { OptionType, Preset } from "../taskDashboard";
 import { normalizeUrl } from "../callControlPanel";
 
-import { makeSelectFullProjectPool, setUserStatuses } from "../../redux/operatorSlice";
+import { makeSelectFullProjectPool } from "../../redux/operatorSlice";
 
 import { SignalsToaster } from "../../features/signals/SignalsToaster";
 import { NotificationsPanel } from "../../features/signals/NotificationsPanel";
 import { SignalsBell } from "../../features/signals/SignalsBell";
-import {useSip} from "../../context/SipContext";
+import { useSip } from "../../context/SipContext";
+
+import ColleaguesPanel from "./components/ColleaguesPanel";
 
 /** ===== helpers ===== */
 
@@ -100,37 +102,6 @@ function buildGroupByFilter(groupBy: unknown, contact: Record<string, any>): Rec
         }
     }
     return filter;
-}
-
-/**
- * other_users может прийти:
- * 1) объектом { [sip_login]: { status, state, sofia_status, ... } }
- * 2) массивом [{ sip_login, status, state, sofia_status, ... }, ...]
- * Приводим к объекту.
- */
-function sanitizeOtherUsers(msg: any): Record<string, any> {
-    if (!msg) return {};
-    if (Array.isArray(msg)) {
-        const out: Record<string, any> = {};
-        for (const it of msg) {
-            const k = String(it?.sip_login ?? it?.login ?? it?.sip ?? "");
-            if (!k) continue;
-            out[k] = it;
-        }
-        return out;
-    }
-    if (typeof msg === "object") return msg as Record<string, any>;
-    return {};
-}
-
-function otherUsersSig(obj: Record<string, any>) {
-    const keys = Object.keys(obj).sort();
-    return keys
-        .map((k) => {
-            const v = obj[k] || {};
-            return `${k}:${v?.status ?? ""}|${v?.state ?? ""}|${v?.sofia_status ?? ""}`;
-        })
-        .join(";");
 }
 
 /** ===== types ===== */
@@ -240,26 +211,17 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                  }) => {
     const dispatch = useDispatch();
 
-    const {
-        sipLogin = "",
-        worker = "",
-        glagolParent = "",
-    } = useSelector((s: RootState) => s.credentials);
-
+    const { sipLogin = "", worker = "", glagolParent = "" } = useSelector((s: RootState) => s.credentials);
     const sessionKey = useSelector((s: RootState) => s.operator.sessionKey);
 
     const fallbackModulesRanRef = React.useRef(false);
     const modulesRanRef = startModulesRanRef ?? fallbackModulesRanRef;
 
     const isManager = role === "manager";
-
     const [notifOpen, setNotifOpen] = useState(false);
 
-    const userStatuses = useSelector((state: RootState) => state.operator.userStatuses);
-
-    const { monitorUsers, monitorProjects, allProjects, monitorCallcenter } = useSelector(
-        (state: RootState) => state.operator.monitorData
-    );
+    // ⚠️ ВАЖНО: HeaderPanel больше НЕ подписан на userStatuses и /users — хедер не ререндерится от этого.
+    const { allProjects } = useSelector((state: RootState) => state.operator.monitorData);
 
     const [autocallEnabled, setAutocallEnabled] = useState(() => {
         return localStorage.getItem("autocallEnabled") === "true";
@@ -292,72 +254,18 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const [hasActiveCall, setHasActiveCall] = useState<boolean>(false);
     const [postCallData, setPostCallData] = useState<any>({});
 
-    const [searchTerm, setSearchTerm] = useState("");
-    const [typeFilter, setTypeFilter] = useState<"all" | "operators" | "robots">("all");
-    const [statusFilter, setStatusFilter] = useState<"all" | "online" | "offline">("all");
-
     const [presets, setPresets] = useState<OptionType[]>([]);
     const [callTimer, setCallTimer] = useState<string>("00:00");
 
-    const lastOtherUsersSigRef = React.useRef<string | null>(null);
+    const { enabled: webrtcEnabled } = useSip();
 
-    const { enabled: webrtcEnabled, callOperator, makeCall } = useSip();
-
-// interCalls из redux
+    // interCalls из redux (нужно, чтобы при interCall можно было где-то еще использовать — оставим)
     const rawInterCalls = useSelector((state: RootState) => (state.operator as any).interCalls);
-
     const interCalls: any[] = useMemo(() => {
         return Array.isArray(rawInterCalls) ? rawInterCalls : Object.values(rawInterCalls || {});
     }, [rawInterCalls]);
-
     const interCall = useMemo(() => pickPrimaryInterCall(interCalls), [interCalls]);
     const hasInterCall = !!interCall;
-
-    const [dialingLogin, setDialingLogin] = useState<string | null>(null);
-
-    useEffect(() => {
-        if (hasInterCall) setDialingLogin(null);
-    }, [hasInterCall]);
-
-    const handleCallOperator = useCallback(async (operatorLogin: string) => {
-        if (!webrtcEnabled) {
-            Swal.fire({ icon: "info", title: "Телефония выключена", timer: 1500, showConfirmButton: false });
-            return;
-        }
-
-        setDialingLogin(operatorLogin);
-
-        try {
-            if (callOperator) await callOperator(operatorLogin);
-            else await makeCall(String(operatorLogin));
-        } catch (e: any) {
-            console.error(e);
-            setDialingLogin(null);
-            Swal.fire({ icon: "error", title: "Не удалось позвонить", text: String(e?.message || e) });
-        }
-    }, [webrtcEnabled, callOperator, makeCall]);
-
-    /** ===== other_users слушаем ТОЛЬКО когда открыто "Кто онлайн?" ===== */
-    useEffect(() => {
-        if (!showStatuses) return;
-
-        // чтобы первый пакет не “скипнулся”
-        lastOtherUsersSigRef.current = null;
-
-        const handleOtherUsers = (msg: any) => {
-            const clean = sanitizeOtherUsers(msg);
-            const sig = otherUsersSig(clean);
-            if (sig === lastOtherUsersSigRef.current) return;
-            lastOtherUsersSigRef.current = sig;
-
-            dispatch(setUserStatuses(clean));
-        };
-
-        socket.on("other_users", handleOtherUsers);
-        return () => {
-            socket.off("other_users", handleOtherUsers)
-        };
-    }, [showStatuses, dispatch]);
 
     useEffect(() => {
         if (
@@ -380,8 +288,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 start_type: "auto",
             });
         }
-        // намеренно триггерим в основном по showTasksDashboard,
-        // остальное берётся из текущего рендера
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [showTasksDashboard]);
 
@@ -412,11 +318,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     };
 
     useEffect(() => {
-        if (activeCalls.length > 0 && Object.keys(activeCalls[0] || {}).length > 0) {
-            setHasActiveCall(true);
-        } else {
-            setHasActiveCall(false);
-        }
+        if (activeCalls.length > 0 && Object.keys(activeCalls[0] || {}).length > 0) setHasActiveCall(true);
+        else setHasActiveCall(false);
     }, [activeCalls]);
 
     useEffect(() => {
@@ -426,9 +329,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         const hasAppField = first !== undefined && "application" in (first as any);
         const hasApp = Boolean((first as any)?.application);
 
-        if (hasAppField && hasApp) {
-            setPostCallData(first);
-        }
+        if (hasAppField && hasApp) setPostCallData(first);
 
         if (!hasActiveCall && !hasAppField && postCallData?.application) {
             socket.emit("get_fs_report", {
@@ -470,9 +371,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeCalls, postCallData, hasActiveCall]);
 
-    const getRegisteredSofia = (status: string) => {
-        return (status || "").includes("Registered");
-    };
+    const getRegisteredSofia = (status: string) => (status || "").includes("Registered");
 
     useEffect(() => {
         let intervalId: ReturnType<typeof setInterval> | undefined;
@@ -480,11 +379,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         if (hasActiveCall) {
             const first: any = activeCalls && activeCalls.length ? activeCalls[0] : {};
             const epoch = first.b_created_epoch || first.created_epoch;
-            const start = epoch
-                ? new Date(Number(epoch) * 1000)
-                : first.b_created
-                    ? new Date(first.b_created)
-                    : new Date();
+            const start = epoch ? new Date(Number(epoch) * 1000) : first.b_created ? new Date(first.b_created) : new Date();
 
             intervalId = setInterval(() => {
                 const diffMs = Date.now() - start.getTime();
@@ -583,7 +478,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 };
 
                 const response = await axios.post<any>("/api/v1/grouped_contacts", {
-                    glagol_parent: (projectPool?.[0] as any)?.scheme || "",
+                    glagol_parent: glagolParent,
                     group_by: matchedPreset.preset.group_by,
                     filter_by,
                     group_table: matchedPreset.preset.group_table,
@@ -867,12 +762,21 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         return () => {
             socket.off("get_out_start", handleGetOutStart);
         };
-    }, [sipLogin, sessionKey, worker, hasActiveCall, handleOutboundCall, expressCall, setOutboundID, setOutboundCall, setOutActiveProjectName, setOutActivePhoneData]);
+    }, [
+        sipLogin,
+        sessionKey,
+        worker,
+        hasActiveCall,
+        handleOutboundCall,
+        expressCall,
+        setOutboundID,
+        setOutboundCall,
+        setOutActiveProjectName,
+        setOutActivePhoneData,
+    ]);
 
     const handleCallByNumber = () => {
-        if (!activeCalls?.[0]?.application) {
-            setHandleOutboundCall(true);
-        }
+        if (!activeCalls?.[0]?.application) setHandleOutboundCall(true);
         setOutboundCall(true);
 
         if (hasActiveCall) setCallType("redirect");
@@ -1014,9 +918,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         return (status || "").includes("Unregistered") ? sofiaMapping.Unregistered : sofiaMapping.Registered;
     };
 
-    const currentSofia = fsStatus?.sofia_status
-        ? getSofiaStatus(fsStatus.sofia_status)
-        : { text: "Обновляется", color: "#cba200" };
+    const currentSofia = fsStatus?.sofia_status ? getSofiaStatus(fsStatus.sofia_status) : { text: "Обновляется", color: "#cba200" };
 
     const callStatusMapped =
         fsStatus?.status
@@ -1027,164 +929,8 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     const postColor = statusMapping.Post.color;
 
-    const displayStatusText = hasActiveCall
-        ? `Активный вызов (${callTimer})`
-        : post
-            ? statusMapping.Post.text
-            : callStatusMapped.text;
-
+    const displayStatusText = hasActiveCall ? `Активный вызов (${callTimer})` : post ? statusMapping.Post.text : callStatusMapped.text;
     const displayStatusColor = hasActiveCall ? postColor : callStatusMapped.color;
-
-    /** ===== "Кто онлайн?" ===== */
-    const renderColleagueCards = () => {
-        const allEntries = Object.entries(monitorUsers || {});
-
-        // 1) Поиск
-        let filtered = allEntries.filter(([login, user]: [string, any]) => {
-            const l = String(login || "");
-            const nm = String(user?.name || "");
-            return l.toLowerCase().includes(searchTerm.toLowerCase()) || nm.toLowerCase().includes(searchTerm.toLowerCase());
-        });
-
-        // 2) Тип
-        if (typeFilter === "operators") {
-            filtered = filtered.filter(([_, u]) => u?.post_obrabotka !== false);
-        } else if (typeFilter === "robots") {
-            filtered = filtered.filter(([_, u]) => u?.post_obrabotka === false);
-        }
-
-        // 3) Онлайн/оффлайн (ВАЖНО: ключом может быть sip_login)
-        if (statusFilter !== "all") {
-            filtered = filtered.filter(([login, user]) => {
-                const sipKey = String(user?.sip_login || login); // ✅ FIX
-                const statusObj = userStatuses?.[sipKey] || {};
-                const isOnline = String(statusObj?.sofia_status || "").includes("Registered");
-                return statusFilter === "online" ? isOnline : !isOnline;
-            });
-        }
-
-        const liveOperators = filtered.filter(([_, u]) => u?.post_obrabotka !== false);
-        const robots = filtered.filter(([_, u]) => u?.post_obrabotka === false);
-
-        const renderGroup = (entries: [string, any][]) =>
-            entries.map(([login, user]) => {
-                const sipKey = String(user?.sip_login || login);
-
-                // Проекты по sipKey
-                const projectNames: string[] = Array.isArray(monitorCallcenter?.[sipKey])
-                    ? monitorCallcenter?.[sipKey]
-                        .filter((key: any) => typeof key === "string" || typeof key === "number")
-                        .map((key: any) => (monitorProjects as any)?.[key] ?? String(key))
-                    : [];
-
-                // Статусы тоже по sipKey
-                const statusObj = userStatuses?.[sipKey] || {};
-                const { sofia_status, status: fsSt, state: fsState } = statusObj;
-
-                const sofiaText = String(sofia_status || "").includes("Registered") ? "Авторизован" : "Выключен";
-                const sofiaColor = String(sofia_status || "").includes("Registered") ? "#0BB918" : "#f33333";
-
-                let fsText = fsSt || "Обновляется";
-                let fsColor = "#cba200";
-
-                if (fsSt === "Logged Out") {
-                    fsText = "Выключен";
-                    fsColor = "#f33333";
-                } else if (fsState === "In a queue call" && String(fsSt || "").includes("Available")) {
-                    fsText = "Активный вызов";
-                    fsColor = "#cba200";
-                } else if (String(fsSt || "").includes("Available") && fsState === "Idle") {
-                    fsText = "Постобработка";
-                    fsColor = "#cba200";
-                } else if (String(fsSt || "").includes("Available") && fsState === "Waiting") {
-                    fsText = "На линии";
-                    fsColor = "#0BB918";
-                } else if (fsSt === "On Break") {
-                    fsText = "Перерыв";
-                    fsColor = "#cba200";
-                }
-
-                const ready = String(fsSt || "").includes("Available") && fsState === "Waiting";
-                const sofiaRegistered = String(sofia_status || "").includes("Registered");
-                const fsLoggedOut = String(fsSt || "").includes("Logged Out");
-                const isOnline = sofiaRegistered && !fsLoggedOut;
-
-                const isHuman = user?.post_obrabotka !== false;
-                const canCalling = isHuman && isOnline && String(sipKey) !== String(sipLogin) && !hasInterCall;
-
-                const isDialingThis = dialingLogin === sipKey;
-
-                return (
-                    <div key={sipKey} className="col-sm-6 col-md-4 col-lg-3 mb-3">
-                        <div className="card h-100">
-                            <div className="card-body">
-                                <h6 className="card-title">
-                                    {user?.name} ({sipKey})
-                                </h6>
-                                <div style={{display: "flex", justifyContent: "space-between"}}>
-                                    <div>
-                                        <p className="mb-1" style={{ color: sofiaColor }}>
-                                            {sofiaText}
-                                        </p>
-
-                                        <p className="mb-2" style={{ color: fsColor }}>
-                                            {fsText}
-                                        </p>
-
-                                    </div>
-                                    {canCalling && (
-                                        <button
-                                            className="btn btn-sm btn-outline-success"
-                                            disabled={!webrtcEnabled || !!dialingLogin}
-                                            onClick={() => handleCallOperator(sipKey)}
-                                            title={isDialingThis ? "Идёт вызов…" : `Позвонить ${user?.name || sipKey}`}
-                                        >
-                                            {isDialingThis ? (
-                                                <>
-                                                    <span className="spinner-border spinner-border-sm mr-2" role="status" aria-hidden="true" />
-                                                    Идёт вызов…
-                                                </>
-                                            ) : (
-                                                "Позвонить"
-                                            )}
-                                        </button>
-                                    )}
-                                </div>
-                                {/*{ready && <span style={{ color: fsColor }}>Готов</span>}*/}
-
-                                <div className="d-flex flex-wrap">
-                                    {projectNames.length
-                                        ? projectNames.map((prj) => (
-                                            <span
-                                                key={prj}
-                                                className="mb-1 mr-1 px-2 py-1 rounded text-primary"
-                                                style={{ border: "1px solid" }}
-                                            >
-                                              {prj}
-                                            </span>
-                                        ))
-                                        : "Проекты не назначены"}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                );
-            });
-
-        return (
-            <div>
-                <div>
-                    <h6>Операторы</h6>
-                    {liveOperators.length > 0 ? <div className="row">{renderGroup(liveOperators)}</div> : <p>Нет операторов</p>}
-                </div>
-                <hr />
-                <div>
-                    <h6>Роботы</h6>
-                    {robots.length > 0 ? <div className="row">{renderGroup(robots)}</div> : <p>Нет роботов</p>}
-                </div>
-            </div>
-        );
-    };
 
     const renderButtons = () => {
         const currentStatus = fsStatus.status;
@@ -1219,21 +965,11 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     </>
                 )}
 
-                <button
-                    name="statuses_vis"
-                    id="statuses"
-                    className="btn btn-outline-light text text-dark mx-1 ml-2"
-                    onClick={handleStatusesVis}
-                >
+                <button name="statuses_vis" id="statuses" className="btn btn-outline-light text text-dark mx-1 ml-2" onClick={handleStatusesVis}>
                     Кто онлайн?
                 </button>
 
-                <button
-                    name="script_look"
-                    id="script_look"
-                    className="btn btn-outline-light text text-dark mx-1 ml-2"
-                    onClick={handleScriptLook}
-                >
+                <button name="script_look" id="script_look" className="btn btn-outline-light text text-dark mx-1 ml-2" onClick={handleScriptLook}>
                     Скрипты
                 </button>
 
@@ -1262,10 +998,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     </button>
                 )}
 
-                <button
-                    className={`btn mx-1 ml-2 ${autocallEnabled ? "btn-outline-success" : "btn-outline-primary"}`}
-                    onClick={toggleAutocall}
-                >
+                <button className={`btn mx-1 ml-2 ${autocallEnabled ? "btn-outline-success" : "btn-outline-primary"}`} onClick={toggleAutocall}>
                     Автообзвон: {autocallEnabled ? "Вкл" : "Выкл"}
                 </button>
             </>
@@ -1301,35 +1034,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 </div>
             </div>
 
-            {/*<>{hasActiveCall && (*/}
-            {/*    <div id="start_section" className="card ml-3 mr-0">*/}
-            {/*        <div className="card-body pr-0" id="glagol_actions">*/}
-            {/*            <div className="row col-12 pr-0" id="start_inner">*/}
-            {/*                <input*/}
-            {/*                    type="text"*/}
-            {/*                    className="form-control col input mb-0 mr-2"*/}
-            {/*                    style={{ height: "40px" }}*/}
-            {/*                    placeholder="Номер для вызова"*/}
-            {/*                    value={phone}*/}
-            {/*                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}*/}
-            {/*                />*/}
-            {/*                <button*/}
-            {/*                    name="start_calls"*/}
-            {/*                    id="start_call"*/}
-            {/*                    className="btn btn-outline-success mx-1 ml-2"*/}
-            {/*                    title="Вызов по введенному номеру телефона"*/}
-            {/*                    onClick={handleCallByNumber}*/}
-            {/*                >*/}
-            {/*                    <i className="align-middle mr-1 fas fa-fw fa-address-book"></i>*/}
-            {/*                    <span className="align-middle" id="vizov_btn">*/}
-            {/*      {"Вызов по номеру"}*/}
-            {/*    </span>*/}
-            {/*                </button>*/}
-            {/*            </div>*/}
-            {/*        </div>*/}
-            {/*    </div>*/}
-            {/*)}</>*/}
-
             <div className="card ml-3 mr-0">
                 <div className="card-body mt-0">
                     <div className="row col-12 my-0 py-0 mx-0 pr-0 pl-0" id="ver_place">
@@ -1343,60 +1047,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 </div>
             </div>
 
+            {/* ✅ Вынесено в отдельный компонент — теперь обновления /users и other_users не ререндерят весь HeaderPanel */}
             {showStatuses && (
-                <div id="active_sips" className="row col-12 pr-0 py-2">
-                    <div className="card col-12 mx-3 pl-0">
-                        <div className="card-header mt-0">
-                            <h5 style={{ marginRight: "20px", whiteSpace: "nowrap" }}>Список коллег онлайн</h5>
-
-                            <div className="d-flex align-items-center">
-                                <div style={{ width: "220px", marginRight: "15px" }}>
-                                    <label style={{ whiteSpace: "nowrap" }}>Поиск</label>
-                                    <input
-                                        type="text"
-                                        className="form-control"
-                                        placeholder="Поиск оператора/робота"
-                                        value={searchTerm}
-                                        onChange={(e) => setSearchTerm(e.target.value)}
-                                        style={{ width: "220px" }}
-                                    />
-                                </div>
-
-                                <div style={{ width: "220px", marginRight: "15px" }}>
-                                    <label style={{ whiteSpace: "nowrap" }}>Тип</label>
-                                    <select
-                                        className="form-control"
-                                        value={typeFilter}
-                                        onChange={(e) => setTypeFilter(e.target.value as "all" | "operators" | "robots")}
-                                        style={{ width: "220px" }}
-                                    >
-                                        <option value="all">Все</option>
-                                        <option value="operators">Операторы</option>
-                                        <option value="robots">Роботы</option>
-                                    </select>
-                                </div>
-
-                                <div style={{ width: "220px" }}>
-                                    <label style={{ whiteSpace: "nowrap" }}>Статус</label>
-                                    <select
-                                        className="form-control"
-                                        value={statusFilter}
-                                        onChange={(e) => setStatusFilter(e.target.value as "all" | "online" | "offline")}
-                                        style={{ width: "220px" }}
-                                    >
-                                        <option value="all">Все</option>
-                                        <option value="online">Онлайн</option>
-                                        <option value="offline">Оффлайн</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="card-body mt-0" style={{ maxHeight: "400px", overflowY: "auto" }}>
-                            {renderColleagueCards()}
-                        </div>
-                    </div>
-                </div>
+                <ColleaguesPanel show={showStatuses} glagolParent={glagolParent} meLogin={sipLogin} />
             )}
         </div>
     );

@@ -184,10 +184,10 @@ interface ColumnCell {
 
 export interface ApiRow {
     id_list: number[];
+    group_by?: string[] | string;
 
-    [columnKey: string]: ColumnCell | number[];
+    [columnKey: string]: any;
 }
-
 interface Action {
     action_name: string;
     action_type?: string;
@@ -287,6 +287,47 @@ function getMinIdsForPage(rows: ApiRow[]): number[] {
     return Array.from(set).sort((a, b) => a - b);
 }
 
+type GroupFactors = string[];
+
+function normGroupBy(gb: any): GroupFactors {
+    if (Array.isArray(gb)) return gb.map(v => String(v ?? "").trim()).filter(Boolean);
+    if (typeof gb === "string") {
+        const s = gb.trim();
+        return s ? [s] : [];
+    }
+    return [];
+}
+
+function lockKeyVariants(factors: GroupFactors): string[] {
+    const norm = factors.map(s => String(s ?? "").trim()).filter(Boolean);
+    if (!norm.length) return [];
+
+    const keys = [
+        JSON.stringify(norm),      // самый надёжный
+        norm.join("|"),
+        norm.join("||"),
+        norm.join(","),
+        norm.join(";"),
+    ];
+    if (norm.length === 1) keys.unshift(norm[0]); // на случай если бэк ключует одиночкой строкой
+    return keys;
+}
+
+function getLockIdForRow(row: ApiRow): number | null {
+
+    return getMinIdForRow(row);
+}
+
+type LockMark = true | string;
+type LocksMap = Record<string, LockMark>;
+
+function getLockMarkForRow(row: ApiRow, locks: Record<string, LockMark>): LockMark | null {
+    for (const rawId of row.id_list || []) {
+        const v = locks[String(rawId)];
+        if (v) return v;
+    }
+    return null;
+}
 const ROWS_PER_PAGE_KEY = 'tasksRowsPerPage';
 const LS_SEARCH_TERM_KEY = 'tasksSearchTerm';
 const LS_SELECTED_OPERATOR_KEY = 'tasksSelectedOperator';
@@ -416,23 +457,80 @@ const PresetSelectorTable: React.FC<Props> = ({
         return () => window.removeEventListener('keydown', onKey);
     }, []);
 
-    const [tableLocks, setTableLocks] = useState<Record<string, string>>({});
+    const [tableLocks, setTableLocks] = useState<LocksMap>({});
     const locksPollRef = useRef<number | null>(null);
     const lastLocksSigRef = useRef<string>("");
 
     const [showLockedOnly, setShowLockedOnly] = useState(false);
-    const [allLocks, setAllLocks] = useState<Record<string, string>>({});
+    const [allLocks, setAllLocks] = useState<LocksMap>({});
     const [allLocksLoading, setAllLocksLoading] = useState(false);
 
-    const normalizeLocksPayload = useCallback((payload: any) => {
-        const out: Record<string, string> = {};
-        if (!payload || typeof payload !== "object") return out;
+    const normalizeLocksPayload = useCallback((payload: any): Record<string, LockMark> => {
+        const out: Record<string, LockMark> = {};
 
-        for (const [k, v] of Object.entries(payload)) {
-            const key = String(k).trim();
-            const val = String(v ?? "").trim();
-            if (key && val) out[key] = val;
+        const put = (k: any, v: LockMark = true) => {
+            const key = String(k ?? "").trim();
+            if (!key) return;
+            out[key] = typeof v === "string" ? v.trim() : true;
+        };
+
+        const putIds = (arr: any[], v: LockMark = true) => {
+            for (const x of arr) {
+                const n = Number(x);
+                if (Number.isFinite(n)) put(n, v);
+            }
+        };
+
+        if (!payload) return out;
+
+        // вариант: { ids: [...] }
+        const idsField = payload?.ids ?? payload?.data?.ids ?? payload?.result?.ids;
+        if (Array.isArray(idsField)) {
+            putIds(idsField, true);
+            return out;
         }
+
+        // вариант: просто массив (НОВЫЙ контракт)
+        if (Array.isArray(payload)) {
+            // массив чисел -> просто локи
+            if (payload.every(x => Number.isFinite(Number(x)))) {
+                putIds(payload, true);
+                return out;
+            }
+
+            // массив объектов
+            for (const item of payload) {
+                if (item == null) continue;
+
+                if (Number.isFinite(Number(item))) {
+                    put(item, true);
+                    continue;
+                }
+
+                if (typeof item === "object") {
+                    // { id: 123, worker: "login" } или { ids:[..], worker:"login" }
+                    const who = item.worker ?? item.sip_login ?? item.login ?? item.locked_by;
+                    if (Array.isArray(item.ids)) { putIds(item.ids, who ? String(who) : true); continue; }
+                    if (item.id != null) { put(item.id, who ? String(who) : true); continue; }
+
+                    // fallback: { "15666": "login" } / { "15666": true }
+                    for (const [k, v] of Object.entries(item)) {
+                        if (typeof v === "string") put(k, v);
+                        else if (v) put(k, true);
+                    }
+                }
+            }
+            return out;
+        }
+
+        // вариант: объект-мапа
+        if (typeof payload === "object") {
+            for (const [k, v] of Object.entries(payload)) {
+                if (typeof v === "string") put(k, v);
+                else if (v) put(k, true);
+            }
+        }
+
         return out;
     }, []);
 
@@ -444,10 +542,10 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         setAllLocksLoading(true);
 
-        return await new Promise<Record<string, string>>((resolve) => {
+        return await new Promise<LocksMap>((resolve) => {
             let done = false;
 
-            const finish = (map: Record<string, string>) => {
+            const finish = (map: LocksMap) => {
                 if (done) return;
                 done = true;
                 setAllLocksLoading(false);
@@ -798,7 +896,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         if (!tableData?.length) return 0;
         let c = 0;
         for (const row of tableData) {
-            if (getPresentByForRow(row, allLocks)) c++;
+            if (getLockMarkForRow(row, allLocks)) c++;
         }
         return c;
     }, [tableData, allLocks]);
@@ -1978,10 +2076,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         }
 
         if (showLockedOnly) {
-            result = result.filter(row => {
-                const minId = getMinIdForRow(row);
-                return minId != null && !!allLocks[String(minId)];
-            });
+            result = result.filter(row => !!getLockMarkForRow(row, allLocks));
         }
 
         return result;
@@ -2051,16 +2146,25 @@ const PresetSelectorTable: React.FC<Props> = ({
     };
 
     const totalPages = Math.max(1, Math.ceil(processedRows.length / rowsPerPage));
-    const paginatedRows = processedRows.slice(
-        (currentPage - 1) * rowsPerPage,
-        currentPage * rowsPerPage
-    );
+    const paginatedRows = useMemo(() => {
+        return processedRows.slice(
+            (currentPage - 1) * rowsPerPage,
+            currentPage * rowsPerPage
+        );
+    }, [processedRows, currentPage, rowsPerPage]);
+
     const locksPageIds = useMemo(() => {
-        return getMinIdsForPage(paginatedRows);
-    }, [currentPage, rowsPerPage, processedRows.length, selectedPreset?.preset?.id, unreadOnly, searchTerm, sortConfig?.key, sortConfig?.direction]);
+        const set = new Set<number>();
+        for (const row of paginatedRows) {
+            for (const rawId of row.id_list || []) {
+                const n = Number(rawId);
+                if (Number.isFinite(n) && n > 0) set.add(n);
+            }
+        }
+        return Array.from(set).sort((a, b) => a - b);
+    }, [paginatedRows]);
 
-    const locksPageSig = useMemo(() => locksPageIds.join(','), [locksPageIds]);
-
+    const locksPageSig = useMemo(() => locksPageIds.join(","), [locksPageIds]);
     // useEffect(() => {
     //     if (!selectedPreset || !paginatedRows.length) return;
     //
@@ -2566,64 +2670,42 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     useEffect(() => () => onDragEnd(), []);
 
+    const clearTableLocksOnce = () => {
+        setTableLocks(prev => (Object.keys(prev).length ? {} : prev));
+    };
     useEffect(() => {
-        if (!selectedPreset) {
-            setTableLocks({});
-            return;
-        }
-        if (isCardUrl) {
-            setTableLocks({});
-            return;
-        }
-        if (showLockedOnly) {
-            setTableLocks({});
-            return;
-        }
+        if (!selectedPreset) return;
 
-
-        if (!locksPageIds.length) {
-            setTableLocks({});
+        if (isCardUrl || showLockedOnly || !sessionKey || !worker || !locksPageIds.length) {
+            clearTableLocksOnce();
             return;
         }
 
         const onLocks = (payload: any) => {
-            if (!payload || typeof payload !== "object") {
-                setTableLocks({});
-                return;
-            }
-            const out: Record<string, string> = {};
-            for (const [k, v] of Object.entries(payload)) {
-                const key = String(k);
-                const val = String(v ?? "");
-                if (key && val) out[key] = val;
-            }
-            setTableLocks(out);
+            setTableLocks(normalizeLocksPayload(payload));
         };
 
-        socket.off("table_locks", onLocks);
         socket.on("table_locks", onLocks);
 
-        const emitOnce = () => {
+        const emit = () => {
             if (locksPageSig === lastLocksSigRef.current) return;
             lastLocksSigRef.current = locksPageSig;
 
             socket.emit("table_locks", {
-                ids: locksPageIds,
-                sip_login: sipLogin,
                 session_key: sessionKey,
                 worker,
+                ids: locksPageIds,
             });
         };
 
-        emitOnce();
+        emit();
 
         if (locksPollRef.current) window.clearInterval(locksPollRef.current);
         locksPollRef.current = window.setInterval(() => {
             socket.emit("table_locks", {
-                ids: locksPageIds,
-                sip_login: sipLogin,
                 session_key: sessionKey,
                 worker,
+                ids: locksPageIds,
             });
         }, 5000);
 
@@ -2637,12 +2719,14 @@ const PresetSelectorTable: React.FC<Props> = ({
     }, [
         selectedPreset?.preset?.id,
         isCardUrl,
-        locksPageSig,
-        sipLogin,
+        showLockedOnly,
         sessionKey,
         worker,
-        showLockedOnly
+        locksPageSig,
+        locksPageIds,
+        normalizeLocksPayload,
     ]);
+
     const exportToExcel = (scope: ExportScope = 'all') => {
         if (!selectedPreset) return;
 
@@ -2729,8 +2813,6 @@ const PresetSelectorTable: React.FC<Props> = ({
             tz_offset: getTzOffsetMinutes(),
         });
     }, [worker, sipLogin, sessionKey, projectNames]);
-
-    console.log("__BUILD_MARK_2026_02_03__");
 
     return (
         <div>
@@ -3619,22 +3701,20 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 <tbody>
                                 {paginatedRows.map(row => {
                                     const key = row.id_list.join(',');
-                                    const minId = getMinIdForRow(row);
-
                                     const locksMap = showLockedOnly ? allLocks : tableLocks;
-                                    const presentBy = (minId != null) ? locksMap[String(minId)] : null;
-                                    const isPresent = !!presentBy;
-                                    const presentByMe = isPresent && String(presentBy) === String(sipLogin);
-
+                                    const lockMark = getLockMarkForRow(row, locksMap);
+                                    const isLocked = !!lockMark;
+                                    const lockedBy = typeof lockMark === "string" ? lockMark : null;
+                                    const lockedByMe = lockedBy && String(lockedBy) === String(sipLogin);
                                     return (
                                         <tr
                                             key={key}
                                             style={{
-                                                background: isPresent
-                                                    ? (presentByMe ? "rgba(16,185,129,0.08)" : "rgba(59,130,246,0.06)")
+                                                background: isLocked
+                                                    ? (lockedByMe ? "rgba(16,185,129,0.08)" : "rgba(245,158,11,0.10)")
                                                     : undefined,
                                             }}
-                                            title={isPresent ? `В карточке сейчас: ${presentBy}` : undefined}
+                                            title={isLocked ? (lockedBy ? `Закреплено: ${lockedBy}` : "Закреплено") : undefined}
                                         >
                                             {/* Чекбокс */}
                                             <td className="border p-2 text-center">
@@ -3658,24 +3738,24 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                 }}
                                             >
                                                 <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                                                    {isPresent && (
-                                                        <span
-                                                            className="material-icons"
-                                                            style={{
-                                                                fontSize: 18,
-                                                                lineHeight: 1,
-                                                                color: presentByMe ? "#10b981" : "#2563eb",
-                                                            }}
-                                                            title={presentByMe ? "Вы сейчас в карточке" : `Сейчас в карточке: ${presentBy}`}
-                                                        >
-                                                          person
-                                                        </span>
-                                                    )}
+                                                    {/*{isLocked && (*/}
+                                                    {/*    <span*/}
+                                                    {/*        className="material-icons"*/}
+                                                    {/*        style={{*/}
+                                                    {/*            fontSize: 18,*/}
+                                                    {/*            lineHeight: 1,*/}
+                                                    {/*            color: lockedByMe ? "#10b981" : "#2563eb",*/}
+                                                    {/*        }}*/}
+                                                    {/*        title={lockedByMe ? "Вы сейчас в карточке" : `Сейчас в карточке: ${lockedBy}`}*/}
+                                                    {/*    >*/}
+                                                    {/*      person*/}
+                                                    {/*    </span>*/}
+                                                    {/*)}*/}
 
                                                     {/* Открыть */}
                                                     <button
                                                         className="btn btn-sm btn-outline-light text-dark"
-                                                        title={isPresent ? `В карточке: ${presentBy}` : "Открыть"}
+                                                        title={"Открыть"}
                                                         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                                                             const url = makeGroupCardUrl(row, selectedPreset, phonesData);
 
@@ -3702,7 +3782,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                                     {/* Меню действий */}
                                                     <button
                                                         className="btn btn-sm btn-outline-light text-dark"
-                                                        title={isPresent ? `В карточке: ${presentBy}` : "Действия"}
+                                                        title={"Действия"}
                                                         onClick={() => setOpenActionsRow(openActionsRow === key ? null : key)}
                                                         aria-expanded={openActionsRow === key}
                                                     >

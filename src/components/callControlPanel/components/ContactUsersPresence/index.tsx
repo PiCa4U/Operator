@@ -1,10 +1,9 @@
-import React, {useEffect} from "react";
+import React, { useEffect } from "react";
 import { useSelector } from "react-redux";
 import type { RootState } from "../../../../redux/store";
 import { socket } from "../../../../socket";
 import { useOperatorsDirectory } from "../../../../features/signals/useOperatorsDirectory";
 import axios from "axios";
-import {normalizeUrl} from "../../index";
 
 function normalizeUsers(resp: any): string[] {
     const r = resp?.active_users ?? resp?.result ?? resp;
@@ -17,33 +16,106 @@ function readLockedBy(resp: any): string | null {
     return r ? String(r) : null;
 }
 
+function normFactors(arr: any): string[] {
+    if (!Array.isArray(arr)) return [];
+    return arr.map((x) => String(x ?? "").trim());
+}
+
+function extractRespGroupBy(resp: any): string[] {
+    const gb =
+        resp?.group_by ??
+        resp?.data?.group_by ??
+        resp?.result?.group_by ??
+        resp?.payload?.group_by ??
+        null;
+    return normFactors(gb);
+}
+
 type Props = {
     sipLogin: string;
     ids: number[];
+    group_by?: string[];
+    factors?: string[];
     enabled?: boolean;
     pollMs?: number;
     style?: React.CSSProperties;
     className?: string;
-    role: string | undefined
-    closeButton: (isLocker?: boolean) => void
-    setIsLocker: (isLocker: boolean) => void
+    role: string | undefined;
+    closeButton: (isLocker?: boolean) => void;
+    setIsLocker: (isLocker: boolean) => void;
 };
 
 const ContactUsersPresence: React.FC<Props> = React.memo(
-    ({ sipLogin, ids, enabled = true, pollMs = 5000, style, className, role, closeButton, setIsLocker }) => {
+    ({
+         sipLogin,
+         ids,
+         group_by,
+         factors,
+         enabled = true,
+         pollMs = 5000,
+         style,
+         className,
+         role,
+         closeButton,
+         setIsLocker,
+     }) => {
         const sessionKey = useSelector((s: RootState) => s.operator.sessionKey);
         const worker = useSelector((s: RootState) => s.credentials.worker || "");
-        const glagolParent = useSelector((s: RootState) => (s as any).credentials?.glagolParent || "");
+        const glagolParent = useSelector(
+            (s: RootState) => (s as any).credentials?.glagolParent || ""
+        );
+
         const isManager = String(role).toLowerCase() === "manager";
         const { data: operatorDict = {} } = useOperatorsDirectory();
 
+        // --- group_by: один набор факторов ---
+        // const stableGroupBy = React.useMemo(() => normFactors(group_by), [group_by]);
+
+        // --- group_by (значения) + factors (имена факторов)
+        const stableGroupBy = React.useMemo(() => normFactors(group_by), [group_by]);
+        const stableFactors = React.useMemo(() => normFactors(factors), [factors]);
+        const hasGroup = stableGroupBy.length > 0;
+
+        const cardId = React.useMemo(() => {
+            const arr = (ids || [])
+                .map(Number)
+                .filter(Number.isFinite)
+                .sort((a, b) => a - b);
+            return arr[0] ?? null;
+        }, [ids]);
+
+        const hasTarget = !!cardId && stableGroupBy.length > 0 && stableFactors.length > 0;
+
+        const pingAndFetch = React.useCallback(() => {
+            if (!sessionKey || !worker) return;
+            if (!sipLogin) return;
+            if (!hasTarget) return;
+
+            socket.emit("contact_users", {
+                session_key: sessionKey,
+                worker,
+                sip_login: sipLogin,
+                id: cardId,                 // ✅ обязателен
+                group_by: stableGroupBy,    // ✅ значения
+                factors: stableFactors,     // ✅ имена факторов
+            });
+        }, [sessionKey, worker, sipLogin, hasTarget, cardId, stableGroupBy, stableFactors]);
+        // --- ids fallback ---
         const idsKey = React.useMemo(
-            () => (ids || []).map(Number).filter(Number.isFinite).sort((a, b) => a - b).join(","),
+            () =>
+                (ids || [])
+                    .map(Number)
+                    .filter(Number.isFinite)
+                    .sort((a, b) => a - b)
+                    .join(","),
             [ids]
         );
 
         const stableIds = React.useMemo(
-            () => (idsKey ? idsKey.split(",").map((s) => Number(s)).filter(Number.isFinite) : []),
+            () =>
+                idsKey
+                    ? idsKey.split(",").map((s) => Number(s)).filter(Number.isFinite)
+                    : [],
             [idsKey]
         );
 
@@ -57,69 +129,94 @@ const ContactUsersPresence: React.FC<Props> = React.memo(
         const lockedByMe = hasLock && String(lockedBy) === String(sipLogin);
 
         const applyResp = React.useCallback((resp: any) => {
-            const users = normalizeUsers(resp);
-            const lock = readLockedBy(resp);
-            setCardUsers(users);
-            setLockedBy(lock);
+            setCardUsers(normalizeUsers(resp));
+            setLockedBy(readLockedBy(resp));
         }, []);
 
         useEffect(() => {
-            if (hasLock && String(lockedBy) === String(sipLogin)) {
-                setIsLocker(true)
-            }
-        },[lockedBy])
+            setIsLocker(lockedByMe);
+        }, [lockedByMe, setIsLocker]);
 
         const requestUsers = React.useCallback(() => {
-            if (!stableIds.length) return;
+            if (!sessionKey || !worker) return;
 
-            socket.emit("contact_users", { ids: stableIds, session_key: sessionKey, worker });
-        }, [stableIds, sessionKey, worker]);
+            if (hasGroup) {
+                socket.emit("contact_users", {
+                    group_by: stableGroupBy,
+                    session_key: sessionKey,
+                    worker,
+                });
+                return;
+            }
+
+            if (!stableIds.length) return;
+            socket.emit("contact_users", {
+                ids: stableIds,
+                session_key: sessionKey,
+                worker,
+            });
+        }, [hasGroup, stableGroupBy, stableIds, sessionKey, worker]);
 
         const heartbeat = React.useCallback(() => {
-            if (!stableIds.length || !sipLogin) return;
+            if (!sessionKey || !worker) return;
+            if (!sipLogin) return;
 
+            if (hasGroup) {
+                socket.emit("user_in_contact", {
+                    sip_login: sipLogin,
+                    group_by: stableGroupBy,
+                    session_key: sessionKey,
+                    worker,
+                });
+                requestUsers();
+                return;
+            }
+
+            if (!stableIds.length) return;
             socket.emit("user_in_contact", {
                 sip_login: sipLogin,
                 ids: stableIds,
                 session_key: sessionKey,
                 worker,
             });
-
             requestUsers();
-        }, [sipLogin, stableIds, sessionKey, worker, requestUsers]);
+        }, [sipLogin, hasGroup, stableGroupBy, stableIds, sessionKey, worker, requestUsers]);
 
         React.useEffect(() => {
-            if (!enabled || !sipLogin || !stableIds.length) {
+            if (!enabled || !sipLogin || !hasTarget) {
                 setCardUsers([]);
                 setLockedBy(null);
                 setUnlockErr(null);
                 return;
             }
 
-            const onUsers = (resp: any) => {
-                const r = resp?.data ?? resp?.result ?? resp;
-                const respIds = Array.isArray(r?.ids)
-                    ? r.ids.map((x: any) => Number(x)).filter(Number.isFinite)
-                    : null;
+            const sameArr = (a: string[], b: string[]) => JSON.stringify(a) === JSON.stringify(b);
 
-                if (respIds && !stableIds.some((id) => respIds.includes(id))) return;
+            const onUsers = (resp: any) => {
+                const respId = Number(resp?.id ?? resp?.data?.id ?? resp?.result?.id);
+                const respGb = extractRespGroupBy(resp);
+                const respFactors = normFactors(resp?.factors ?? resp?.data?.factors ?? resp?.result?.factors);
+
+                // фильтруем чужие события
+                if (respId && cardId && respId !== cardId) return;
+                if (respGb.length && !sameArr(respGb, stableGroupBy)) return;
+                if (respFactors.length && !sameArr(respFactors, stableFactors)) return;
 
                 applyResp(resp);
             };
 
             socket.on("contact_users", onUsers);
 
-            heartbeat();
-            const pollId = window.setInterval(heartbeat, pollMs);
+            pingAndFetch();
+            const pollId = window.setInterval(pingAndFetch, pollMs);
 
             return () => {
                 window.clearInterval(pollId);
                 socket.off("contact_users", onUsers);
             };
-        }, [enabled, sipLogin, stableIds, pollMs, heartbeat, applyResp]);
+        }, [enabled, sipLogin, hasTarget, cardId, stableGroupBy, stableFactors, pollMs, pingAndFetch, applyResp]);
 
-        if (!stableIds.length) return null;
-
+        if (!hasGroup && !stableIds.length) return null;
 
         const canUnlock = hasLock && (lockedByMe || isManager);
 
@@ -140,18 +237,18 @@ const ContactUsersPresence: React.FC<Props> = React.memo(
 
         const handleUnlock = async () => {
             if (!canUnlock) return;
-            if (!stableIds.length) return;
 
             setUnlockErr(null);
             setUnlocking(true);
 
             try {
-                await axios.post("/api/v1/group_lock/off", {
-                    glagol_parent: glagolParent,
-                    ids: stableIds,
-                });
-
-                // лок снят — обновим отображение
+                if (hasGroup) {
+                    await axios.post("/api/v1/group_lock/off", {
+                        glagol_parent: glagolParent,
+                        group_by: stableGroupBy,
+                        factors
+                    });
+                }
                 setLockedBy(null);
                 requestUsers();
             } catch (e: any) {
@@ -179,9 +276,10 @@ const ContactUsersPresence: React.FC<Props> = React.memo(
                     ...style,
                 }}
             >
-                <span className="material-icons" style={{ color: iconColor }}>
-                  groups
-                </span>
+        <span className="material-icons" style={{ color: iconColor }}>
+          groups
+        </span>
+
                 {cardUsers.length ? (
                     <div style={{ fontSize: 13 }}>
                         <strong>В карточке:</strong> {renderList(cardUsers)}
@@ -190,9 +288,9 @@ const ContactUsersPresence: React.FC<Props> = React.memo(
 
                 {lockedBy ? (
                     <div style={{ fontSize: 13, display: "inline-flex", alignItems: "center", gap: 8 }}>
-                        <span>
-                          <strong>Закреплено:</strong> <span>{toName(lockedBy)}</span>
-                        </span>
+            <span>
+              <strong>Закреплено:</strong> <span>{toName(lockedBy)}</span>
+            </span>
                         {canUnlock && (
                             <button
                                 type="button"
@@ -202,9 +300,9 @@ const ContactUsersPresence: React.FC<Props> = React.memo(
                                 title={lockedByMe ? "Снять лок (вы владелец)" : "Снять лок (менеджер)"}
                                 style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
                             >
-                                <span className="material-icons" style={{ fontSize: 18, lineHeight: 1 }}>
-                                  lock_open
-                                </span>
+                <span className="material-icons" style={{ fontSize: 18, lineHeight: 1 }}>
+                  lock_open
+                </span>
                                 {unlocking ? "Снимаю..." : "Снять лок"}
                             </button>
                         )}
@@ -216,22 +314,23 @@ const ContactUsersPresence: React.FC<Props> = React.memo(
                         {unlockErr}
                     </div>
                 ) : null}
+
                 <button
                     onClick={() => closeButton(lockedByMe)}
                     className="btn btn-outline-light text text-dark"
                     style={{
-                        position: 'absolute',
+                        position: "absolute",
                         top: 25,
                         right: 35,
-                        padding: '4px 8px',
+                        padding: "4px 8px",
                         fontSize: 14,
                         lineHeight: 1,
                         zIndex: 1,
                     }}
                 >
-                    <span className="material-icons" style={{ marginTop: 4 }}>
-                        close
-                    </span>
+          <span className="material-icons" style={{ marginTop: 4 }}>
+            close
+          </span>
                 </button>
             </div>
         );

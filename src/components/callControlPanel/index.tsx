@@ -722,10 +722,24 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const presenceKey = useMemo(() => presenceIds.join(","), [presenceIds]);
 
+    const groupByFactors = useMemo<string[] | undefined>(() => {
+        const keys = selectedPreset?.preset?.group_by;
+        const sample = openedPhones?.[0];
+        if (!sample || !Array.isArray(keys) || !keys.length) return undefined;
+
+        return keys.map((k) => String((sample as any)[k] ?? (sample as any)?.contact_info?.[k] ?? "").trim());
+    }, [openedPhones, selectedPreset?.preset?.group_by]);
+
+    const groupByPayload = useMemo(() => {
+        // таблица шлёт массив групп => тут шлём одну группу как list-of-lists
+        return groupByFactors && groupByFactors.length ? [groupByFactors] : undefined;
+    }, [groupByFactors]);
     const otherUsers = useMemo(
         () => cardUsers.filter(u => String(u) !== String(sipLogin)),
         [cardUsers, sipLogin]
     );
+
+
     const POST_LIMIT = worker.includes('fs@akc24.ru') ? 12000 : 1200;
 
     const postSecondsRef = useRef<number>(POST_LIMIT);
@@ -1018,7 +1032,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const activityLabels = useMemo(() => {
         const keys = new Set<string>();
-
+        console.log()
         projectPool.forEach((p: any) => {
             if (!selectedProjects.includes(p.project_name)) return;
 
@@ -1951,12 +1965,17 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             // })
 
             if (openedPhones) {
-                const ids = openedPhones?.map((item) => item.id)
-                socket.emit("group_lock_off", {
-                    ids,
-                    session_key: sessionKey,
-                    worker
-                })
+                // axios.post("/api/v1/group_lock/off", {
+                //     glagol_parent: glagolParent,
+                //     group_by: groupByFactors,
+                //     factors: selectedPreset?.preset?.group_by ?? []
+                // });
+
+                // socket.emit("group_lock_off", {
+                //     group_by: groupByPayload,
+                //     session_key: sessionKey,
+                //     worker
+                // })
             }
 
             setIsParams(false)
@@ -3042,12 +3061,17 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 setDockOpen(false);
                                 handleCloseCard();
                                 if (openedPhones && isLocker) {
-                                    const ids = openedPhones?.map((item) => item.id)
-                                    socket.emit("group_lock_off", {
-                                        ids,
-                                        session_key: sessionKey,
-                                        worker
-                                    })
+                                    axios.post("/api/v1/group_lock/off", {
+                                        glagol_parent: glagolParent,
+                                        group_by: groupByFactors,
+                                        factors: selectedPreset?.preset?.group_by ?? []
+                                    });
+
+                                    // socket.emit("group_lock_off", {
+                                    //     group_by: groupByPayload,
+                                    //     session_key: sessionKey,
+                                    //     worker
+                                    // })
                                 }
                             }}
                             title="Закрыть карточку"
@@ -3075,6 +3099,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 border: '1px solid #2563eb',
                             }}
                             onClick={() => {
+                                axios.post("/api/v1/group_lock/off", {
+                                    glagol_parent: glagolParent,
+                                    group_by: groupByFactors,
+                                    factors: selectedPreset?.preset?.group_by ?? []
+                                });
                                 handleNextTask();
                                 delayedClose();
                             }}
@@ -3528,12 +3557,17 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
         normalizeUrl();
         if (openedPhones && isLocker) {
-            const ids = openedPhones?.map((item) => item.id)
-            socket.emit("group_lock_off", {
-                ids,
-                session_key: sessionKey,
-                worker
-            })
+            axios.post("/api/v1/group_lock/off", {
+                glagol_parent: glagolParent,
+                group_by: groupByFactors,
+                factors: selectedPreset?.preset?.group_by ?? []
+            });
+
+            // socket.emit("group_lock_off", {
+            //     group_by: groupByPayload,
+            //     session_key: sessionKey,
+            //     worker
+            // })
         }
     }
 
@@ -3550,6 +3584,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 enabled={Boolean(sipLogin) && presenceIds.length > 0}
                                 sipLogin={sipLogin}
                                 ids={presenceIds}
+                                group_by={groupByFactors}
+                                factors={selectedPreset?.preset?.group_by ?? []}
                                 pollMs={5000}
                                 role={role}
                                 closeButton={closeButton}

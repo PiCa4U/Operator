@@ -674,11 +674,13 @@ export const OperatorsTab: React.FC = () => {
         };
     }, [glagol_parent]);
 
-    const ROBOT_LABELS = ["Робот", "Оператор"] as const;
-    const ONLINE_LABELS = ["Онлайн", "Оффлайн"] as const;
+    const POST_LABELS = ["Вкл", "Выкл"] as const;
 
-    const robotToLabel = (v: "all" | "robot" | "human"): string | null =>
-        v === "robot" ? "Робот" : v === "human" ? "Оператор" : null;
+    const postToLabel = (v: "all" | "robot" | "human"): string | null =>
+        v === "human" ? "Вкл" : v === "robot" ? "Выкл" : null;
+
+    const labelToPost = (label: string | null): "all" | "robot" | "human" =>
+        label === "Вкл" ? "human" : label === "Выкл" ? "robot" : "all";
     const labelToRobot = (label: string | null): "all" | "robot" | "human" =>
         label === "Робот" ? "robot" : label === "Оператор" ? "human" : "all";
     const onlineToLabel = (v: "all" | "online" | "offline"): string | null =>
@@ -1075,12 +1077,12 @@ export const OperatorsTab: React.FC = () => {
                     </div>
 
                     <div style={{ flex: "1 1 220px", maxWidth: 260 }}>
-                        <label className="form-label mb-1">Роботы</label>
+                        <label className="form-label mb-1">Постобработка</label>
                         <OperatorsSelect
-                            value={(() => (filters.robot === "robot" ? "Робот" : filters.robot === "human" ? "Оператор" : null))()}
-                            options={["Робот", "Оператор"]}
+                            value={postToLabel(filters.robot)}
+                            options={[...POST_LABELS]}
                             onChange={(label: any) => {
-                                const v = label === "Робот" ? "robot" : label === "Оператор" ? "human" : "all";
+                                const v = labelToPost(label);
                                 setFilters((f) => ({ ...f, robot: v }));
                                 setPage(1);
                             }}
@@ -1295,7 +1297,7 @@ export const OperatorsTab: React.FC = () => {
                             <th style={stickyTh}>Sip Логин</th>
                             <th style={stickyTh}>Роль</th>
                             <th style={stickyTh}>Отдел</th>
-                            <th style={stickyTh}>Робот</th>
+                            <th style={stickyTh}>Постобработка</th>
                             <th style={stickyTh}>Проекты</th>
                             <th style={stickyTh}>Статус</th>
                             <th style={stickyTh}>Состояние</th>
@@ -1313,14 +1315,13 @@ export const OperatorsTab: React.FC = () => {
                         {!query.isLoading &&
                             pageItems.map((a) => {
                                 const hasVideo = screenShareStreams && screenShareStreams.length > 0;
-                                const isHuman = !!a.post_obrabotka;       // "Человек"
                                 const isOperator = a.role === "operator"; // только операторы
 
                                 const isOnline =
                                     !!a.fs_status && !norm(a.status).includes("logged out"); // онлайн
 
-                                const canCalling = isHuman && isOnline && sipLogin !== a.login;
-                                const canHaveScreen = isOperator && isHuman && isOnline;
+                                const canCalling = isOperator && isOnline && sipLogin !== a.login;
+                                const canHaveScreen = isOperator && isOnline;
                                 const isScreenActiveHere = activeScreenOperator === a.login;
 
                                 const screenBtnDisabled =
@@ -1350,9 +1351,12 @@ export const OperatorsTab: React.FC = () => {
                                     </td>
                                     <td>{a.department ?? "-"}</td>
                                     <td>
-                                      <span className={`badge ${a.post_obrabotka ? "bg-info" : "bg-secondary"}`}>
-                                        {!a.post_obrabotka ? "Робот" : "Человек"}
-                                      </span>
+                                        {(() => {
+                                            const v = a.post_obrabotka;
+                                            if (v === true) return <span className="badge bg-success">Вкл</span>;
+                                            if (v === false) return <span className="badge bg-secondary">Выкл</span>;
+                                            return <span className="text-muted">—</span>;
+                                        })()}
                                     </td>
                                     <td>
                                         {(() => {

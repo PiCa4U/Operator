@@ -10,7 +10,7 @@ import Swal from "sweetalert2";
 import { useDispatch, useSelector } from "react-redux";
 
 import { socket } from "../../../../socket";
-import type { RootState } from "../../../../redux/store";
+import { RootState, store } from "../../../../redux/store";
 import { setUserStatuses } from "../../../../redux/operatorSlice";
 
 import { useSip } from "../../../../context/SipContext";
@@ -23,16 +23,17 @@ type OperatorItem = {
     department?: string;
 };
 
+type DialplanExtensionItem = {
+    id: string;
+    ext: string;
+    title: string;
+    project_name: string;
+};
+
 function toStr(v: any) {
     return String(v ?? "").trim();
 }
 
-/**
- * other_users может прийти:
- * 1) объектом { [sip_login]: { status, state, sofia_status, ... } }
- * 2) массивом [{ sip_login, status, state, sofia_status, ... }, ...]
- * Приводим к объекту.
- */
 function sanitizeOtherUsers(msg: any): Record<string, any> {
     if (!msg) return {};
     if (Array.isArray(msg)) {
@@ -61,7 +62,6 @@ function otherUsersSig(obj: Record<string, any>) {
 function normalizeOperatorsDirectory(data: any): OperatorItem[] {
     if (!data) return [];
 
-    // Вариант 1: массив записей
     if (Array.isArray(data)) {
         return data
             .map((x: any) => {
@@ -78,7 +78,6 @@ function normalizeOperatorsDirectory(data: any): OperatorItem[] {
             .filter(Boolean) as OperatorItem[];
     }
 
-    // Вариант 2: словарь { login: "Name" } или { login: { ... } }
     if (typeof data === "object") {
         return Object.entries(data)
             .map(([k, v]: [string, any]) => {
@@ -130,21 +129,22 @@ function mapFsLabel(fsStatus: any, fsState: any) {
     const st = String(fsStatus || "");
     const state = String(fsState || "");
 
-    // максимально похоже на твой HeaderPanel
     if (st === "Logged Out") return { text: "Выключен", color: "#f33333" };
     if (st === "On Break") return { text: "Перерыв", color: "#cba200" };
 
-    if (state === "In a queue call" && st.includes("Available"))
+    if (state === "In a queue call" && st.includes("Available")) {
         return { text: "Активный вызов", color: "#cba200" };
-    if (st.includes("Available") && state === "Idle")
+    }
+    if (st.includes("Available") && state === "Idle") {
         return { text: "Постобработка", color: "#cba200" };
-    if (st.includes("Available") && state === "Waiting")
+    }
+    if (st.includes("Available") && state === "Waiting") {
         return { text: "На линии", color: "#0BB918" };
+    }
 
     return { text: st || "Обновляется", color: "#6b7280" };
 }
 
-/** Твой способ выбрать "главный" interCall (как в main app) */
 function pickPrimaryInterCall(list: any[]) {
     const arr = (list || []).filter(Boolean);
     if (!arr.length) return null;
@@ -170,57 +170,104 @@ type Props = {
     exclude?: string[];
     style?: React.CSSProperties;
     className?: string;
+
+    onTakeoverTransfer?: (targetLogin: string) => void | Promise<void>;
+
+    openedPhones: any[];
+    handleHold: () => void;
+    isMainCallHeld: boolean;
+
+    dialplanExtensions?: DialplanExtensionItem[];
+    findProjectLabel?: (projectName: string) => string;
 };
 
 const EMPTY_STATUSES: Record<string, any> = {};
 
 const InternalOperatorsDialer: React.FC<Props> = React.memo(
-    ({ enabled, currentLogin, exclude = [], style, className }) => {
+    ({
+         enabled,
+         currentLogin,
+         exclude = [],
+         style,
+         className,
+         onTakeoverTransfer,
+         openedPhones,
+         handleHold,
+         isMainCallHeld,
+         dialplanExtensions = [],
+         findProjectLabel,
+     }) => {
         const dispatch = useDispatch();
 
-        // directory нужен только чтобы показать "Имя · логин"
+        const { worker = "" } = store.getState().credentials;
+        const { sessionKey } = store.getState().operator;
+
         const { data: operatorDict = {} } = useOperatorsDirectory();
 
-        const { enabled: webrtcEnabled, callOperator, makeCall, status: sipStatus } =
-            useSip();
+        const {
+            enabled: webrtcEnabled,
+            callOperator,
+            makeCall,
+            blindTransfer,
+
+            startConsultCall,
+            consultSession,
+            consultStatus,
+            consultTarget,
+
+            status: sipStatus,
+        } = useSip();
 
         const [open, setOpen] = useState(false);
         const [q, setQ] = useState("");
         const dq = useDeferredValue(q);
 
-        // режим фильтрации
         const [mode] = useState<"ready" | "online">("ready");
 
-        // ✅ локально: на какой логин нажали “Вызвать” (показываем “Идёт вызов…” + крутилку)
-        const [dialingLogin, setDialingLogin] = useState<string | null>(null);
+        const [busyLogin, setBusyLogin] = useState<string | null>(null);
 
-        // ✅ interCall из redux (как у тебя в main app)
+        const [busyKind, setBusyKind] = useState<
+            "call" | "transfer" | "blind" | "extension" | null
+        >(null);
+
+        const sleep = (ms: number) =>
+            new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+        const ensureMainCallHeld = useCallback(async () => {
+            if (isMainCallHeld) return;
+
+            handleHold();
+            await sleep(250);
+        }, [handleHold, isMainCallHeld]);
+
         const rawInterCalls = useSelector(
             (state: RootState) => (state.operator as any).interCalls
         );
+        const sipEstablished = String(sipStatus || "") === "Established";
+
+        const hasConsult = !!consultSession;
+        const consultEstablished = String(consultStatus || "") === "Established";
+
         const interCalls: any[] = useMemo(() => {
             return Array.isArray(rawInterCalls)
                 ? rawInterCalls
                 : Object.values(rawInterCalls || {});
         }, [rawInterCalls]);
-        const interCall = useMemo(
-            () => pickPrimaryInterCall(interCalls),
-            [interCalls]
-        );
+
+        const interCall = useMemo(() => pickPrimaryInterCall(interCalls), [interCalls]);
         const hasInterCall = !!interCall;
 
-        // ✅ если interCall появился — сбрасываем “идёт вызов…”
         useEffect(() => {
-            if (hasInterCall) setDialingLogin(null);
+            if (hasInterCall) {
+                setBusyLogin(null);
+                setBusyKind(null);
+            }
         }, [hasInterCall]);
 
-        // важный трюк: пока open=false — возвращаем один и тот же объект,
-        // чтобы обновления userStatuses НЕ триггерили ререндер закрытой панели
         const userStatuses = useSelector((s: RootState) =>
             open ? s.operator.userStatuses : EMPTY_STATUSES
         );
 
-        // Подписка на other_users (как у тебя в HeaderPanel) — только когда open=true
         const lastOtherUsersSigRef = useRef<string | null>(null);
 
         useEffect(() => {
@@ -244,22 +291,20 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
         }, [open, dispatch]);
 
         const baseList = useMemo(() => {
-            const all = normalizeOperatorsDirectory(operatorDict)
+            return normalizeOperatorsDirectory(operatorDict)
                 .filter((o) => o.login && o.login !== String(currentLogin))
                 .filter((o) => !exclude.includes(String(o.login)))
                 .sort(sortOperators);
-
-            return all;
         }, [operatorDict, currentLogin, exclude]);
 
         const enrichedList = useMemo(() => {
-            // берём статусы именно из other_users (redux userStatuses)
             return baseList
                 .map((o) => {
                     const st = userStatuses?.[String(o.login)] || {};
                     const sofiaOk = isOnlineBySofia(st?.sofia_status);
                     const readyOk = isReadyByFs(st?.status, st?.state);
                     const fsLabel = mapFsLabel(st?.status, st?.state);
+
                     return {
                         ...o,
                         __status: st,
@@ -269,14 +314,12 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                     };
                 })
                 .filter((o: any) => {
-                    // показываем только онлайн, или только готовых
                     if (mode === "ready") return o.__ready;
                     return o.__online;
                 });
         }, [baseList, userStatuses, mode]);
 
         const onlineCount = useMemo(() => {
-            // onlineCount считаем от baseList по userStatuses
             if (!open) return null;
             let c = 0;
             for (const o of baseList) {
@@ -294,19 +337,51 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                 const login = String(o.login).toLowerCase();
                 const name = String(o.name || "").toLowerCase();
                 const dep = String(o.department || "").toLowerCase();
-                return login.includes(needle) || name.includes(needle) || dep.includes(needle);
+
+                return (
+                    login.includes(needle) ||
+                    name.includes(needle) ||
+                    dep.includes(needle)
+                );
             });
         }, [enrichedList, dq]);
 
+        const filteredExtensions = useMemo(() => {
+            const needle = dq.trim().toLowerCase();
 
-        const canCall = enabled && webrtcEnabled && !hasInterCall;
+            const sorted = [...dialplanExtensions].sort((a, b) => {
+                if (a.project_name !== b.project_name) {
+                    return a.project_name.localeCompare(b.project_name, "ru");
+                }
+                return a.title.localeCompare(b.title, "ru", { numeric: true });
+            });
+
+            if (!needle) return sorted;
+
+            return sorted.filter((item) => {
+                const title = String(item.title || "").toLowerCase();
+                const ext = String(item.ext || "").toLowerCase();
+                const projectLabel = String(
+                    findProjectLabel?.(item.project_name) || item.project_name || ""
+                ).toLowerCase();
+
+                return (
+                    title.includes(needle) ||
+                    ext.includes(needle) ||
+                    projectLabel.includes(needle)
+                );
+            });
+        }, [dialplanExtensions, dq, findProjectLabel]);
+
+        const canDialExtension = enabled && webrtcEnabled && !hasInterCall && !hasConsult;
+        const canCall = enabled && webrtcEnabled && !hasInterCall && !hasConsult;
 
         const handleCall = useCallback(
             async (operatorLogin: string) => {
                 if (!enabled) return;
 
                 if (!webrtcEnabled) {
-                    Swal.fire({
+                    await Swal.fire({
                         icon: "info",
                         title: "Телефония выключена",
                         text: "SIP/WebRTC сейчас недоступен.",
@@ -316,40 +391,162 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                     return;
                 }
 
-                setDialingLogin(operatorLogin);
+                setBusyLogin(operatorLogin);
+                setBusyKind("call");
 
                 try {
-                    if (callOperator) await callOperator(operatorLogin);
-                    else await makeCall(String(operatorLogin));
+                    await ensureMainCallHeld();
+                    await startConsultCall(String(operatorLogin));
 
-                    // можно оставить — если не хочешь всплывашку, просто удали этот Swal
-                    Swal.fire({
+                    await Swal.fire({
                         icon: "success",
-                        title: "Звонок отправлен",
-                        text: `Внутренний: ${operatorLogin}`,
+                        title: "Консультация начата",
+                        text: `Оператор: ${operatorLogin}`,
                         timer: 1200,
                         showConfirmButton: false,
                     });
                 } catch (e: any) {
                     console.error(e);
-                    setDialingLogin(null);
-                    Swal.fire({
+                    await Swal.fire({
                         icon: "error",
-                        title: "Не удалось позвонить",
+                        title: "Не удалось начать консультацию",
                         text: String(e?.message || e),
                     });
+                } finally {
+                    setBusyLogin(null);
+                    setBusyKind(null);
                 }
             },
-            [enabled, webrtcEnabled, callOperator, makeCall]
+            [enabled, webrtcEnabled, startConsultCall, ensureMainCallHeld]
+        );
+
+        const canTransfer =
+            enabled &&
+            !hasInterCall &&
+            (
+                (webrtcEnabled && typeof blindTransfer === "function" && sipEstablished) ||
+                !!onTakeoverTransfer
+            );
+
+        const handleTransfer = useCallback(
+            async (operatorLogin: string) => {
+                if (!enabled) return;
+
+                setBusyLogin(operatorLogin);
+
+                const doBlind =
+                    webrtcEnabled &&
+                    typeof blindTransfer === "function" &&
+                    sipEstablished;
+
+                try {
+                    await ensureMainCallHeld();
+
+                    socket.emit("transfer_data", {
+                        worker,
+                        session_key: sessionKey,
+                        target_sip_login: operatorLogin,
+                        data: openedPhones,
+                    });
+
+                    if (doBlind) {
+                        setBusyKind("blind");
+                        await blindTransfer(operatorLogin);
+                    } else {
+                        if (!onTakeoverTransfer) return;
+                        setBusyKind("transfer");
+                        await onTakeoverTransfer(operatorLogin);
+                    }
+
+                    await Swal.fire({
+                        icon: "success",
+                        title: doBlind ? "Слепой перевод выполнен" : "Передача отправлена",
+                        text: `Оператор: ${operatorLogin}`,
+                        timer: 1100,
+                        showConfirmButton: false,
+                    });
+                } catch (e: any) {
+                    console.error(e);
+                    await Swal.fire({
+                        icon: "error",
+                        title: doBlind
+                            ? "Не удалось сделать слепой перевод"
+                            : "Не удалось передать",
+                        text: String(e?.message || e),
+                    });
+                } finally {
+                    setBusyLogin(null);
+                    setBusyKind(null);
+                }
+            },
+            [
+                enabled,
+                webrtcEnabled,
+                blindTransfer,
+                sipEstablished,
+                onTakeoverTransfer,
+                worker,
+                sessionKey,
+                openedPhones,
+                ensureMainCallHeld,
+            ]
+        );
+
+        const handleExtensionCall = useCallback(
+            async (item: DialplanExtensionItem) => {
+                if (!enabled) return;
+
+                if (!webrtcEnabled) {
+                    await Swal.fire({
+                        icon: "info",
+                        title: "Телефония выключена",
+                        text: "SIP/WebRTC сейчас недоступен.",
+                        timer: 1700,
+                        showConfirmButton: false,
+                    });
+                    return;
+                }
+
+                const busyKey = `ext:${item.id}`;
+                setBusyLogin(busyKey);
+                setBusyKind("extension");
+
+                try {
+                    await ensureMainCallHeld();
+                    await startConsultCall(String(item.ext));
+
+                    await Swal.fire({
+                        icon: "success",
+                        title: "Консультация начата",
+                        text: `Добавочный: ${item.ext}`,
+                        timer: 1200,
+                        showConfirmButton: false,
+                    });
+                } catch (e: any) {
+                    console.error(e);
+                    await Swal.fire({
+                        icon: "error",
+                        title: "Не удалось начать консультацию",
+                        text: String(e?.message || e),
+                    });
+                } finally {
+                    setBusyLogin(null);
+                    setBusyKind(null);
+                }
+            },
+            [enabled, webrtcEnabled, startConsultCall, ensureMainCallHeld]
         );
 
         const badge = useMemo(() => {
             const s = String(sipStatus || "").toLowerCase();
+
             if (!webrtcEnabled) return { text: "SIP выключен", bg: "#ef4444" };
-            if (s.includes("registered") || s.includes("ready"))
+            if (s.includes("registered") || s.includes("ready")) {
                 return { text: "SIP готов", bg: "#22c55e" };
-            if (s.includes("register") || s.includes("connecting"))
+            }
+            if (s.includes("register") || s.includes("connecting")) {
                 return { text: "SIP подключение…", bg: "#f59e0b" };
+            }
             return { text: "SIP статус", bg: "#6b7280" };
         }, [webrtcEnabled, sipStatus]);
 
@@ -369,7 +566,6 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                     ...style,
                 }}
             >
-                {/* Header */}
                 <div
                     style={{
                         display: "flex",
@@ -382,7 +578,9 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                     }}
                 >
                     <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, whiteSpace: "nowrap" }}>Набор оператора для перевода</div>
+                        <div style={{ fontWeight: 700, whiteSpace: "nowrap" }}>
+                            Внутренние номера и перевод
+                        </div>
 
                         <span
                             style={{
@@ -395,7 +593,7 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                             }}
                             title={`sipStatus: ${String(sipStatus || "")}`}
                         >
-                          {badge.text}
+                            {badge.text}
                         </span>
 
                         <span style={{ fontSize: 12, opacity: 0.7, whiteSpace: "nowrap" }}>
@@ -413,7 +611,6 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                     </button>
                 </div>
 
-                {/* Body */}
                 {open && (
                     <div style={{ padding: 12 }}>
                         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
@@ -421,7 +618,7 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                                 className="form-control"
                                 value={q}
                                 onChange={(e) => setQ(e.target.value)}
-                                placeholder="Поиск: логин / имя / отдел"
+                                placeholder="Поиск: логин / имя / отдел / добавочный"
                                 style={{ minWidth: 0 }}
                             />
 
@@ -433,6 +630,128 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                             >
                                 ✕
                             </button>
+                        </div>
+
+                        {dialplanExtensions.length > 0 && (
+                            <>
+                                <div
+                                    style={{
+                                        fontWeight: 700,
+                                        fontSize: 13,
+                                        marginBottom: 8,
+                                        color: "#374151",
+                                    }}
+                                >
+                                    Добавочные номера
+                                </div>
+
+                                <div
+                                    style={{
+                                        maxHeight: 180,
+                                        overflow: "auto",
+                                        border: "1px solid rgba(0,0,0,.08)",
+                                        borderRadius: 10,
+                                        marginBottom: 12,
+                                    }}
+                                >
+                                    {filteredExtensions.length === 0 ? (
+                                        <div style={{ padding: 12, opacity: 0.75 }}>
+                                            Нет подходящих добавочных
+                                        </div>
+                                    ) : (
+                                        filteredExtensions.map((item) => {
+                                            const busyKey = `ext:${item.id}`;
+                                            const isBusyThis = busyLogin === busyKey;
+                                            const projectLabel =
+                                                findProjectLabel?.(item.project_name) || item.project_name;
+
+                                            return (
+                                                <div
+                                                    key={item.id}
+                                                    style={{
+                                                        display: "flex",
+                                                        alignItems: "center",
+                                                        justifyContent: "space-between",
+                                                        gap: 10,
+                                                        padding: "10px 12px",
+                                                        borderBottom: "1px solid rgba(0,0,0,.06)",
+                                                    }}
+                                                >
+                                                    <div style={{ minWidth: 0 }}>
+                                                        <div style={{ fontWeight: 700, lineHeight: 1.2 }}>
+                                                            {item.title}
+                                                            <span style={{ fontWeight: 600, opacity: 0.7 }}>
+                                                                {" "}· {item.ext}
+                                                            </span>
+                                                        </div>
+
+                                                        <div
+                                                            style={{
+                                                                fontSize: 12,
+                                                                opacity: 0.8,
+                                                                display: "flex",
+                                                                gap: 8,
+                                                                alignItems: "center",
+                                                            }}
+                                                        >
+                                                            <span>{projectLabel}</span>
+                                                        </div>
+                                                    </div>
+
+                                                    <button
+                                                        className="btn btn-sm btn-outline-success"
+                                                        onClick={() => handleExtensionCall(item)}
+                                                        disabled={!canDialExtension || !!busyLogin}
+                                                        title={
+                                                            canDialExtension
+                                                                ? "Начать консультацию на добавочный"
+                                                                : "SIP недоступен"
+                                                        }
+                                                        style={{ whiteSpace: "nowrap" }}
+                                                    >
+                                                        {isBusyThis && busyKind === "extension" ? (
+                                                            <>
+                                                                <span
+                                                                    className="spinner-border spinner-border-sm"
+                                                                    role="status"
+                                                                    aria-hidden="true"
+                                                                    style={{ marginRight: 8, verticalAlign: "middle" }}
+                                                                />
+                                                                Идёт вызов…
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <span
+                                                                    className="material-icons"
+                                                                    style={{
+                                                                        fontSize: 18,
+                                                                        verticalAlign: "middle",
+                                                                        marginRight: 6,
+                                                                    }}
+                                                                >
+                                                                    call
+                                                                </span>
+                                                                Вызвать
+                                                            </>
+                                                        )}
+                                                    </button>
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </>
+                        )}
+
+                        <div
+                            style={{
+                                fontWeight: 700,
+                                fontSize: 13,
+                                marginBottom: 8,
+                                color: "#374151",
+                            }}
+                        >
+                            Операторы
                         </div>
 
                         <div
@@ -449,7 +768,7 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                                 </div>
                             ) : (
                                 filtered.map((o: any) => {
-                                    const isDialingThis = dialingLogin === o.login;
+                                    const isBusyThis = busyLogin === o.login;
 
                                     return (
                                         <div
@@ -466,7 +785,9 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                                             <div style={{ minWidth: 0 }}>
                                                 <div style={{ fontWeight: 700, lineHeight: 1.2 }}>
                                                     {o.name}
-                                                    <span style={{ fontWeight: 600, opacity: 0.7 }}> · {o.login}</span>
+                                                    <span style={{ fontWeight: 600, opacity: 0.7 }}>
+                                                        {" "}· {o.login}
+                                                    </span>
                                                 </div>
 
                                                 <div
@@ -478,7 +799,10 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                                                         alignItems: "center",
                                                     }}
                                                 >
-                                                    <span style={{ color: o.__fsLabel?.color }}>{o.__fsLabel?.text}</span>
+                                                    <span style={{ color: o.__fsLabel?.color }}>
+                                                        {o.__fsLabel?.text}
+                                                    </span>
+
                                                     {(o.department || o.role) && (
                                                         <span
                                                             style={{
@@ -496,35 +820,77 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                                                 </div>
                                             </div>
 
-                                            <button
-                                                className="btn btn-sm btn-outline-success"
-                                                onClick={() => handleCall(o.login)}
-                                                disabled={!canCall || !!dialingLogin}
-                                                title={canCall ? "Позвонить" : "SIP недоступен"}
-                                                style={{ whiteSpace: "nowrap" }}
-                                            >
-                                                {isDialingThis ? (
-                                                    <>
-                                                    <span
-                                                        className="spinner-border spinner-border-sm"
-                                                        role="status"
-                                                        aria-hidden="true"
-                                                        style={{ marginRight: 8, verticalAlign: "middle" }}
-                                                    />
-                                                        Идёт вызов…
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <span
-                                                            className="material-icons"
-                                                            style={{ fontSize: 18, verticalAlign: "middle", marginRight: 6 }}
-                                                        >
-                                                          call
-                                                        </span>
-                                                        Вызвать
-                                                    </>
+                                            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                                {canTransfer && (
+                                                    <button
+                                                        className="btn btn-sm btn-outline-primary"
+                                                        onClick={() => handleTransfer(o.login)}
+                                                        disabled={!canTransfer || !!busyLogin}
+                                                        title="Передать активный разговор этому оператору"
+                                                        style={{ whiteSpace: "nowrap" }}
+                                                    >
+                                                        {isBusyThis && (busyKind === "transfer" || busyKind === "blind") ? (
+                                                            <>
+                                                                <span
+                                                                    className="spinner-border spinner-border-sm"
+                                                                    role="status"
+                                                                    aria-hidden="true"
+                                                                    style={{ marginRight: 8, verticalAlign: "middle" }}
+                                                                />
+                                                                {busyKind === "blind" ? "Перевод…" : "Передача…"}
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <span
+                                                                    className="material-icons"
+                                                                    style={{
+                                                                        fontSize: 18,
+                                                                        verticalAlign: "middle",
+                                                                        marginRight: 6,
+                                                                    }}
+                                                                >
+                                                                    call_split
+                                                                </span>
+                                                                Передать
+                                                            </>
+                                                        )}
+                                                    </button>
                                                 )}
-                                            </button>
+
+                                                <button
+                                                    className="btn btn-sm btn-outline-success"
+                                                    onClick={() => handleCall(o.login)}
+                                                    disabled={!canCall || !!busyLogin}
+                                                    title={canCall ? "Позвонить" : "SIP недоступен"}
+                                                    style={{ whiteSpace: "nowrap" }}
+                                                >
+                                                    {isBusyThis && busyKind === "call" ? (
+                                                        <>
+                                                            <span
+                                                                className="spinner-border spinner-border-sm"
+                                                                role="status"
+                                                                aria-hidden="true"
+                                                                style={{ marginRight: 8, verticalAlign: "middle" }}
+                                                            />
+                                                            Идёт вызов…
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <span
+                                                                className="material-icons"
+                                                                style={{
+                                                                    fontSize: 18,
+                                                                    verticalAlign: "middle",
+                                                                    marginRight: 6,
+                                                                }}
+                                                            >
+                                                                call
+                                                            </span>
+                                                            Вызвать
+                                                        </>
+                                                    )}
+                                                </button>
+                                            </div>
                                         </div>
                                     );
                                 })

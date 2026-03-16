@@ -1,7 +1,7 @@
 import React, {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from "react";
 import * as XLSX from "xlsx";
 import { useOperators } from "./hooks";
-import {Agent, Role, UserFieldDef} from "./types";
+import {Agent, AppliedFieldFilter, CreateUserFieldPayload, Role, UserFieldDef} from "./types";
 import { OperatorModal } from "./components/operatorModal";
 import axios from "axios";
 import OperatorsSelect from "./components/select";
@@ -23,12 +23,6 @@ type Metrics = {
     wait?: number | string;
     not_responding?: number | string;
 };
-
-const FIELD_FILTER_OPS: readonly FieldFilterOp[] = ["eq", "neq", "like", "not_like", "in", "not_in"] as const;
-
-function isFieldFilterOp(x: string): x is FieldFilterOp {
-    return (FIELD_FILTER_OPS as readonly string[]).includes(x);
-}
 
 type FieldFilterLabel =
     | "Содержит"
@@ -324,16 +318,6 @@ export const OperatorsTab: React.FC = () => {
     const glagol_parent = glagolParent;
 
     // текущий серверный фильтр из useOperators.filters
-    const currentFieldFilter = (filters as any).field_filters as string | null | undefined;
-
-    const ffActiveCount = useMemo(() => {
-        if (!currentFieldFilter) return 0;
-        const [, rest = ""] = String(currentFieldFilter).split("|");
-        return rest ? rest.split("--").filter(Boolean).length : 0;
-    }, [currentFieldFilter]);
-// UI-черновик (чтобы не дергать сервер на каждую букву)
-    const [ffMethodLabel, setFfMethodLabel] = useState<FieldFilterLabel>("Содержит");
-    const [ffValuesRaw, setFfValuesRaw] = useState<string>("");
 
     const [ffOpen, setFfOpen] = useState(false);
     const ffBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -369,58 +353,75 @@ export const OperatorsTab: React.FC = () => {
             document.removeEventListener("keydown", onKey);
         };
     }, [ffOpen]);
-// синхронизируем черновик при открытии страницы/смене фильтра (опционально, но удобно)
+
+    const currentFieldFilter = filters.field_filters ?? null;
+
+    const hasActiveFieldFilter = !!(
+        currentFieldFilter?.fieldSlugs?.length &&
+        currentFieldFilter?.values?.length
+    );
+
+    const ffActiveCount = currentFieldFilter?.values?.length ?? 0;
+
+    const [ffMethodLabel, setFfMethodLabel] = useState<FieldFilterLabel>("Содержит");
+    const [ffValuesRaw, setFfValuesRaw] = useState<string>("");
+    const [ffSelectedFieldSlugs, setFfSelectedFieldSlugs] = useState<string[]>([]);
+
     useEffect(() => {
-        if (!currentFieldFilter) return;
+        if (!currentFieldFilter) {
+            setFfSelectedFieldSlugs([]);
+            setFfMethodLabel("Содержит");
+            setFfValuesRaw("");
+            return;
+        }
 
-        const [opRaw, rest = ""] = String(currentFieldFilter).split("|");
-
-        const op: FieldFilterOp | null = isFieldFilterOp(opRaw) ? opRaw : null;
-
-        setFfMethodLabel(op ? FIELD_FILTER_LABEL_BY_CODE[op] : "Содержит");
-        setFfValuesRaw(rest.split("--").join("\n"));
+        setFfSelectedFieldSlugs(currentFieldFilter.fieldSlugs);
+        setFfMethodLabel(FIELD_FILTER_LABEL_BY_CODE[currentFieldFilter.op]);
+        setFfValuesRaw(currentFieldFilter.values.join("\n"));
     }, [currentFieldFilter]);
 
-    const buildFieldFiltersParam = useCallback((): string | null => {
+    const applyFieldFilter = useCallback(() => {
         const op: FieldFilterOp = FIELD_FILTER_CODE_BY_LABEL[ffMethodLabel];
         const vals = splitSqlValues(ffValuesRaw);
-        if (!vals.length) return null;
-        return `${op}|${vals.join("--")}`;
-    }, [ffMethodLabel, ffValuesRaw]);
 
-    const applyFieldFilter = () => {
-        const param = buildFieldFiltersParam();
-        setFilters((f: any) => ({ ...f, field_filters: param })); // ✅ в useOperators это должно уйти в запрос
+        if (!ffSelectedFieldSlugs.length || !vals.length) return;
+
+        const nextFilter: AppliedFieldFilter = {
+            fieldSlugs: ffSelectedFieldSlugs,
+            op,
+            values: vals,
+        };
+
+        setFilters((f) => ({ ...f, field_filters: nextFilter }));
         setPage(1);
-    };
+    }, [ffMethodLabel, ffValuesRaw, ffSelectedFieldSlugs, setFilters]);
 
-    const clearFieldFilter = () => {
+    const clearFieldFilter = useCallback(() => {
+        setFfSelectedFieldSlugs([]);
         setFfMethodLabel("Содержит");
         setFfValuesRaw("");
-        setFilters((f: any) => ({ ...f, field_filters: null }));
+        setFilters((f) => ({ ...f, field_filters: null }));
         setPage(1);
-    };
-
-    type UserFieldType = "regular" | "textarea" | "select" | "number" | "date" | "many";
-    type UserFieldDef = {
-        id?: number;
-        slug: string;
-        name: string;
-        description?: string | null;
-        field_type: UserFieldType;
-        field_value?: string | null;
-        active: boolean;
-    };
-    type CreateUserFieldPayload = {
-        name: string;
-        description?: string | null;
-        field_type: UserFieldType;
-        field_value?: string | null;
-        active?: boolean;
-    };
+    }, [setFilters]);
 
     const [userFieldDefs, setUserFieldDefs] = useState<UserFieldDef[]>([]);
     const [userFieldDefsLoading, setUserFieldDefsLoading] = useState(false);
+
+    const visibleUserFieldDefs = useMemo(() => {
+        return (userFieldDefs || [])
+            .filter((f) => String(f?.slug || "").trim())
+            .filter((f) => f.active !== false)
+            .sort((a, b) =>
+                String(a.name || a.slug).localeCompare(String(b.name || b.slug), "ru")
+            );
+    }, [userFieldDefs]);
+
+    const operatorFieldOptions = useMemo(() => {
+        return visibleUserFieldDefs.map((f) => ({
+            label: String(f.name || f.slug || "").trim(),
+            value: String(f.slug || "").trim(),
+        }));
+    }, [visibleUserFieldDefs]);
 
     const fetchUserFieldDefs = useCallback(async () => {
         if (!glagol_parent) return;
@@ -587,9 +588,6 @@ export const OperatorsTab: React.FC = () => {
             const rid = pickRoomId(p);
 
             if (rid && lastRoomRef.current && rid !== lastRoomRef.current) {
-                if (process.env.NODE_ENV !== "production") {
-                    console.log("[manager] ignore stale stop", { rid, current: lastRoomRef.current, p });
-                }
                 return;
             }
 
@@ -644,12 +642,6 @@ export const OperatorsTab: React.FC = () => {
             operator_login: operatorLogin,
         });
 
-        if (process.env.NODE_ENV !== "production") {
-            console.log("[screen_share] start sent", {
-                operator_login: operatorLogin,
-                manager_login: sipLogin,
-            });
-        }
     }, [activeScreenOperator, handleScreenShareStop, sessionKey, worker, sipLogin]);
 
     useEffect(() => {
@@ -1109,31 +1101,22 @@ export const OperatorsTab: React.FC = () => {
                         <button
                             ref={ffBtnRef}
                             type="button"
-                            className={`btn  ${
-                                currentFieldFilter ? "btn-danger" : "btn-outline-secondary"
-                            } d-inline-flex align-items-center gap-2 position-relative`}
+                            className={`btn ${hasActiveFieldFilter ? "btn-success" : "btn-outline-success"}`}
                             onClick={() => setFfOpen((v) => !v)}
                             title="Фильтр по пользовательским полям"
-                            style={{ borderRadius: 18, padding: "8px 14px", lineHeight: 1 }}
+                            style={{
+                                display: "flex",
+                                flexDirection: "row",
+                                alignItems: "center",
+                                gap: 6,
+                                height: 38,
+                                marginTop: 32,
+                            }}
                         >
-                            <span className="material-icons" style={{ fontSize: 18, lineHeight: 1 }}>
+                            <span className="material-icons" style={{ fontSize: 18 }}>
                                 filter_alt
                             </span>
-
-                            <span style={{ lineHeight: 1 }}>Фильтр по полям</span>
-
-                            {/*{currentFieldFilter && (*/}
-                            {/*    <span*/}
-                            {/*        className="position-absolute top-0 start-100 translate-middle"*/}
-                            {/*        style={{*/}
-                            {/*            width: 10,*/}
-                            {/*            height: 10,*/}
-                            {/*            borderRadius: 999,*/}
-                            {/*            background: "#fff",*/}
-                            {/*            border: "2px solid #dc3545",*/}
-                            {/*        }}*/}
-                            {/*    />*/}
-                            {/*)}*/}
+                            <span>Фильтр по полям</span>
                         </button>
 
                         {ffOpen &&
@@ -1161,6 +1144,30 @@ export const OperatorsTab: React.FC = () => {
 
                                     <div className="mb-3">
                                         <div className="text-muted mb-1" style={{ fontSize: 12 }}>
+                                            Поля оператора
+                                        </div>
+
+                                        <OperatorsSelect
+                                            isMulti
+                                            value={ffSelectedFieldSlugs}
+                                            options={operatorFieldOptions}
+                                            onChange={(vals: any) =>
+                                                setFfSelectedFieldSlugs(Array.isArray(vals) ? vals : [])
+                                            }
+                                            placeholder="Выберите одно или несколько полей"
+                                            withCheckboxes
+                                            classNamePrefix={FF_SELECT_PREFIX}
+                                        />
+
+                                        {!ffSelectedFieldSlugs.length && (
+                                            <div className="text-muted mt-2" style={{ fontSize: 12 }}>
+                                                Сначала выберите поле оператора, затем задайте критерий и значения.
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="mb-3">
+                                        <div className="text-muted mb-1" style={{ fontSize: 12 }}>
                                             Критерий
                                         </div>
 
@@ -1169,49 +1176,60 @@ export const OperatorsTab: React.FC = () => {
                                             options={[...FIELD_FILTER_LABELS]}
                                             isClearable={false}
                                             isSearchable={false}
-                                            onChange={(v) => setFfMethodLabel(((v as FieldFilterLabel) || "Содержит"))}
+                                            onChange={(v: any) =>
+                                                setFfMethodLabel((v as FieldFilterLabel) || "Содержит")
+                                            }
                                             placeholder="Выберите..."
                                             classNamePrefix={FF_SELECT_PREFIX}
+                                            isDisabled={!ffSelectedFieldSlugs.length}
                                         />
                                     </div>
 
                                     <div className="mb-2">
                                         <div className="text-muted mb-1" style={{ fontSize: 12 }}>
-                                            Значение
+                                            Значение (можно несколько: новая строка, запятая, ;)
                                         </div>
 
-                                        <input
+                                        <textarea
                                             className="form-control"
                                             value={ffValuesRaw}
                                             onChange={(e) => setFfValuesRaw(e.currentTarget.value)}
                                             placeholder="Введите значение..."
-                                            style={{ borderRadius: 18 }}
+                                            style={{ borderRadius: 18, minHeight: 90 }}
+                                            disabled={!ffSelectedFieldSlugs.length}
                                         />
                                     </div>
 
-                                    <div style={{display: "flex", flexDirection:"row", gap: 8, marginTop: 16}}>
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            flexDirection: "row",
+                                            gap: 8,
+                                            marginTop: 16,
+                                        }}
+                                    >
                                         <button
                                             type="button"
-                                            className="btn btn-sm btn-outline-secondary"
+                                            className="btn btn-sm btn-danger"
                                             style={{ borderRadius: 18, padding: "10px 18px" }}
                                             onClick={() => {
                                                 clearFieldFilter();
                                                 setFfOpen(false);
                                             }}
-                                            disabled={!currentFieldFilter}
+                                            disabled={!hasActiveFieldFilter && !ffSelectedFieldSlugs.length && !ffValuesRaw.trim()}
                                         >
                                             Сбросить
                                         </button>
 
                                         <button
                                             type="button"
-                                            className="btn btn-sm btn-danger ms-auto"
+                                            className="btn btn-sm btn-outline-success ms-auto"
                                             style={{ borderRadius: 18, padding: "10px 18px" }}
                                             onClick={() => {
                                                 applyFieldFilter();
                                                 setFfOpen(false);
                                             }}
-                                            disabled={!splitSqlValues(ffValuesRaw).length}
+                                            disabled={!ffSelectedFieldSlugs.length || !splitSqlValues(ffValuesRaw).length}
                                         >
                                             Применить
                                         </button>

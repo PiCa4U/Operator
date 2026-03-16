@@ -95,9 +95,9 @@ const ContactUsersPresence: React.FC<Props> = React.memo(
                 session_key: sessionKey,
                 worker,
                 sip_login: sipLogin,
-                id: cardId,                 // ✅ обязателен
-                group_by: stableGroupBy,    // ✅ значения
-                factors: stableFactors,     // ✅ имена факторов
+                id: cardId,
+                group_by: stableGroupBy,
+                factors: stableFactors,
             });
         }, [sessionKey, worker, sipLogin, hasTarget, cardId, stableGroupBy, stableFactors]);
         // --- ids fallback ---

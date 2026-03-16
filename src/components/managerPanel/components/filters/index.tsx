@@ -8,76 +8,7 @@ import { ComponentForReportTables, dataOptions } from "./components/componentFor
 import { ReportCard } from "./components/reportCard";
 import { store } from "../../../../redux/store";
 
-const parseFilterJsonToItems = (filterJson: any): FilterItem[] => {
-    const items: FilterItem[] = [];
 
-    if (Array.isArray(filterJson.projects)) {
-        for (const proj of filterJson.projects) {
-            items.push({
-                id: crypto.randomUUID(),
-                fieldId: "project",
-                value: {
-                    projectId: proj.project_name,
-                    reasons: proj.reasons || [],
-                    results: proj.results || [],
-                },
-            });
-        }
-    }
-
-    if (Array.isArray(filterJson.users)) {
-        items.push({
-            id: crypto.randomUUID(),
-            fieldId: "operator",
-            value: filterJson.users,
-        });
-    }
-
-    if (Array.isArray(filterJson.comments)) {
-        for (const comment of filterJson.comments) {
-            items.push({
-                id: crypto.randomUUID(),
-                fieldId: "comment",
-                value: comment,
-            });
-        }
-    }
-
-    if (Array.isArray(filterJson.dates)) {
-        for (const preset of filterJson.dates) {
-            items.push({
-                id: crypto.randomUUID(),
-                fieldId: "date",
-                value: { preset },
-            });
-        }
-    }
-
-    if (Array.isArray(filterJson.length)) {
-        for (const [op, seconds] of filterJson.length) {
-            items.push({
-                id: crypto.randomUUID(),
-                fieldId: "dialogDuration",
-                value: {
-                    comparison: op === ">" ? "gt" : "lt",
-                    seconds,
-                },
-            });
-        }
-    }
-
-    if (Array.isArray(filterJson.phones)) {
-        for (const phone of filterJson.phones) {
-            items.push({
-                id: crypto.randomUUID(),
-                fieldId: "phoneNumber",
-                value: phone,
-            });
-        }
-    }
-
-    return items;
-};
 
 interface ChartPoint {
     x: string;
@@ -163,6 +94,44 @@ const normalizeMsgRu = (msg: string) => {
     s = s.replace(/'month'|"month"|\bmonth\b/g, "Месяц");
 
     return s;
+};
+
+type PersistedReportsSearch = {
+    version: 1;
+    selectedFilterId: string | null;
+    selectedType: string;
+    filter_json: any;
+};
+
+const REPORTS_SEARCH_STORAGE_PREFIX = "communications_reports_last_search";
+
+const getReportsSearchStorageKey = (glagolParent: string) =>
+    `${REPORTS_SEARCH_STORAGE_PREFIX}:${glagolParent || "common"}`;
+
+const loadReportsSearchConfig = (glagolParent: string): PersistedReportsSearch | null => {
+    try {
+        const raw = localStorage.getItem(getReportsSearchStorageKey(glagolParent));
+        if (!raw) return null;
+
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") return null;
+
+        return parsed;
+    } catch {
+        return null;
+    }
+};
+
+const saveReportsSearchConfig = (glagolParent: string, payload: PersistedReportsSearch) => {
+    try {
+        localStorage.setItem(getReportsSearchStorageKey(glagolParent), JSON.stringify(payload));
+    } catch {
+        // ignore
+    }
+};
+
+const DEFAULT_REPORT_FILTER_JSON = {
+    dates: ["today"],
 };
 
 /** ===== RU errors (axios) ===== */
@@ -590,6 +559,111 @@ const templateToChartConfigs = (tpl: ReportTemplate): ChartConfig[] => {
     });
 };
 
+const parseFilterJsonToItems = (filterJson: any): FilterItem[] => {
+    const items: FilterItem[] = [];
+
+    if (Array.isArray(filterJson.projects)) {
+        for (const proj of filterJson.projects) {
+            items.push({
+                id: crypto.randomUUID(),
+                fieldId: "project",
+                value: {
+                    projectId: proj.project_name,
+                    reasons: proj.reasons || [],
+                    results: proj.results || [],
+                },
+            });
+        }
+    }
+
+    if (Array.isArray(filterJson.users)) {
+        items.push({
+            id: crypto.randomUUID(),
+            fieldId: "operator",
+            value: filterJson.users,
+        });
+    }
+
+    if (Array.isArray(filterJson.comments)) {
+        for (const comment of filterJson.comments) {
+            items.push({
+                id: crypto.randomUUID(),
+                fieldId: "comment",
+                value: comment,
+            });
+        }
+    }
+
+    if (Array.isArray(filterJson.dates)) {
+        for (const preset of filterJson.dates) {
+            items.push({
+                id: crypto.randomUUID(),
+                fieldId: "date",
+                value: { preset },
+            });
+        }
+    }
+
+    if (Array.isArray(filterJson.length)) {
+        for (const [op, seconds] of filterJson.length) {
+            items.push({
+                id: crypto.randomUUID(),
+                fieldId: "dialogDuration",
+                value: {
+                    comparison: op === ">" ? "gt" : "lt",
+                    seconds,
+                },
+            });
+        }
+    }
+
+    if (Array.isArray(filterJson.phones)) {
+        for (const phone of filterJson.phones) {
+            items.push({
+                id: crypto.randomUUID(),
+                fieldId: "phoneNumber",
+                value: phone,
+            });
+        }
+    }
+
+    return items;
+};
+
+const parseSavedDateValue = (rawValue: string) => {
+    const raw = String(rawValue ?? "").trim();
+
+    if (PRESETS.has(raw)) {
+        return { preset: raw };
+    }
+
+    if (raw.includes(" TO ")) {
+        const [fromRaw, toRaw] = raw.split(" TO ").map((s) => s.trim());
+        const from = parseYMDLocal(fromRaw);
+        const to = parseYMDLocal(toRaw);
+
+        if (from && to) {
+            return {
+                preset: "custom",
+                start: from,
+                end: to,
+            };
+        }
+    }
+
+    const single = parseYMDLocal(raw);
+    if (single) {
+        return {
+            preset: "custom",
+            start: single,
+            end: single,
+        };
+    }
+
+    return { preset: raw };
+};
+
+
 const toNumberSafe = (v: any): number => {
     const n = Number(v);
     return Number.isFinite(n) ? n : 0;
@@ -726,6 +800,7 @@ export const Filters = () => {
     const [line, setLine] = useState<string>("Линия");
 
     const [modify, setModify] = useState<string>("none");
+    const [searchHydrated, setSearchHydrated] = useState(false);
 
     const [color, setColor] = useState("#e66464");
 
@@ -983,26 +1058,32 @@ export const Filters = () => {
         return needStrict && Array.isArray(dates) && dates.length > 1;
     }, [currentModifyForReq, filter_dict]);
 
-    const buildRequestPayload = (cfg: ChartConfig, timezone_offset: number) => {
+    const buildRequestPayload = (
+        cfg: ChartConfig,
+        timezone_offset: number,
+        filterDictOverride?: any
+    ) => {
+        const effectiveFilterDict = filterDictOverride ?? filter_dict;
+
         const req: any = {
-            filter_dict,
+            filter_dict: effectiveFilterDict,
             interval: cfg.interval,
             modify: cfg.modify,
             chart: cfg.data,
             timezone_offset,
         };
 
-        // по доке: operator_speed требует operators
-        if (cfg.data === "operator_speed" && Array.isArray(filter_dict?.users)) {
-            req.operators = filter_dict.users;
+        if (cfg.data === "operator_speed" && Array.isArray(effectiveFilterDict?.users)) {
+            req.operators = effectiveFilterDict.users;
         }
 
         return req;
     };
 
-    const rebuildCharts = async (configsOverride?: ChartConfig[]) => {
+    const rebuildCharts = async (configsOverride?: ChartConfig[], filterDictOverride?: any) => {
         const timezone_offset = -new Date().getTimezoneOffset() / 60;
         const cfgs = configsOverride ?? chartConfigs;
+        const effectiveFilterDict = filterDictOverride ?? filter_dict;
 
         const newCharts: MyChartData[] = [];
         const problems: string[] = [];
@@ -1013,7 +1094,7 @@ export const Filters = () => {
                     mainInterval: cfg.interval,
                     chart: cfg.data,
                     modify: cfg.modify,
-                    filter_dict,
+                    filter_dict: effectiveFilterDict,
                 });
 
                 if (err) {
@@ -1021,7 +1102,7 @@ export const Filters = () => {
                     continue;
                 }
 
-                const req = buildRequestPayload(cfg, timezone_offset);
+                const req = buildRequestPayload(cfg, timezone_offset, effectiveFilterDict);
                 const res = await axios.post("/api/v1/communications/charts", req);
 
                 const baseName = dataOptions.find((i) => i.id === cfg.data)?.name ?? cfg.data;
@@ -1193,13 +1274,15 @@ export const Filters = () => {
         }
     };
 
-    const fetchReport = async (pageNumber = 1) => {
+    const fetchReport = async (pageNumber = 1, filtersOverride?: FilterItem[]) => {
         const offset = (pageNumber - 1) * limit;
+        const effectiveFilters = filtersOverride ?? activeFilters;
+        const effectiveFilterDict = buildFilterJson(effectiveFilters);
 
         try {
             const response = await axios.post("/api/v1/communications/report", {
                 glagol_parent: glagolParent,
-                filter_dict,
+                filter_dict: effectiveFilterDict,
                 limit,
                 offset,
                 get_excel: false,
@@ -1207,20 +1290,70 @@ export const Filters = () => {
 
             const report = response.data?.report || [];
             const projectsPool = response.data.projects;
+
             setProjectPool(projectsPool);
             setReportList([report]);
             setPage(pageNumber);
 
-            await rebuildCharts();
+            await rebuildCharts(undefined, effectiveFilterDict);
 
             if (response.data.total_count) {
                 setTotalCount(response.data.total_count);
             }
+
             setSelectedReport(null);
         } catch (error) {
             Swal.fire("Ошибка", humanizeAxiosErrorRu(error), "error");
         }
     };
+
+    useEffect(() => {
+        if (!glagolParent || searchHydrated) return;
+
+        const saved = loadReportsSearchConfig(glagolParent);
+
+        const restoredFilterJson =
+            saved?.filter_json && Object.keys(saved.filter_json).length
+                ? saved.filter_json
+                : DEFAULT_REPORT_FILTER_JSON;
+
+        const restoredFilters = parseFilterJsonToItems(restoredFilterJson);
+
+        setActiveFilters(restoredFilters);
+        setSelectedFilterId(saved?.selectedFilterId ?? null);
+
+        if (
+            saved?.selectedType === "Список вызовов" ||
+            saved?.selectedType === "Интервальные отчёты"
+        ) {
+            setSelectedType(saved.selectedType);
+        }
+
+        setSearchHydrated(true);
+        fetchReport(1, restoredFilters);
+
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [glagolParent, searchHydrated]);
+
+    useEffect(() => {
+        if (!searchHydrated || !glagolParent) return;
+
+        saveReportsSearchConfig(glagolParent, {
+            version: 1,
+            selectedFilterId,
+            selectedType,
+            filter_json: buildFilterJson(activeFilters),
+        });
+    }, [searchHydrated, glagolParent, activeFilters, selectedFilterId, selectedType]);
+
+    useEffect(() => {
+        if (!selectedFilterId) return;
+
+        const exists = filters.some((f) => String(f.id) === String(selectedFilterId));
+        if (!exists) {
+            setSelectedFilterId(null);
+        }
+    }, [filters, selectedFilterId]);
 
     const downloadXLSX = async () => {
         try {

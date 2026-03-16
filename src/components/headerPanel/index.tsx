@@ -660,20 +660,20 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             }
         };
 
-        const handleHoldToggle = () => Swal.fire({ title: "Удержание переключено", icon: "success", timer: 1000 });
+        // const handleHoldToggle = () => Swal.fire({ title: "Удержание переключено", icon: "success", timer: 1000 });
         const handleUuidBreak = () => Swal.fire({ title: "Вызов завершён", icon: "success", timer: 1000 });
         const handleUuidBridge = () => Swal.fire({ title: "Вызовы объединены", icon: "success", timer: 1000 });
 
         socket.on("outbound_call_get", handleGetPhoneToCall);
         socket.on("call", handleClickToCallStart);
-        socket.on("hold_toggle", handleHoldToggle);
+        // socket.on("hold_toggle", handleHoldToggle);
         socket.on("uuid_break", handleUuidBreak);
         socket.on("uuid_bridge", handleUuidBridge);
 
         return () => {
             socket.off("outbound_call_get", handleGetPhoneToCall);
             socket.off("call", handleClickToCallStart);
-            socket.off("hold_toggle", handleHoldToggle);
+            // socket.off("hold_toggle", handleHoldToggle);
             socket.off("uuid_break", handleUuidBreak);
             socket.off("uuid_bridge", handleUuidBridge);
         };
@@ -965,8 +965,13 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     </>
                 )}
 
-                <button name="statuses_vis" id="statuses" className="btn btn-outline-light text text-dark mx-1 ml-2" onClick={handleStatusesVis}>
-                    Кто онлайн?
+                <button
+                    name="statuses_vis"
+                    id="statuses"
+                    className="btn btn-outline-light text text-dark mx-1 ml-2"
+                    onClick={handleStatusesVis}
+                >
+                    Компания
                 </button>
 
                 <button name="script_look" id="script_look" className="btn btn-outline-light text text-dark mx-1 ml-2" onClick={handleScriptLook}>

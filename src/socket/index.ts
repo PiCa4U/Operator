@@ -91,14 +91,12 @@ function graceDelayMs(): number {
 
 function makeSocket(): IOSocket {
     const fromRedux = sanitizeHost(getCreds().fsServer);
-    console.log("fromRedux: ", fromRedux)
+
     const fromDOM = readFsServerFromDOM();
     const host = (fromRedux || fromDOM || "wwstest.glagol.ai").trim();
 
     const url = `wss://${host}`;
-    if (process.env.NODE_ENV !== "production") {
-        console.log("[socket] using host:", host);
-    }
+
     return io(url, { transports: ["websocket"], autoConnect: false });
 }
 
@@ -110,6 +108,24 @@ let ha1IntervalId: number | undefined;
 let turnIntervalId: number | undefined;
 let initialAuthTimerId: number | undefined;
 
+const afterReconnectListeners = new Set<() => void>();
+
+export function subscribeAfterReconnect(cb: () => void) {
+    afterReconnectListeners.add(cb);
+    return () => {
+        afterReconnectListeners.delete(cb);
+    };
+}
+
+function notifyAfterReconnect() {
+    afterReconnectListeners.forEach((cb) => {
+        try {
+            cb();
+        } catch (error) {
+            console.error("[socket] afterReconnect listener failed", error);
+        }
+    });
+}
 const HA1_REFRESH_MS = 160_000;
 const TURN_REFRESH_MS = 3_300_000;
 
@@ -205,9 +221,7 @@ function emitReconnectEvent() {
     const { worker } = getCreds();
 
     if (!sessionKey || !worker) {
-        if (process.env.NODE_ENV !== "production") {
-            console.log("[socket] skip reconnect: no sessionKey or worker");
-        }
+
         return;
     }
 
@@ -359,9 +373,6 @@ socket.on("screen_share:start", (data: any) => {
         return;
     }
 
-    if (process.env.NODE_ENV !== "production") {
-        console.log("[screen_share:start] room_id =", roomId, data);
-    }
 
     startScreenSharePing(roomId);
 });
@@ -372,9 +383,6 @@ socket.on("screen_share:error", (data: any) => {
     const rid = pickRoomId(data);
 
     if (rid && screenShareRoomId && rid !== screenShareRoomId) {
-        if (process.env.NODE_ENV !== "production") {
-            console.log("[screen_share:error] ignore stale error", { rid, current: screenShareRoomId, data });
-        }
         return;
     }
 
@@ -401,15 +409,9 @@ socket.on("screen_share:stop", (data: any) => {
     const rid = pickRoomId(data);
 
     if (rid && screenShareRoomId && rid !== screenShareRoomId) {
-        if (process.env.NODE_ENV !== "production") {
-            console.log("[screen_share:stop] ignore stale stop", { rid, current: screenShareRoomId, data });
-        }
         return;
     }
 
-    if (process.env.NODE_ENV !== "production") {
-        console.log("[screen_share:stop]", data);
-    }
 
     stopScreenSharePing();
 
@@ -432,9 +434,6 @@ socket.on("screen_share:stop", (data: any) => {
 });
 
 socket.on("screen_share:pong", (data: any) => {
-    if (process.env.NODE_ENV !== "production") {
-        console.log("[screen_share:pong]", data);
-    }
 });
 
 let reconnectEnabled = false;
@@ -444,6 +443,7 @@ export function setReconnectEnabled(v: boolean) {
 
     if (reconnectEnabled && socket.connected) {
         emitReconnectEvent();
+        notifyAfterReconnect();
     }
 }
 
@@ -451,7 +451,10 @@ export function setReconnectEnabled(v: boolean) {
 socket.on("connect", () => {
     console.log("Socket connected:", socket.id);
 
-    if (reconnectEnabled) emitReconnectEvent();
+    if (reconnectEnabled) {
+        emitReconnectEvent();
+        notifyAfterReconnect();
+    }
 
     if (getOp().sessionKey) {
         startStatusInterval();

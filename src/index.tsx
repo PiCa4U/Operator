@@ -72,15 +72,23 @@ const DEV_USERS = [
         label: "1012 / 1.fs@akc24.ru",
         sipLogin: "1012",
         worker: "1.fs@akc24.ru",
-        sessionKey: "s:1.fs@akc24.ru:d169140c2cc2786a25a753114e2eef7b7992655f03cdec8e",
+        sessionKey: "s:1.fs@akc24.ru:b6b7cc3221a1afbc974d5afb3dddc5ba7de8583bd7c9bf28",
     },
     {
         id: "1000",
         label: "1000 / 4.fs@akc24.ru",
         sipLogin: "1000",
         worker: "4.fs@akc24.ru",
-        sessionKey: "s:4.fs@akc24.ru:a48ed308f0fdf4a70f753de4c0bf3665c8b3f8437f10ff47",
+        sessionKey: "s:4.fs@akc24.ru:2b3676866575238c3df8a1b5f6ec3a2fefe178d3789131f7",
     },
+    {
+        id: "1014",
+        label: "1014 / 3.fs@akc24.ru",
+        sipLogin: "1014",
+        worker: "3.fs@akc24.ru",
+        sessionKey: "s:3.fs@akc24.ru:b163dd22b6fa52c343d431088f16003958675fa2ff095f40",
+
+    }
 ] as const;
 
 type DevUser = (typeof DEV_USERS)[number];
@@ -301,8 +309,8 @@ const root = ReactDOM.createRoot(container);
 root.render(
     <Provider store={store}>
         <>
-            {process.env.NODE_ENV !== "production" && <DevConfigPicker />}
-            <App />
+            {process.env.NODE_ENV !== "production" && <DevConfigPicker/>}
+            <App/>
         </>
     </Provider>
 );

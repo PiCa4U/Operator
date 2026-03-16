@@ -388,7 +388,6 @@ export default function ItsmGuidScreen() {
 
     const [unreadByGuid, setUnreadByGuid] = useState<Record<string, number>>({});
     // SIP-логин, по которому считаем непрочитанные (или "client")
-    useEffect(() => console.log("unreadByGuid: ", unreadByGuid),[unreadByGuid])
     const loginForUnread = hasSip ? (sipLogin || "").trim() : "client";
     const totalUnread = useMemo(
         () => Object.values(unreadByGuid).reduce((a, b) => a + (b || 0), 0),

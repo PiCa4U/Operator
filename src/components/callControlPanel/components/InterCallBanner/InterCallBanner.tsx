@@ -1,4 +1,5 @@
 import React from "react";
+import {useSip} from "../../../../context/SipContext";
 
 type InterCallLike = {
     cid_num?: string | number;
@@ -9,9 +10,17 @@ type InterCallLike = {
 
 type Props = {
     interCall: InterCallLike;
-    canTransfer?: boolean; // показывать кнопку "Перевод"
+
+    canTransfer?: boolean;
+
     onTransfer?: () => void;
     onHangup?: (uuid: string) => void;
+
+    transferLabel?: string;
+    transferTitle?: string;
+
+    hangupLabel?: string;
+    hangupTitle?: string;
 
     style?: React.CSSProperties;
     className?: string;
@@ -167,19 +176,65 @@ function stateChip(callstate: any) {
 }
 
 const InterCallBanner: React.FC<Props> = React.memo(
-    ({ interCall, canTransfer = false, onTransfer, onHangup, style, className }) => {
+    ({
+         interCall,
+         canTransfer = false,
+         onTransfer,
+         onHangup,
+         transferLabel = "Соединить",
+         transferTitle = "Соединить основной вызов с консультацией",
+         hangupLabel = "Сбросить",
+         hangupTitle = "Сбросить внутренний звонок",
+         style,
+         className,
+     }) => {
+        const {
+            consultSession,
+            completeAttendedTransfer,
+            cancelConsultCall,
+        } = useSip();
+
         const from = String(interCall?.cid_num ?? "—");
         const to = String(interCall?.dest ?? "—");
         const chip = stateChip(interCall?.callstate);
         const uuid = String(interCall?.uuid ?? "");
 
+        const handleTransferClick = async () => {
+            try {
+                if (consultSession) {
+                    console.log("UI CLICK complete attended transfer");
+                    onTransfer?.();
+                    await completeAttendedTransfer();
+                    return;
+                }
+
+
+            } catch (e) {
+                console.error("InterCallBanner transfer failed", e);
+            }
+        };
+
+        const handleHangupClick = async () => {
+            try {
+                if (consultSession) {
+                    console.log("UI CLICK cancel consult");
+                    await cancelConsultCall();
+                    return;
+                }
+
+                onHangup?.(uuid);
+            } catch (e) {
+                console.error("InterCallBanner hangup failed", e);
+            }
+        };
+
         return (
             <div className={className} style={{ ...ui.wrap, ...style }}>
                 <div style={ui.left}>
                     <div style={ui.icon} title="Внутренний звонок">
-            <span className="material-icons" style={{ fontSize: 20 }}>
-              swap_calls
-            </span>
+                        <span className="material-icons" style={{ fontSize: 20 }}>
+                          swap_calls
+                        </span>
                     </div>
 
                     <div style={{ minWidth: 0 }}>
@@ -200,27 +255,27 @@ const InterCallBanner: React.FC<Props> = React.memo(
                         <button
                             type="button"
                             className="btn btn-outline-primary"
-                            onClick={onTransfer}
-                            title="Перевод вызова на оператора"
+                            onClick={handleTransferClick}
+                            title={transferTitle}
                         >
-              <span className="material-icons" style={ui.btnIcon}>
-                call_merge
-              </span>
-                            Перевод
+                            <span className="material-icons" style={ui.btnIcon}>
+                                call_merge
+                            </span>
+                            {transferLabel}
                         </button>
                     )}
 
                     <button
                         type="button"
                         className="btn btn-outline-danger"
-                        onClick={() => onHangup?.(uuid)}
-                        title="Сбросить внутренний звонок"
+                        onClick={handleHangupClick}
+                        title={hangupTitle}
                         disabled={!uuid}
                     >
-            <span className="material-icons" style={ui.btnIcon}>
-              call_end
-            </span>
-                        Сбросить
+                        <span className="material-icons" style={ui.btnIcon}>
+                            call_end
+                        </span>
+                        {hangupLabel}
                     </button>
                 </div>
             </div>

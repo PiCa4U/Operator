@@ -15,19 +15,32 @@ const dummyLocalRef  = ({ current: null } as unknown) as React.RefObject<HTMLAud
 
 const defaultValue: SipContextValue = {
     enabled: false,
+
     session: null,
+    consultSession: null,
+
     makeCall: async () => {},
     answerCall: async () => {},
     hangUp: () => {},
     holdCall: async () => {},
     unholdCall: async () => {},
     muteLocal: () => {},
+
     incoming: null,
     status: null,
+    consultStatus: null,
+    consultTarget: null,
+
     remoteAudioRef: dummyRemoteRef,
     localAudioRef: dummyLocalRef,
     userAgent: null,
+
     clearIncoming: () => {},
+
+    blindTransfer: async () => {},
+    startConsultCall: async () => {},
+    completeAttendedTransfer: async () => {},
+    cancelConsultCall: async () => {},
 };
 
 const SipContext = createContext<SipContextValue>(defaultValue);

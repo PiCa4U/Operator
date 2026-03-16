@@ -14,7 +14,82 @@ import {
     UpdateAgentPayload,
     FiltersState,
     TierMutationPayload,
+    AppliedFieldFilter,
 } from "../types";
+
+function scalarToStrings(value: any): string[] {
+    const full = String(value ?? "").trim();
+    if (!full) return [];
+
+    const parts = full
+        .split(/\r?\n|,|;/g)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+    return Array.from(new Set([full, ...parts]));
+}
+
+function flattenFieldValueToStrings(value: any): string[] {
+    if (value == null) return [];
+
+    if (Array.isArray(value)) {
+        return value.flatMap(flattenFieldValueToStrings);
+    }
+
+    if (typeof value === "object") {
+        if ("value" in value) {
+            return flattenFieldValueToStrings((value as any).value);
+        }
+        return Object.values(value).flatMap(flattenFieldValueToStrings);
+    }
+
+    return scalarToStrings(value);
+}
+
+function getSelectedUserFieldValues(user: Agent, fieldSlugs: string[]): string[] {
+    const fields = (user?.user_fields || {}) as Record<string, any>;
+    const uniq = new Set<string>();
+
+    for (const slug of fieldSlugs) {
+        const vals = flattenFieldValueToStrings(fields?.[slug]);
+        for (const v of vals) {
+            const s = String(v).trim();
+            if (s) uniq.add(s);
+        }
+    }
+
+    return Array.from(uniq);
+}
+
+function matchUserFieldFilter(user: Agent, filter: AppliedFieldFilter | null | undefined): boolean {
+    if (!filter || !filter.fieldSlugs.length || !filter.values.length) return true;
+
+    const haystack = getSelectedUserFieldValues(user, filter.fieldSlugs).map((s) => s.toLowerCase());
+    const needles = filter.values.map((s) => s.toLowerCase());
+
+    switch (filter.op) {
+        case "like":
+            return needles.some((n) => haystack.some((h) => h.includes(n)));
+
+        case "not_like":
+            return needles.every((n) => haystack.every((h) => !h.includes(n)));
+
+        case "eq":
+            return needles.some((n) => haystack.some((h) => h === n));
+
+        case "neq":
+            return needles.every((n) => haystack.every((h) => h !== n));
+
+        case "in":
+            return needles.some((n) => haystack.includes(n));
+
+        case "not_in":
+            return needles.every((n) => !haystack.includes(n));
+
+        default:
+            return true;
+    }
+}
 
 export function useOperators() {
     const qc = useQueryClient();
@@ -30,8 +105,8 @@ export function useOperators() {
     });
 
     const query = useQuery<Agent[], unknown>({
-        queryKey: ["users", filters.field_filters ?? ""],
-        queryFn: () => getAgents({ field_filters: filters.field_filters ?? null }),
+        queryKey: ["users"],
+        queryFn: () => getAgents(),
         staleTime: 5_000,
         refetchInterval: 10_000,
         refetchOnWindowFocus: true,
@@ -79,6 +154,10 @@ export function useOperators() {
         const items = query.data ?? [];
 
         return items.filter((a: any) => {
+            if (filters.field_filters && !matchUserFieldFilter(a, filters.field_filters)) {
+                return false;
+            }
+
             if (filters.name?.trim()) {
                 const q = filters.name.trim().toLowerCase();
                 const hay = `${a?.name ?? ""} ${a?.login ?? ""}`.toLowerCase();
@@ -117,18 +196,22 @@ export function useOperators() {
         mutationFn: createAgent,
         onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
     });
+
     const mutateUpdate = useMutation<string, unknown, UpdateAgentPayload>({
         mutationFn: updateAgent,
         onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
     });
+
     const mutateDelete = useMutation<string, unknown, string>({
         mutationFn: deleteAgent,
         onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
     });
+
     const mutateAddTier = useMutation<string, unknown, TierMutationPayload>({
         mutationFn: addAgentToProject,
         onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
     });
+
     const mutateRemoveTier = useMutation<string, unknown, TierMutationPayload>({
         mutationFn: removeAgentFromProject,
         onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),

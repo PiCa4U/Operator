@@ -189,9 +189,6 @@ export const MonitoringTab: React.FC = () => {
         if (!sipLogin || !sessionKey) return;
 
         const onStart = (p: any) => {
-            if (process.env.NODE_ENV !== "production") {
-                console.log("[screen_share:start manager]", p);
-            }
 
             const sk = p?.session_key ?? null;
             if (sk && sk !== sessionKey) return;
@@ -486,11 +483,6 @@ export const MonitoringTab: React.FC = () => {
                 return;
             }
 
-            console.log("[join_call] stop", {
-                joinUuid,
-                currentUUID,
-                type: connection_type,
-            });
 
             socket.emit("sofia_operations", {
                 worker,
@@ -526,9 +518,6 @@ export const MonitoringTab: React.FC = () => {
             sip_login: sipLogin,
         };
 
-        if (process.env.NODE_ENV !== "production") {
-            console.log("[join_call] start", payload, { row });
-        }
 
         socket.emit("join_call", payload);
 
@@ -563,12 +552,6 @@ export const MonitoringTab: React.FC = () => {
             operator_login: operatorLogin,
         });
 
-        if (process.env.NODE_ENV !== "production") {
-            console.log("[screen_share] start sent", {
-                operator_login: operatorLogin,
-                manager_login: sipLogin,
-            });
-        }
     };
 
     return (

@@ -228,6 +228,13 @@ export interface ModuleType {
     [key: string]: any;
 }
 
+const CLEAR_ASSIGNEE_TOKEN = "__CLEAR_ASSIGNEE__";
+const CLEAR_ASSIGNEE_LABEL = "Снять ответственного";
+
+function isClearAssignee(v: unknown) {
+    return String(v ?? "").trim() === CLEAR_ASSIGNEE_TOKEN;
+}
+
 type Props = {
     openedGroup: any[]
     setOpenedGroup: (openedGroup: any[]) => void
@@ -1889,26 +1896,34 @@ const PresetSelectorTable: React.FC<Props> = ({
 
             switch (step.type) {
                 case "assign": {
+                    if (typeof operator === "undefined") {
+                        Swal.fire("Ошибка", "Выберите ответственного или вариант сброса", "error");
+                        return;
+                    }
+
                     const reqs: Promise<any>[] = [];
+                    const managerValue = isClearAssignee(operator) ? null : String(operator).trim();
+
                     Object.entries(groups).forEach(([project_name, ids]) => {
                         if (!selectedPreset?.preset.group_by) return;
 
                         const sample = flatPhones.find(p => p.id === ids[0]);
-                        const filter_by: Record<string, string> = {};
+                        const filter_by: Record<string, any> = {};
+
                         selectedPreset.preset.group_by.forEach(k => {
                             if (sample && k in sample) filter_by[k] = sample[k];
                         });
 
-                        if (operator) {
-                            reqs.push(
-                                axios.put('/api/v1/phones/update', {
-                                    glagol_parent: glagolParent,
-                                    project_name,
-                                    filter_by,
-                                    update: {manager: operator}
-                                }).catch(() => null)
-                            );
-                        }
+                        reqs.push(
+                            axios.put('/api/v1/phones/update', {
+                                glagol_parent: glagolParent,
+                                project_name,
+                                filter_by,
+                                update: {
+                                    manager: managerValue,
+                                },
+                            }).catch(() => null)
+                        );
                     });
 
                     Promise.allSettled(reqs).then(() => runStep(i + 1));

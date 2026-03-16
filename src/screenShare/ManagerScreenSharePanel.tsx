@@ -61,9 +61,6 @@ export const ManagerScreenSharePanel: React.FC = () => {
         if (!sipLogin || !sessionKey) return;
 
         const onStart = (p: any) => {
-            if (process.env.NODE_ENV !== "production") {
-                console.log("[screen_share:start manager]", p);
-            }
 
             const sk = p?.session_key ?? null;
             if (sk && sk !== sessionKey) return;

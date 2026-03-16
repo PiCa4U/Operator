@@ -19,16 +19,30 @@ import { store } from '../redux/store';
 import { readExternalConfig, subscribeExternalConfig, AppExternalConfig } from '../externalConfig';
 
 export interface SipUA {
-    session: Session | null;
+    session: Session | null; // primary session
+    consultSession: Session | null;
+
     makeCall(target: string): Promise<void>;
     answerCall(): Promise<void>;
     hangUp(): void;
+
     holdCall(): Promise<void>;
-    callOperator?: (sipLogin: string | number) => Promise<void>;
     unholdCall(): Promise<void>;
     muteLocal(muted: boolean): void;
+
+    callOperator?: (sipLogin: string | number) => Promise<void>;
+
+    blindTransfer(target: string): Promise<void>;
+
+    startConsultCall(target: string): Promise<void>;
+    completeAttendedTransfer(): Promise<void>;
+    cancelConsultCall(): Promise<void>;
+
     incoming: Invitation | null;
     status: SessionState | null;
+    consultStatus: SessionState | null;
+    consultTarget: string | null;
+
     remoteAudioRef: React.MutableRefObject<HTMLAudioElement | null>;
     localAudioRef: React.MutableRefObject<HTMLAudioElement | null>;
     userAgent: UserAgent | null;
@@ -130,11 +144,20 @@ export function useSipUA(config: {
 
     const uaRef             = useRef<UserAgent | null>(null);
     const registererRef     = useRef<Registerer | null>(null);
+
+    // primary session = основной разговор
     const sessionRef        = useRef<Session | null>(null);
+
+    // consult session = консультационный разговор
+    const consultSessionRef = useRef<Session | null>(null);
+
     const localStreamRef    = useRef<MediaStream | null>(null);
 
     const [incoming, setIncoming] = useState<Invitation | null>(null);
     const [status,   setStatus]   = useState<SessionState | null>(null);
+
+    const [consultStatus, setConsultStatus] = useState<SessionState | null>(null);
+    const [consultTarget, setConsultTarget] = useState<string | null>(null);
 
     const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
     const localAudioRef  = useRef<HTMLAudioElement | null>(null);
@@ -147,6 +170,12 @@ export function useSipUA(config: {
     const pingTimerRef         = useRef<ReturnType<typeof setInterval> | null>(null);
     const regListenerRef       = useRef<((st: RegistererState)=>void) | null>(null);
     const transportListenerRef = useRef<((st: TransportState)=>void) | null>(null);
+
+    const referWaitRef = useRef<{
+        resolve: () => void;
+        reject: (e: any) => void;
+        timeoutId: number | null;
+    } | null>(null);
 
     // ===== AUTO PAUSE (missed / rejected incoming) =====
     const INCOMING_IGNORE_MS = 10_000;
@@ -257,6 +286,7 @@ export function useSipUA(config: {
 
     const endTonePlayedRef = useRef(false);
     const endToneUntilRef  = useRef(0);
+
     function playEndToneOnce(ms = 1500) {
         if (endTonePlayedRef.current) return;
         endTonePlayedRef.current = true;
@@ -266,31 +296,96 @@ export function useSipUA(config: {
         setTimeout(() => tonesRef.current?.stopAll(), ms);
     }
 
-    function bind(s: Session) {
-        sessionRef.current = s;
+    function attachRemoteFromSession(s: Session | null) {
+        try {
+            const pc = (s?.sessionDescriptionHandler as any)?.peerConnection as
+                | RTCPeerConnection
+                | undefined;
+
+            if (!pc) {
+                safeSetSrcObject(remoteAudioRef, null);
+                return;
+            }
+
+            const stream = new MediaStream();
+            pc.getReceivers().forEach((r) => {
+                if (r.track) stream.addTrack(r.track);
+            });
+
+            safeSetSrcObject(remoteAudioRef, stream);
+            void safePlay(remoteAudioRef);
+        } catch (e) {
+            console.warn("attachRemoteFromSession failed", e);
+        }
+    }
+
+
+    type SessionRole = "primary" | "consult";
+
+    function bind(s: Session, role: SessionRole = "primary") {
+        if (role === "primary") {
+            sessionRef.current = s;
+        } else {
+            consultSessionRef.current = s;
+        }
+
         endTonePlayedRef.current = false;
-        endToneUntilRef.current  = 0;
+        endToneUntilRef.current = 0;
+
+        (s.delegate ??= {}).onNotify = (notification: any) => {
+            const body = notification?.request?.body ?? "";
+            const txt = typeof body === "string" ? body : "";
+
+            console.log("SIP NOTIFY RAW", {
+                role,
+                sessionId: sessionId(s),
+                body: txt,
+            });
+
+            const ok = /SIP\/2\.0\s+2\d\d/i.test(txt);
+            const fail = /SIP\/2\.0\s+[3456]\d\d/i.test(txt);
+
+            const waiter = referWaitRef.current;
+            if (!waiter) return;
+
+            if (ok) {
+                if (waiter.timeoutId) window.clearTimeout(waiter.timeoutId);
+                referWaitRef.current = null;
+                waiter.resolve();
+            } else if (fail) {
+                if (waiter.timeoutId) window.clearTimeout(waiter.timeoutId);
+                referWaitRef.current = null;
+                waiter.reject(new Error(txt || "REFER failed by NOTIFY"));
+            }
+        };
 
         (s.delegate ??= {}).onBye = () => {
             playEndToneOnce(1500);
         };
 
-        s.stateChange.addListener(st => {
-            setStatus(st);
+        s.stateChange.addListener((st) => {
+            console.log("SIP SESSION STATE", {
+                role,
+                sessionId: sessionId(s),
+                state: st,
+            });
+            if (role === "primary") {
+                setStatus(st);
+            } else {
+                setConsultStatus(st);
+            }
 
             const sid = sessionId(s);
             const meta = incomingMetaRef.current;
-            const isThisIncoming = !!meta && meta.id === sid;
+            const isThisIncoming = role === "primary" && !!meta && meta.id === sid;
 
             if (st === SessionState.Established) {
                 if (isThisIncoming) {
                     meta.handled = "accepted";
                     clearIncomingTimer();
                 }
-                const pc = (s.sessionDescriptionHandler as any).peerConnection as RTCPeerConnection;
-                const stream = new MediaStream();
-                pc.getReceivers().forEach(r => r.track && stream.addTrack(r.track));
-                safeSetSrcObject(remoteAudioRef, stream); void safePlay(remoteAudioRef);
+
+                attachRemoteFromSession(s);
                 tonesRef.current?.stopAll();
             }
 
@@ -307,20 +402,295 @@ export function useSipUA(config: {
 
                     incomingMetaRef.current = null;
                 }
+
                 const remaining = endToneUntilRef.current - Date.now();
                 if (remaining > 0) {
                     setTimeout(() => tonesRef.current?.stopAll(), remaining);
                 } else {
                     tonesRef.current?.stopAll();
                 }
-                setIncoming(null); setStatus(null); sessionRef.current = null;
-                if (pendingRestartRef.current) {
-                    pendingRestartRef.current = false;
-                    void restartUAWith(latestTurnCredsRef.current);
+
+                if (role === "primary") {
+                    setIncoming(null);
+                    setStatus(null);
+                    sessionRef.current = null;
+
+                    if (pendingRestartRef.current) {
+                        pendingRestartRef.current = false;
+                        void restartUAWith(latestTurnCredsRef.current);
+                    }
+                } else {
+                    consultSessionRef.current = null;
+                    setConsultStatus(null);
+                    setConsultTarget(null);
+
+                    // если консультация закончилась — возвращаем звук на основной звонок
+                    if (sessionRef.current && sessionRef.current.state === SessionState.Established) {
+                        attachRemoteFromSession(sessionRef.current);
+                    }
                 }
             }
         });
     }
+
+    function waitReferNotify() {
+        if (referWaitRef.current?.timeoutId) {
+            window.clearTimeout(referWaitRef.current.timeoutId);
+        }
+        referWaitRef.current = null;
+
+        return new Promise<void>((resolve, reject) => {
+            const timeoutId = window.setTimeout(() => {
+                referWaitRef.current = null;
+                reject(new Error("REFER timeout (NOTIFY не пришёл)"));
+            }, 12000);
+
+            referWaitRef.current = { resolve, reject, timeoutId };
+        });
+    }
+
+    const blindTransfer = async (target: string) => {
+        if (!enabled) return;
+
+        const s = sessionRef.current;
+        if (!s) throw new Error("Нет активной SIP-сессии");
+        if (s.state !== SessionState.Established) {
+            throw new Error(`Слепой перевод возможен только в Established, сейчас: ${s.state}`);
+        }
+
+        // нормализуем target: "1002" / "sip:1002" / "1002@domain"
+        let v = String(target ?? "").trim();
+        if (!v) throw new Error("Пустая цель перевода");
+
+        v = v.replace(/^sip:/i, "");
+        const sipHost = extractSipHost(wsServer);
+        const uriStr = v.includes("@") ? `sip:${v}` : `sip:${v}@${sipHost}`;
+
+        const targetUri = UserAgent.makeURI(uriStr);
+        if (!targetUri) throw new Error(`Не удалось собрать URI из: ${uriStr}`);
+
+        // если уже ждём NOTIFY от прошлого refer — сбросим
+        const waitNotify = waitReferNotify();
+
+        const anyS: any = s;
+
+        // В разных версиях SIP.js бывает refer() или transfer()
+        if (typeof anyS.refer === "function") {
+            await anyS.refer(targetUri, {
+                requestDelegate: {
+                    onReject: (resp: any) => {
+                        const code = resp?.message?.statusCode;
+                        const reason = resp?.message?.reasonPhrase;
+                        referWaitRef.current?.reject(new Error(`REFER reject ${code ?? ""} ${reason ?? ""}`));
+                    },
+                },
+            });
+        } else if (typeof anyS.transfer === "function") {
+            await anyS.transfer(targetUri);
+        } else {
+            throw new Error("В вашей версии SIP.js нет session.refer/transfer");
+        }
+
+        // ждём NOTIFY с финальным статусом
+        await waitNotify;
+
+        // по успеху — кладём трубку на своём диалоге (как вам и сказали)
+        try { s.bye(); } catch {}
+    };
+
+    const startConsultCall = async (target: string) => {
+        if (!enabled) return;
+
+        const primary = sessionRef.current;
+        if (!primary) throw new Error("Нет основного SIP-разговора");
+        if (primary.state !== SessionState.Established) {
+            throw new Error(`Основной вызов не Established, сейчас: ${primary.state}`);
+        }
+
+        if (consultSessionRef.current && consultSessionRef.current.state !== SessionState.Terminated) {
+            throw new Error("Консультационный вызов уже существует");
+        }
+
+        let v = String(target ?? "").trim();
+        if (!v) throw new Error("Пустой номер консультации");
+
+        v = v.replace(/^sip:/i, "");
+
+        await holdCall();
+
+        const ua = uaRef.current;
+        if (!ua) {
+            await unholdCall();
+            throw new Error("UA не инициализирован");
+        }
+
+        const sipHost = extractSipHost(wsServer);
+        const targetUri = UserAgent.makeURI(v.includes("@") ? `sip:${v}` : `sip:${v}@${sipHost}`) as URI;
+        if (!targetUri) {
+            await unholdCall();
+            throw new Error(`Не удалось собрать URI из: ${v}`);
+        }
+
+        const inviter = new Inviter(ua, targetUri);
+        bind(inviter, "consult");
+        setConsultTarget(v);
+
+        try {
+            await inviter.invite({
+                requestDelegate: {
+                    onProgress: (response: SipResponseLite) => {
+                        const status = Number(response?.message?.statusCode ?? response?.statusCode ?? 0);
+                        if (status === 180) {
+                            if (!responseHasSDP(response)) {
+                                tonesRef.current?.play("ringback");
+                            } else {
+                                tonesRef.current?.stopAll();
+                            }
+                        } else if (status === 183) {
+                            tonesRef.current?.stopAll();
+                        }
+                    },
+                    onAccept: () => {
+                        tonesRef.current?.stopAll();
+                    },
+                    onReject: (response: SipResponseLite) => {
+                        const code = Number(response?.message?.statusCode ?? response?.statusCode ?? 0);
+                        tonesRef.current?.stopAll();
+
+                        if ([486, 600, 603].includes(code)) {
+                            tonesRef.current?.play("busy");
+                            setTimeout(() => tonesRef.current?.stopAll(), 2500);
+                        } else if ([500, 503, 480, 408].includes(code)) {
+                            setTimeout(() => tonesRef.current?.stopAll(), 2500);
+                        }
+                    },
+                },
+            });
+        } catch (e) {
+            consultSessionRef.current = null;
+            setConsultStatus(null);
+            setConsultTarget(null);
+            try {
+                await unholdCall();
+                attachRemoteFromSession(sessionRef.current);
+            } catch {}
+            throw e;
+        }
+    };
+
+    const cancelConsultCall = async () => {
+        const consult = consultSessionRef.current;
+
+        if (consult) {
+            try {
+                if (consult.state === SessionState.Established) {
+                    consult.bye();
+                } else {
+                    consult.dispose();
+                }
+            } catch {}
+        }
+
+        consultSessionRef.current = null;
+        setConsultStatus(null);
+        setConsultTarget(null);
+
+        const primary = sessionRef.current;
+        if (primary && primary.state === SessionState.Established) {
+            try {
+                await unholdCall();
+                attachRemoteFromSession(primary);
+            } catch {}
+        }
+    };
+
+    const completeAttendedTransfer = async () => {
+        if (!enabled) return;
+
+        const primary = sessionRef.current;
+        const consult = consultSessionRef.current;
+
+        if (!primary) throw new Error("Нет основного разговора");
+        if (!consult) throw new Error("Нет консультационного разговора");
+
+        if (primary.state !== SessionState.Established) {
+            throw new Error(`Основной вызов не Established, сейчас: ${primary.state}`);
+        }
+        if (consult.state !== SessionState.Established) {
+            throw new Error(`Консультационный вызов не Established, сейчас: ${consult.state}`);
+        }
+
+        const anyPrimary: any = primary;
+        if (typeof anyPrimary.refer !== "function") {
+            throw new Error("В вашей версии SIP.js нет session.refer()");
+        }
+
+        console.log("ATTENDED TRANSFER start", {
+            primaryState: primary.state,
+            consultState: consult.state,
+            primaryId: sessionId(primary),
+            consultId: sessionId(consult),
+        });
+
+        const waitNotify = waitReferNotify();
+
+        await anyPrimary.refer(consult, {
+            requestDelegate: {
+                onReject: (resp: any) => {
+                    const code = resp?.message?.statusCode;
+                    const reason = resp?.message?.reasonPhrase;
+                    console.log("ATTENDED TRANSFER refer reject", { code, reason, resp });
+                    referWaitRef.current?.reject(
+                        new Error(`REFER reject ${code ?? ""} ${reason ?? ""}`)
+                    );
+                },
+            },
+        });
+
+        console.log("ATTENDED TRANSFER refer sent");
+
+        await waitNotify;
+
+        console.log("ATTENDED TRANSFER notify ok", {
+            primaryStateAfterNotify: primary.state,
+            consultStateAfterNotify: consult.state,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        console.log("ATTENDED TRANSFER before consult cleanup", {
+            consultStateBeforeBye: consult.state,
+            consultId: sessionId(consult),
+        });
+
+        try {
+            if (consult.state === SessionState.Established) {
+                console.log("ATTENDED TRANSFER consult.bye()");
+                await Promise.resolve(consult.bye());
+            } else if (consult.state !== SessionState.Terminated) {
+                console.log("ATTENDED TRANSFER consult.dispose()");
+                consult.dispose();
+            }
+        } catch (e) {
+            console.warn("consult cleanup failed", e);
+        }
+
+        setTimeout(() => {
+            console.log("ATTENDED TRANSFER after consult cleanup delay", {
+                consultStateAfterBye: consult.state,
+                primaryStateAfterBye: primary.state,
+            });
+
+            try {
+                if (consult.state !== SessionState.Terminated) {
+                    console.log("ATTENDED TRANSFER consult.forceDispose()");
+                    consult.dispose();
+                }
+            } catch (e) {
+                console.warn("consult force dispose failed", e);
+            }
+        }, 1000);
+    };
 
     async function unregisterAndWait(all = true) {
         const reg = registererRef.current;
@@ -385,6 +755,10 @@ export function useSipUA(config: {
         setIncoming(null);
         setStatus(null);
         sessionRef.current = null;
+
+        setConsultStatus(null);
+        setConsultTarget(null);
+        consultSessionRef.current = null;
 
         uaRef.current = null;
         registererRef.current = null;
@@ -473,7 +847,7 @@ export function useSipUA(config: {
 
                     incomingMetaRef.current.timer = t;
 
-                    bind(inc);
+                    bind(inc, "primary");
                 }
             };
 
@@ -575,7 +949,7 @@ export function useSipUA(config: {
         const targetUri = UserAgent.makeURI(`sip:${target}@${sipHost}`) as URI;
         const inviter = new Inviter(ua, targetUri);
 
-        bind(inviter);
+        bind(inviter, "primary");
 
         await inviter.invite({
             // sessionDescriptionHandlerModifiers: [filterG711],
@@ -734,13 +1108,18 @@ export function useSipUA(config: {
     const holdCall = async () => {
         if (!enabled) return;
         const s = sessionRef.current;
-        if (s && (s as any).hold) await (s as any).hold();
+        if (s && (s as any).hold) {
+            await (s as any).hold();
+        }
     };
 
     const unholdCall = async () => {
         if (!enabled) return;
         const s = sessionRef.current;
-        if (s && (s as any).unhold) await (s as any).unhold();
+        if (s && (s as any).unhold) {
+            await (s as any).unhold();
+            attachRemoteFromSession(s);
+        }
     };
 
     const muteLocal = (mute: boolean) => {
@@ -751,10 +1130,29 @@ export function useSipUA(config: {
 
     return {
         session: sessionRef.current,
-        makeCall, answerCall, hangUp, holdCall, unholdCall, muteLocal,
-        incoming, status,
-        remoteAudioRef, localAudioRef,
+        consultSession: consultSessionRef.current,
+
+        makeCall,
+        answerCall,
+        hangUp,
+        holdCall,
+        unholdCall,
+        muteLocal,
+
+        incoming,
+        status,
+        consultStatus,
+        consultTarget,
+
+        remoteAudioRef,
+        localAudioRef,
         userAgent: uaRef.current,
-        callOperator
+
+        callOperator,
+        blindTransfer,
+
+        startConsultCall,
+        completeAttendedTransfer,
+        cancelConsultCall,
     };
 }

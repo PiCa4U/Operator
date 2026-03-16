@@ -2,17 +2,25 @@ export type Role = "operator" | "manager";
 export type AgentPresence = string;
 export type UserFieldType = "regular" | "textarea" | "select" | "number" | "date" | "many";
 
+export type FieldFilterOp = "eq" | "neq" | "like" | "not_like" | "in" | "not_in";
+
+export type AppliedFieldFilter = {
+    fieldSlugs: string[];
+    op: FieldFilterOp;
+    values: string[];
+};
+
 export type UserFieldDef = {
     id?: number;
     slug: string;
     name: string;
     description?: string | null;
     field_type: UserFieldType;
-    field_value?: string | null; // опции для select/many (строка)
+    field_value?: string | null;
     active: boolean;
 };
 
-export type UserFieldsMap = Record<string, string>;
+export type UserFieldsMap = Record<string, any>;
 
 export type CreateUserFieldPayload = {
     name: string;
@@ -40,9 +48,8 @@ export interface Agent {
         duration?: string;
         [k: string]: unknown;
     } | null;
-    user_fields?: UserFieldsMap
+    user_fields?: UserFieldsMap;
 }
-
 
 export interface OperatorLogEntry {
     status: string | null;
@@ -82,7 +89,7 @@ export interface CreateAgentPayload {
     postobrabotka: boolean;
     department?: string;
     login?: string;
-    user_fields?: UserFieldsMap
+    user_fields?: UserFieldsMap;
 }
 
 export interface UpdateAgentPayload {
@@ -92,7 +99,7 @@ export interface UpdateAgentPayload {
     role?: Role;
     postobrabotka?: boolean;
     department?: string;
-    user_fields?: UserFieldsMap
+    user_fields?: UserFieldsMap;
 }
 
 export interface TierMutationPayload {
@@ -102,6 +109,7 @@ export interface TierMutationPayload {
 
 export type RobotFilter = "all" | "robot" | "human";
 export type OnlineFilter = "all" | "online" | "offline";
+
 export interface FiltersState {
     name: string;
     projects: string[];
@@ -109,5 +117,5 @@ export interface FiltersState {
     departments: string[];
     robot: RobotFilter;
     online: OnlineFilter;
-    field_filters?: string | null;
+    field_filters?: AppliedFieldFilter | null;
 }

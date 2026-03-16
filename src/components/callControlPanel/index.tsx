@@ -148,6 +148,25 @@ function processAlerts(swalRef: React.MutableRefObject<any>) {
     });
 }
 
+type DialplanExtensionMeta = {
+    name?: string | null;
+    label?: string | null;
+    project?: string | null;
+    [key: string]: any;
+};
+
+type DialplanExtensionsResponse = Record<
+    string,
+    Record<string, DialplanExtensionMeta>
+>;
+
+type DialplanExtensionItem = {
+    id: string;
+    ext: string;
+    title: string;
+    project_name: string;
+};
+
 interface PhoneCombo {
     id: string;
     phone: string;
@@ -325,6 +344,97 @@ export interface ExpressState {
     active: boolean;
     calls: number;
     agents: string[];
+}
+
+type CallLike = Partial<ActiveCall> & Record<string, any>;
+
+function extractSipLoginFromPresence(value?: string | number | null): string {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+
+    return raw.replace(/^sip:/i, "").split("@")[0].trim();
+}
+
+function resolveCallTargetSipLogin(callLike?: CallLike, currentSipLogin?: string): string {
+    if (!callLike) return "";
+
+    const ownSip = String(currentSipLogin ?? "").trim();
+
+    // Для внутреннего звонка на добавочный это приоритетный источник
+    const fromPresence =
+        extractSipLoginFromPresence(callLike?.b_presence_id) ||
+        extractSipLoginFromPresence(callLike?.presence_id);
+
+    if (fromPresence && fromPresence !== ownSip) {
+        return fromPresence;
+    }
+
+    // Фолбэк для обычных сценариев
+    const rawTarget =
+        String(callLike?.dest ?? "").trim() === ownSip
+            ? callLike?.cid_num
+            : callLike?.dest;
+
+    return extractSipLoginFromPresence(rawTarget) || String(rawTarget ?? "").trim();
+}
+
+function isInternalExtensionTarget(callLike?: CallLike, currentSipLogin?: string): boolean {
+    if (!callLike) return false;
+
+    const ownSip = String(currentSipLogin ?? "").trim();
+    const fromPresence =
+        extractSipLoginFromPresence(callLike?.b_presence_id) ||
+        extractSipLoginFromPresence(callLike?.presence_id);
+
+    return Boolean(fromPresence && fromPresence !== ownSip);
+}
+
+function parseDialplanExtensions(
+    resp: DialplanExtensionsResponse,
+    allowedProjects: string[]
+): DialplanExtensionItem[] {
+    const out: DialplanExtensionItem[] = [];
+    const seen = new Set<string>();
+    const allowed = new Set((allowedProjects || []).map(p => String(p)));
+
+    Object.entries(resp || {}).forEach(([projectKey, extensions]) => {
+        if (!extensions || typeof extensions !== 'object') return;
+
+        if (allowed.size > 0 && !allowed.has(projectKey)) {
+            return;
+        }
+
+        Object.entries(extensions).forEach(([extKey, meta]) => {
+            if (!meta || typeof meta !== 'object') return;
+
+            const project_name = String(meta.project || projectKey).trim();
+            if (!project_name) return;
+
+            const ext = String(extKey).trim();
+            if (!ext) return;
+
+            const title = String(meta.label || meta.name || ext).trim() || ext;
+            const uniqKey = `${project_name}|${ext}`;
+
+            if (seen.has(uniqKey)) return;
+            seen.add(uniqKey);
+
+            out.push({
+                id: uniqKey,
+                ext,
+                title,
+                project_name,
+            });
+        });
+    });
+
+    return out.sort((a, b) => {
+        if (a.project_name !== b.project_name) {
+            return a.project_name.localeCompare(b.project_name, 'ru');
+        }
+
+        return a.title.localeCompare(b.title, 'ru', { numeric: true });
+    });
 }
 
 interface CallControlPanelProps {
@@ -679,6 +789,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const projectPool = useSelector(selectFullProjectPool) || [];
 
     const activeCalls: ActiveCall[] = useSelector((state: RootState) => state.operator.activeCalls);
+    const isMainCallHeld = useMemo(() => {
+        const mainActiveCall = activeCalls?.[0];
+        if (!mainActiveCall) return false;
+
+        return (
+            mainActiveCall.callstate === "HELD" ||
+            mainActiveCall.b_callstate === "HELD"
+        );
+    }, [activeCalls]);
 
     const [manualNumber, setManualNumber] = useState('');
 
@@ -690,6 +809,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [baseFieldValues, setBaseFieldValues] = useState<{ [fieldId: string]: string }>(
         call?.base_fields || {}
     );
+
+    const [dialplanExtensions, setDialplanExtensions] = useState<DialplanExtensionItem[]>([]);
 
     const [callReasons, setCallReasons] = useState<ReasonItem[]>([]);
     const [callResults, setCallResults] = useState<ResultItem[]>([]);
@@ -721,6 +842,20 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     }, [openedPhones, call?.id, phoneID]);
 
     const presenceKey = useMemo(() => presenceIds.join(","), [presenceIds]);
+
+    const groupedDialplanExtensions = useMemo(() => {
+        const byProject: Record<string, DialplanExtensionItem[]> = {};
+
+        dialplanExtensions.forEach(item => {
+            const proj = item.project_name;
+            if (!byProject[proj]) {
+                byProject[proj] = [];
+            }
+            byProject[proj].push(item);
+        });
+
+        return byProject;
+    }, [dialplanExtensions]);
 
     const groupByFactors = useMemo<string[] | undefined>(() => {
         const keys = selectedPreset?.preset?.group_by;
@@ -812,6 +947,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         return out;
     }
+
+    const getExtensionDialProject = (item: DialplanExtensionItem): string => {
+        return item.project_name || activeProject || selectedProjects[0] || groupProjects[0] || '';
+    };
 
     const ONCHANGE_DEBOUNCE_MS = 400;
 
@@ -1032,7 +1171,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const activityLabels = useMemo(() => {
         const keys = new Set<string>();
-        console.log()
         projectPool.forEach((p: any) => {
             if (!selectedProjects.includes(p.project_name)) return;
 
@@ -1853,11 +1991,52 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             );
         }
     }, [monoModules, modules]);
+
+
+    const startContextKey = useMemo(() => {
+        // 1) активный звонок — ключ по uuid (или call_uuid)
+        if (hasActiveCall) {
+            const ac = activeCalls?.[0];
+            const u = String(ac?.uuid || ac?.call_uuid || ac?.b_uuid || "");
+            return u ? `call:${u}` : "call:unknown";
+        }
+
+        // 2) tusk-карточка — ключ по наборам ids (стабильно)
+        if (tuskMode) {
+            const ids = (openedPhones ?? [])
+                .map((p: any) => Number(p?.id))
+                .filter((n) => Number.isFinite(n))
+                .sort((a, b) => a - b)
+                .join(",");
+            return `tusk:${ids}`;
+        }
+
+        // 3) редактирование сохранённого call
+        if (call?.id != null) return `edit:${call.id}`;
+
+        return "none";
+    }, [hasActiveCall, activeCalls, tuskMode, openedPhones, call?.id]);
+
+    const lastStartContextRef = useRef<string>("none");
+
+    useEffect(() => {
+        if (startContextKey === "none") return;
+
+        if (lastStartContextRef.current !== startContextKey) {
+            lastStartContextRef.current = startContextKey;
+
+            if (!postActive) {
+                startModulesRanRef.current = false;
+            }
+        }
+    }, [startContextKey, startModulesRanRef, postActive]);
+
+
     useEffect(() => {
         if (startModulesRanRef.current) return;
 
         if (startModules.length && (hasActiveCall || call)) {
-            setRunningModulesCount(startModules.length)
+            setRunningModulesCount(startModules.length);
             startModules.forEach(mod => handleModuleRun(mod, false, undefined, { manual: true }));
             startModulesRanRef.current = true;
             return;
@@ -1865,11 +2044,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         const countPhones = openedPhones?.length ?? 0;
         if (startModules.length && tuskMode && countPhones > 0 && !postActive) {
-            setRunningModulesCount(startModules.length)
+            setRunningModulesCount(startModules.length);
             startModules.forEach(mod => handleModuleRun(mod, false, undefined, { manual: true }));
             startModulesRanRef.current = true;
         }
     }, [
+        startContextKey,
         hasActiveCall,
         tuskMode,
         openedPhones,
@@ -1877,7 +2057,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         startModules,
         handleModuleRun,
     ]);
-
 //     useEffect(() => {
 //         if (!hasActiveCall) {
 //             startModulesRanRef.current = false;
@@ -1928,8 +2107,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         setBaseFieldValues({});
     };
 
-    const handleHold = (activeCall: ActiveCall) => {
-        const currentUUID = activeCall?.call_uuid;
+    const handleHold = () => {
+        const currentUUID = activeCalls[0]?.call_uuid;
         if (!currentUUID) return;
         socket.emit('sofia_operations', {
             worker,
@@ -1999,22 +2178,26 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     };
 
     const handleRedirectToInterCall = () => {
-        const uuid1 = activeCalls[0].direction === "outbound" ? activeCalls[0]?.b_uuid : activeCalls[0]?.uuid;
-        const uuid2 = interCall?.dest === sipLogin ? interCall?.uuid : interCall?.b_uuid
+        const uuid1 =
+            activeCalls[0].direction === "outbound" && !expressCall
+                ? activeCalls[0]?.b_uuid
+                : activeCalls[0]?.uuid;
+
+        const uuid2 =
+            interCall?.dest === sipLogin
+                ? interCall?.uuid
+                : interCall?.b_uuid;
 
         if (!uuid1 || !uuid2) return;
-        socket.emit('transfer_data', {
+
+        const targetSipLogin = resolveCallTargetSipLogin(interCall, sipLogin);
+        const internalExtension = isInternalExtensionTarget(interCall, sipLogin);
+
+        socket.emit("transfer_data", {
             worker,
             session_key: sessionKey,
-            target_sip_login: interCall.dest === sipLogin ? interCall.cid_num : interCall.dest,
-            data: openedPhones
-        })
-        socket.emit('sofia_operations', {
-            worker,
-            session_key: sessionKey,
-            uuid: uuid1,
-            uuid_2: uuid2,
-            action: 'uuid_bridge'
+            target_sip_login: targetSipLogin,
+            data: openedPhones,
         });
     };
 
@@ -2299,23 +2482,69 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const iconCol = call?.total_direction === 'outbound' ? '#f26666' : '#7cd420';
 
-    const callFromCard = (project_name: string, phone: string, phoneId?: number) => {
-        manualCallRef.current = true;
-        startModulesRanRef.current = true
+    // const callFromCard = (project_name: string, phone: string, phoneId?: number) => {
+    //     manualCallRef.current = true;
+    //     startModulesRanRef.current = true
+    //
+    //     if (phoneId) {
+    //         if (setPhoneID) {
+    //             setPhoneID(phoneId);
+    //         }
+    //     }
+    //
+    //     socket.emit('call', {
+    //         phone,
+    //         project_name,
+    //         session_key: sessionKey,
+    //         sip_login: sipLogin,
+    //         worker
+    //     });
+    // };
 
-        if (phoneId) {
-            if (setPhoneID) {
-                setPhoneID(phoneId);
-            }
+    const callFromCard = async (project_name: string, phone: string, phoneId?: number) => {
+        manualCallRef.current = true;
+        startModulesRanRef.current = true;
+
+        if (phoneId && setPhoneID) {
+            setPhoneID(phoneId);
         }
 
-        socket.emit('call', {
-            phone,
-            project_name,
-            session_key: sessionKey,
-            sip_login: sipLogin,
-            worker
-        });
+        try {
+            socket.emit("change_state_fs", {
+                sip_login: sipLogin,
+                worker,
+                session_key: sessionKey,
+                state: "idle",
+                reason: "start_outbound_call",
+                page: "online",
+            });
+
+            await axios.post("/api/v1/calls/call", {
+                glagol_parent: glagolParent,
+                project_name,
+                sip_login: sipLogin,
+                phone,
+            });
+
+            await Swal.fire({
+                icon: "success",
+                title: "Вызов инициализирован",
+                timer: 1200,
+                showConfirmButton: false,
+            });
+        } catch (error: any) {
+            console.error("Ошибка при вызове:", error);
+
+            await Swal.fire({
+                icon: "error",
+                title: "Ошибка при старте вызова",
+                text:
+                    error?.response?.data?.message ||
+                    error?.response?.data?.error ||
+                    error?.message ||
+                    "Не удалось запустить вызов",
+            });
+        }
     };
 
     const getGroupProjects = (
@@ -2353,6 +2582,44 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         return Array.from(map.values());
     }, [openedPhones]);
+
+    const extensionProjects = useMemo(() => {
+        return groupProjects.length ? groupProjects : selectedProjects;
+    }, [groupProjects, selectedProjects]);
+
+    const extensionProjectsKey = useMemo(
+        () => [...extensionProjects].sort().join('|'),
+        [extensionProjects]
+    );
+
+    useEffect(() => {
+        if (!glagolParent || extensionProjects.length === 0) {
+            setDialplanExtensions([]);
+            return;
+        }
+
+        let cancelled = false;
+
+        axios
+            .get("/api/v1/dialplan/extensions", {
+                params: {
+                    glagol_parent: glagolParent,
+                },
+            })
+            .then(({ data }) => {
+                if (cancelled) return;
+                setDialplanExtensions(parseDialplanExtensions(data, extensionProjects));
+            })
+            .catch((error) => {
+                if (cancelled) return;
+                console.error("Ошибка при загрузке внутренних номеров:", error);
+                setDialplanExtensions([]);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [glagolParent, extensionProjectsKey]);
 
     const contactInfoVariants = useMemo(() => {
         const result: Record<string, Set<string>> = {};
@@ -2485,126 +2752,65 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 style={{
                     position: 'relative',
                     display: 'flex',
-                    flexWrap: 'wrap',
+                    flexDirection: 'column',
                     gap: 12,
                     marginBottom: 16,
                 }}
             >
-
                 <div
-                    key="manual-entry"
                     style={{
-                        border: '1px solid #ddd',
-                        borderRadius: 6,
-                        padding: 8,
-                        minWidth: 180,
-                        maxWidth: 240,
-                        flex: '0 1 auto',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
-                        background: '#fff',
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 12,
                     }}
                 >
-                    <input
-                        type="text"
-                        placeholder="Введите номер..."
-                        value={manualNumber}
-                        onChange={e => {
-                            const onlyDigits = e.target.value.replace(/\D/g, '');
-                            setManualNumber(onlyDigits);
+                    <div
+                        key="manual-entry"
+                        style={{
+                            border: '1px solid #ddd',
+                            borderRadius: 6,
+                            padding: 8,
+                            minWidth: 180,
+                            maxWidth: 240,
+                            flex: '0 1 auto',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                            background: '#fff',
                         }}
-                        className="form-control mb-2"
-                        inputMode="numeric"
-                        pattern="\d*"
-                    />
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                        {groupProjects.map(proj => {
-                            const label = findNameProject(proj);
-                            return (
-                                <button
-                                    key={`manual-${proj}`}
-                                    className="btn btn-sm btn-outline-success"
-                                    onClick={() => {
-                                        if (manualNumber.trim()) callFromCard(proj, manualNumber.trim());
-                                    }}
-                                    title={`Вызов ${label}`}
-                                    style={{
-                                        marginRight: 4,
-                                        marginBottom: 4,
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: 6,
-                                        overflow: 'hidden',
-                                        whiteSpace: 'nowrap',
-                                        textOverflow: 'ellipsis',
-                                        verticalAlign: 'bottom',
-                                    }}
-                                >
-                                    <span>Вызов&nbsp;</span>
-                                    <span
-                                        style={{
-                                            overflow: 'hidden',
-                                            whiteSpace: 'nowrap',
-                                            textOverflow: 'ellipsis',
-                                            minWidth: 0,
-                                        }}
-                                    >
-                                        {label}
-                                    </span>
-                                </button>
-                            );
-                        })}
-                    </div>
-                </div>
-
-                {phoneGroups.map(group => {
-                    const firstId = group.entries[0]?.id;
-
-                    return (
-                        <div
-                            key={group.phone}
-                            style={{
-                                border: '1px solid #ddd',
-                                borderRadius: 6,
-                                padding: 8,
-                                minWidth: 180,
-                                maxWidth: 240,
-                                flex: '0 1 auto',
-                                boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
-                                background: '#fff',
+                    >
+                        <input
+                            type="text"
+                            placeholder="Введите номер..."
+                            value={manualNumber}
+                            onChange={e => {
+                                const onlyDigits = e.target.value.replace(/\D/g, '');
+                                setManualNumber(onlyDigits);
                             }}
-                        >
-                            <div
-                                style={{
-                                    fontSize: 14,
-                                    fontWeight: 600,
-                                    marginBottom: 6,
-                                    whiteSpace: 'nowrap',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                }}
-                            >
-                                {group.phone}
-                            </div>
-                            {Array.from(new Set(group.entries.map(e => e.project))).map(proj => {
+                            className="form-control mb-2"
+                            inputMode="numeric"
+                            pattern="\d*"
+                        />
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {groupProjects.map(proj => {
                                 const label = findNameProject(proj);
                                 return (
                                     <button
-                                        key={proj}
+                                        key={`manual-${proj}`}
                                         className="btn btn-sm btn-outline-success"
+                                        onClick={() => {
+                                            if (manualNumber.trim()) callFromCard(proj, manualNumber.trim());
+                                        }}
+                                        title={`Вызов ${label}`}
                                         style={{
                                             marginRight: 4,
                                             marginBottom: 4,
                                             display: 'inline-flex',
                                             alignItems: 'center',
                                             gap: 6,
-                                            maxWidth: 200,
                                             overflow: 'hidden',
                                             whiteSpace: 'nowrap',
                                             textOverflow: 'ellipsis',
                                             verticalAlign: 'bottom',
                                         }}
-                                        title={`Вызов ${label}`}
-                                        onClick={() => callFromCard(proj, group.phone, firstId)}
                                     >
                                         <span>Вызов&nbsp;</span>
                                         <span
@@ -2615,19 +2821,86 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                 minWidth: 0,
                                             }}
                                         >
-                                            {label}
-                                        </span>
+                                        {label}
+                                    </span>
                                     </button>
                                 );
                             })}
-
                         </div>
-                    );
-                })}
+                    </div>
+
+                    {phoneGroups.map(group => {
+                        const firstId = group.entries[0]?.id;
+
+                        return (
+                            <div
+                                key={group.phone}
+                                style={{
+                                    border: '1px solid #ddd',
+                                    borderRadius: 6,
+                                    padding: 8,
+                                    minWidth: 180,
+                                    maxWidth: 240,
+                                    flex: '0 1 auto',
+                                    boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                                    background: '#fff',
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        fontSize: 14,
+                                        fontWeight: 600,
+                                        marginBottom: 6,
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                    }}
+                                >
+                                    {group.phone}
+                                </div>
+
+                                {Array.from(new Set(group.entries.map(e => e.project))).map(proj => {
+                                    const label = findNameProject(proj);
+                                    return (
+                                        <button
+                                            key={proj}
+                                            className="btn btn-sm btn-outline-success"
+                                            style={{
+                                                marginRight: 4,
+                                                marginBottom: 4,
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: 6,
+                                                maxWidth: 200,
+                                                overflow: 'hidden',
+                                                whiteSpace: 'nowrap',
+                                                textOverflow: 'ellipsis',
+                                                verticalAlign: 'bottom',
+                                            }}
+                                            title={`Вызов ${label}`}
+                                            onClick={() => callFromCard(proj, group.phone, firstId)}
+                                        >
+                                            <span>Вызов&nbsp;</span>
+                                            <span
+                                                style={{
+                                                    overflow: 'hidden',
+                                                    whiteSpace: 'nowrap',
+                                                    textOverflow: 'ellipsis',
+                                                    minWidth: 0,
+                                                }}
+                                            >
+                                            {label}
+                                        </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        );
+                    })}
+                </div>
             </div>
         );
     };
-
 
     const renderActiveCallHeader = (activeCall: ActiveCall) => {
         const mainActiveCall = activeCall || postCallData
@@ -2637,24 +2910,19 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return (
             <div className="mb-3">
                 <div className="d-flex">
-                    <button className="btn btn-outline-warning mr-2" onClick={() => handleHold(mainActiveCall)}>
+                    <button className="btn btn-outline-warning mr-2" onClick={() => handleHold()}>
                         <span className="material-icons">{iconName}</span>
                     </button>
                     <button className="btn btn-outline-danger mr-2" onClick={() => handleStop(mainActiveCall, 1)}>
                         <span className="material-icons">call_end</span>
                     </button>
-                    {activeCalls.length > 1 &&
-                        <button className="btn btn-outline-success" onClick={handleRedirect}>
-                            Объединить вызовы
-                        </button>
-                    }
                 </div>
                 <div className="d-flex align-items-center mt-2">
                   <span className="material-icons" style={{ color: iconColor }}>
                     {mainActiveCall.direction === 'outbound' ? 'logout' : 'login'}
                   </span>
                     <strong className="ml-2" style={{ fontSize: 16, fontWeight: 600}}>
-                        {mainActiveCall.direction === 'outbound' && mainActiveCall.application !== 'uuid_bridge'?
+                        {mainActiveCall.direction === 'outbound' && mainActiveCall.name.startsWith("sofia/internal") ?
                             // mainActiveCall.callee_num ||
                             extractSuffix(mainActiveCall.b_callee_num) : extractSuffix(mainActiveCall.cid_num)}
                         {' | '}
@@ -2681,7 +2949,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         const iconColor = postCallData?.direction === 'outbound' ? '#f26666' : '#7cd420';
         const iconName = postCallData?.direction === 'outbound' ? 'logout' : 'login';
-        const phoneNumber = postCallData?.direction === 'outbound' && postCallData?.application !== 'uuid_bridge' ? postCallData.b_callee_num : postCallData?.cid_num;
+        const phoneNumber = postCallData?.direction === 'outbound' && postCallData.name.startsWith("sofia/internal") ? postCallData.b_callee_num : postCallData?.cid_num;
         const startDate = new Date(postCallData?.b_created || "0").toLocaleString();
 
         return (
@@ -2698,61 +2966,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 </label>}
             </div>
         );
-    };
-
-    const renderSecondCall = () => {
-        if (activeCalls.length > 1 && Object.keys(activeCalls[1]).length > 0 && activeCalls[1].application) {
-            const sc = activeCalls[1];
-            const isHeld = sc.callstate === 'HELD' || sc.b_callstate === 'HELD';
-            const iconName = isHeld ? 'play_arrow' : 'pause';
-            const iconColor = sc.direction === 'outbound' ? '#f26666' : '#7cd420';
-            // const secondCallDuration = Math.floor(
-            //     (Date.now() - new Date(sc.b_created).getTime()) / 1000
-            // );
-
-            return (
-                <div className="mt-3">
-                    <div className="card col ml-3 w-100" style={{ marginTop: '1rem' }}>
-                        <div className="card-body" style={{ padding: '1rem' }}>
-                            <div className="d-flex">
-                                <button
-                                    className="btn btn-outline-warning mr-2"
-                                    onClick={() => handleHold(sc)}
-                                >
-                                    <span className="material-icons">{iconName}</span>
-                                </button>
-                                <button
-                                    className="btn btn-outline-danger mr-2"
-                                    onClick={() => handleStop(sc, 2)}
-                                >
-                                    <span className="material-icons">call_end</span>
-                                </button>
-                            </div>
-                            <div className="d-flex align-items-center mt-2">
-                              <span
-                                  className="material-icons"
-                                  style={{ color: iconColor }}
-                              >
-                                {sc.direction === 'outbound' ? 'logout' : 'login'}
-                              </span>
-                                <strong className="ml-2" style={{ fontSize: 16, fontWeight: 600}}>
-                                    {sc.direction === 'outbound' ? sc.callee_num  : extractSuffix(sc.cid_num)}
-                                    {' | '}
-                                    {new Date(sc.created).toLocaleString()}
-                                </strong>
-                            </div>
-                            <div className="mt-2 mb-2">
-                                <strong style={{ fontSize: 16, fontWeight: 400 }}>
-                                    {isHeld ? 'На удержании' : 'Вызов активен'}:
-                                </strong>{' '}
-                                <CallDurationText created={sc.created} />
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-        return null;
     };
 
     useEffect(() => {
@@ -3231,6 +3444,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     }, [openedPhones]);
 
     const renderSelectedCallHeader = () => {
+        if (!call) return null;
         return(
             <div>
                 <div className="d-flex align-items-center my-2">
@@ -3607,8 +3821,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             <InternalOperatorsDialer
                                 enabled={hasActiveCall}
                                 currentLogin={sipLogin}
+                                openedPhones={openedPhones ?? []}
+                                handleHold={handleHold}
+                                isMainCallHeld={isMainCallHeld}
+                                dialplanExtensions={dialplanExtensions}
+                                findProjectLabel={findNameProject}
                             />
-                        )}
+                        )}                
                         {hasActiveCall && renderActiveCallHeader(activeCalls[0])}
                         {!hasActiveCall && postActive && renderPostCallHeader()}
                         {tuskMode && !hasActiveCall && !postActive && !isChating && renderGroupPhones()}
@@ -4193,8 +4412,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     </div>
                 </div>
             </div>
-            {renderSecondCall()}
-
             <GroupActionModal
                 isOpen={groupModalOpen}
                 onClose={() => setGroupModalOpen(false)}

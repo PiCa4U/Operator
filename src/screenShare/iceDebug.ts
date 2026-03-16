@@ -58,20 +58,20 @@ export async function logSelectedIcePair(pc: RTCPeerConnection, tag: string) {
         }
 
         if (!pair) {
-            console.log(`[ICE ${tag}] no selected pair`);
+            // console.log(`[ICE ${tag}] no selected pair`);
             return;
         }
 
         const local: any = report.get(pair.localCandidateId);
         const remote: any = report.get(pair.remoteCandidateId);
 
-        console.log(
-            `[ICE ${tag}] SELECTED`,
-            `local=${local?.candidateType} ${local?.address || local?.ip}:${local?.port}`,
-            `remote=${remote?.candidateType} ${remote?.address || remote?.ip}:${remote?.port}`,
-            `pairProto=${pair.protocol}`,
-            `rtt=${pair.currentRoundTripTime}`
-        );
+        // console.log(
+        //     `[ICE ${tag}] SELECTED`,
+        //     `local=${local?.candidateType} ${local?.address || local?.ip}:${local?.port}`,
+        //     `remote=${remote?.candidateType} ${remote?.address || remote?.ip}:${remote?.port}`,
+        //     `pairProto=${pair.protocol}`,
+        //     `rtt=${pair.currentRoundTripTime}`
+        // );
     } catch {
         // ignore
     }
@@ -80,20 +80,20 @@ export async function logSelectedIcePair(pc: RTCPeerConnection, tag: string) {
 
 export function attachIceDebug(pc: RTCPeerConnection, tag: string) {
     try {
-        console.log(`[ICE ${tag}] pc.getConfiguration():`, pc.getConfiguration?.());
+        // console.log(`[ICE ${tag}] pc.getConfiguration():`, pc.getConfiguration?.());
     } catch {}
 
     try {
         pc.addEventListener("icegatheringstatechange", () => {
-            console.log(`[ICE ${tag}] iceGatheringState:`, pc.iceGatheringState);
+            // console.log(`[ICE ${tag}] iceGatheringState:`, pc.iceGatheringState);
         });
 
         pc.addEventListener("iceconnectionstatechange", () => {
-            console.log(`[ICE ${tag}] iceConnectionState:`, pc.iceConnectionState);
+            // console.log(`[ICE ${tag}] iceConnectionState:`, pc.iceConnectionState);
         });
 
         pc.addEventListener("connectionstatechange", () => {
-            console.log(`[ICE ${tag}] connectionState:`, pc.connectionState);
+            // console.log(`[ICE ${tag}] connectionState:`, pc.connectionState);
             if (pc.connectionState === "connected") {
                 void logSelectedIcePair(pc, tag);
             }
@@ -101,16 +101,16 @@ export function attachIceDebug(pc: RTCPeerConnection, tag: string) {
 
         pc.addEventListener("icecandidate", (e) => {
             if (!e.candidate) {
-                console.log(`[ICE ${tag}] icecandidate: <end>`);
+                // console.log(`[ICE ${tag}] icecandidate: <end>`);
                 void logSelectedIcePair(pc, tag);
                 return;
             }
             const c = e.candidate.candidate || "";
             const hasRelay = / typ relay(\s|$)/i.test(c);
             if (hasRelay) {
-                console.log(`[ICE ${tag}] cand ✅ RELAY:`, c);
+                // console.log(`[ICE ${tag}] cand ✅ RELAY:`, c);
             } else {
-                console.log(`[ICE ${tag}] cand:`, c);
+                // console.log(`[ICE ${tag}] cand:`, c);
             }
         });
 

@@ -24,7 +24,7 @@ type ApiUser = {
     status: string | null;
     state: string | null;
     post: boolean | null;
-
+    user_fields?: Record<string, any> | null;
     talk: null | {
         phone?: string;
         project?: string;
@@ -32,6 +32,7 @@ type ApiUser = {
         [k: string]: unknown;
     };
 };
+
 
 type ApiUsersResponse = {
     status: "success";
@@ -82,13 +83,12 @@ export async function getActivityLog(params: {
     return data as ActivityLogPerUser;
 }
 
-export async function getAgents(params?: { field_filters?: string | null }): Promise<Agent[]> {
+export async function getAgents(): Promise<Agent[]> {
     const glagol_parent = getGlagolParent();
 
     const resp: AxiosResponse<ApiUsersResponse> = await axios.get("/api/v1/users", {
         params: {
             glagol_parent,
-            ...(params?.field_filters ? { field_filters: params.field_filters } : {}),
         },
     });
 
@@ -103,6 +103,7 @@ export async function getAgents(params?: { field_filters?: string | null }): Pro
             talk,
             role: (u?.type ?? "operator") as Role,
             postobrabotka: typeof u?.post === "boolean" ? u.post : Boolean(u?.post_obrabotka),
+            user_fields: u?.user_fields ?? {},
         } as Agent;
     });
 

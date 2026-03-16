@@ -45,6 +45,11 @@ const ITSM_SPLIT_KEY = "itsm:chat_call_split:v1";
 function is4Digits(val: any) {
     return /^\d{4}$/.test(String(val ?? "").trim());
 }
+
+function is3Digits(val: any) {
+    return /^\d{3}$/.test(String(val ?? "").trim());
+}
+
 function hasLetters(val: any) {
     return /[a-z]/i.test(String(val ?? "").trim());
 }
@@ -54,15 +59,194 @@ function isInterWebRtcLeg(c: any) {
     return !!dest && hasLetters(dest);
 }
 
-function isInterOperatorLeg(c: any) {
-    const cid = String(c?.cid_num ?? "").trim();
+function isSofiaExternalLeg(c: any) {
+    const s = `${c?.name ?? ""} ${c?.b_name ?? ""}`.toLowerCase();
+    return s.includes("sofia/external/");
+}
+
+function extFromPresence(val: any): string | null {
+    const m = String(val ?? "").trim().match(/^(\d{4})@/);
+    return m?.[1] ?? null;
+}
+
+function extFromSofiaInternalName(val: any): string | null {
+    const m = String(val ?? "").trim().match(/sofia\/internal\/(\d{4})@/i);
+    return m?.[1] ?? null;
+}
+
+function pickInternalExt(...vals: any[]): string | null {
+    for (const v of vals) {
+        const s = String(v ?? "").trim();
+        if (!s) continue;
+
+        if (is4Digits(s)) return s;
+
+        const fromPresence = extFromPresence(s);
+        if (fromPresence) return fromPresence;
+
+        const fromName = extFromSofiaInternalName(s);
+        if (fromName) return fromName;
+    }
+
+    return null;
+}
+
+function resolveInterEndpoints(c: any) {
+    const from = pickInternalExt(
+        c?.cid_num,
+        c?.cid_name,
+        c?.name,
+        c?.presence_id
+    );
+
+    const toCandidates = [
+        c?.dest,
+        c?.sent_callee_num,
+        c?.callee_num,
+
+        c?.b_dest,
+        c?.b_sent_callee_num,
+        c?.b_callee_num,
+        c?.b_presence_id,
+        c?.b_name,
+
+        c?.presence_id,
+    ]
+        .map(v => pickInternalExt(v))
+        .filter(Boolean) as string[];
+
+    const to = toCandidates.find(ext => ext !== from) ?? null;
+
+    return { from, to };
+}
+
+/**
+ * Служебный leg нового внутреннего вызова.
+ * Его не надо показывать как внешний звонок.
+ */
+function isInternalHelperLeg(c: any) {
+    if (isSofiaExternalLeg(c)) return false;
+
+    const app = String(c?.application ?? "").trim().toLowerCase();
     const dest = String(c?.dest ?? "").trim();
-    return is4Digits(cid) && is4Digits(dest);
+    const from = pickInternalExt(
+        c?.cid_num,
+        c?.cid_name,
+        c?.name,
+        c?.presence_id
+    );
+
+    return !!from && app === "callcenter" && dest === "999";
+}
+
+function hasAnyBSide(c: any) {
+    return [
+        c?.b_uuid,
+        c?.b_call_uuid,
+        c?.b_presence_id,
+        c?.b_name,
+        c?.b_created,
+        c?.b_created_epoch,
+        c?.b_cid_num,
+        c?.b_cid_name,
+        c?.b_dest,
+        c?.b_application,
+        c?.b_callstate,
+        c?.b_state,
+    ].some(v => String(v ?? "").trim() !== "");
+}
+
+function hasResolvedOperatorOnB(c: any) {
+    return !!pickInternalExt(
+        c?.b_dest,
+        c?.b_presence_id,
+        c?.b_name,
+        c?.b_cid_num,
+        c?.b_cid_name,
+        c?.b_sent_callee_num
+    );
+}
+
+function isMyLocalExtensionLeg(c: any, myLogin: string) {
+    if (!myLogin) return false;
+
+    const my = String(myLogin).trim().toLowerCase();
+
+    const cidNum = String(c?.cid_num ?? "").trim().toLowerCase();
+    const cidName = String(c?.cid_name ?? "").trim().toLowerCase();
+    const presenceId = String(c?.presence_id ?? "").trim().toLowerCase();
+    const name = String(c?.name ?? "").trim().toLowerCase();
+
+    if (cidNum === my) return true;
+    if (cidName === my) return true;
+    if (presenceId.startsWith(`${my}@`)) return true;
+    if (name.includes(`sofia/internal/${my}@`)) return true;
+
+    return false;
+}
+
+/**
+ * Мусорный leg после attended transfer через добавочный.
+ *
+ * Не режем:
+ * - живую консультацию, пока consultSession ещё существует
+ * - обычные внешние вызовы
+ * - обычные внутренние 4-значные вызовы
+ *
+ * Режем:
+ * - локальный uuid_bridge leg на 3-значный добавочный,
+ *   который остался после перевода
+ */
+function isGhostTransferredExtensionLeg(
+    c: any,
+    myLogin: string,
+    hasLiveConsult: boolean
+) {
+    if (isSofiaExternalLeg(c)) return false;
+
+    const app = String(c?.application ?? "").trim().toLowerCase();
+    const dest = String(c?.dest ?? "").trim();
+    const state = String(c?.state ?? "").trim().toUpperCase();
+    const callstate = String(c?.callstate ?? "").trim().toUpperCase();
+
+    if (app !== "uuid_bridge") return false;
+    if (!is3Digits(dest)) return false;
+    if (!isMyLocalExtensionLeg(c, myLogin)) return false;
+
+    // именно тот подвисший тип, который ты показывал
+    if (state !== "CS_SOFT_EXECUTE") return false;
+    if (callstate !== "ACTIVE") return false;
+
+    // пока консультация реально жива в softphone — это не мусор
+    if (hasLiveConsult) return false;
+
+    // вариант 1: b-сторона уже пустая
+    if (!hasAnyBSide(c)) return true;
+
+    // вариант 2: b-сторона ещё есть, но уже виден реальный оператор
+    // (например b_presence_id = 1000@...)
+    if (hasResolvedOperatorOnB(c)) return true;
+
+    return false;
+}
+
+function isInterOperatorLeg(c: any) {
+    if (isSofiaExternalLeg(c)) return false;
+
+    const { from, to } = resolveInterEndpoints(c);
+    return !!from && !!to && from !== to;
 }
 
 function splitFsCalls(all: any[]) {
     const inter = all.filter(isInterOperatorLeg);
-    const rest  = all.filter(c => !isInterOperatorLeg(c) && !isInterWebRtcLeg(c));
+
+    const rest = all.filter(
+        c =>
+            !isInterOperatorLeg(c) &&
+            !isInternalHelperLeg(c) &&
+            !isInterWebRtcLeg(c)
+    );
+
     return { interCalls: inter, activeCalls: rest };
 }
 
@@ -430,7 +614,21 @@ export type MainAppProps = {
 const MemoLocalChat = React.memo(LocalChat) as typeof LocalChat;
 
 const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
-    const {enabled, incoming, clearIncoming, remoteAudioRef, localAudioRef, answerCall, hangUp } = useSip();
+    const sip = useSip() as any;
+
+    const {
+        enabled,
+        incoming,
+        clearIncoming,
+        remoteAudioRef,
+        localAudioRef,
+        answerCall,
+        hangUp,
+    } = sip;
+
+    const consultSession = sip?.consultSession ?? null;
+    const consultStatus = sip?.consultStatus ?? null;
+
     const dispatch = useDispatch();
 
     const [selectedCall, setSelectedCall] = useState<CallData | null>(null);
@@ -540,6 +738,9 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
     const interCall = useMemo(() => pickPrimaryInterCall(interCalls), [interCalls]);
 
+    const hasLiveConsult =
+        !!consultSession && String(consultStatus ?? "") !== "Terminated";
+
     const hasExternalActive = activeCalls.length > 0 || activeCall || postActive;
     const showInterOverlay = !!interCall && !hasExternalActive;
     const showInterInCardHeader = !!interCall && hasExternalActive;
@@ -568,21 +769,32 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     }
 
     function interPeerText(c: any, myLogin: string, dict: Record<string, string>) {
-        const from = String(c?.cid_num ?? "").trim();
-        const to   = String(c?.dest ?? "").trim();
+        const { from, to } = resolveInterEndpoints(c);
+
+        const left = from ?? String(c?.cid_num ?? "").trim();
+        const right =
+            to ??
+            extFromPresence(c?.b_presence_id) ??
+            extFromPresence(c?.presence_id) ??
+            String(c?.dest ?? "").trim();
 
         const pretty = (ext: string) => {
             try {
-                // у тебя уже импортирован formatOperator + есть operatorDictStableRef
-                return formatOperator(ext, dict ) || ext;
+                return formatOperator(ext, dict) || ext;
             } catch {
                 return ext;
             }
         };
 
-        if (to === myLogin) return `Внутренний вызов от ${pretty(from)} → вам (${myLogin})`;
-        if (from === myLogin) return `Внутренний вызов на ${pretty(to)} (от вас ${myLogin})`;
-        return `Внутренний вызов: ${pretty(from)} → ${pretty(to)}`;
+        if (right === myLogin) {
+            return `Внутренний вызов от ${pretty(left)} → вам (${myLogin})`;
+        }
+
+        if (left === myLogin) {
+            return `Внутренний вызов на ${pretty(right)} (от вас ${myLogin})`;
+        }
+
+        return `Внутренний вызов: ${pretty(left)} → ${pretty(right)}`;
     }
 
     const InterCallOverlay: React.FC<{ call: any; onHangup: (uuid: string) => void }> = ({ call, onHangup }) => {
@@ -1272,12 +1484,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         window.location.href = "https://my.glagol.ai/login_work/";
 };
 
-    // useEffect(() => {
-    //     socket.on('logout', handleLogout);
-    //     return () => {
-    //         socket.off('logout', handleLogout);
-    //     };
-    // }, []);
+    useEffect(() => {
+        socket.on('logout', handleLogout);
+        return () => {
+            socket.off('logout', handleLogout);
+        };
+    }, []);
 
     useEffect(() => {
         const now = new Date().toISOString();
@@ -1602,9 +1814,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         const onGetData = (payload: any) => {
             const rows = normalizeGetDataRows(payload);
             if (!rows.length) return;
-
+            startModulesRanRef.current = false;
             const sig = sigByIds(rows);
-            if (sig && sig === lastGetDataSigRef.current) return;
             lastGetDataSigRef.current = sig;
 
             setShowTasksDashboard(true);
@@ -1893,7 +2104,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 (item) => item?.application !== "conference"
             );
 
-            const { interCalls, activeCalls } = splitFsCalls(noConferenceArray);
+            const filteredArray = noConferenceArray.filter((c) => {
+                return !isGhostTransferredExtensionLeg(c, sipLogin, hasLiveConsult);
+            });
+
+            const { interCalls, activeCalls } = splitFsCalls(filteredArray);
 
             const sig = fsCallsSig(activeCalls) + "||" + fsCallsSig(interCalls);
             if (sig === lastFsCallsSigRef.current) return;
@@ -1928,8 +2143,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             socket.off("fs_status", handleFsStatus);
             socket.off("fs_calls", handleFsCalls);
         };
-    }, [dispatch, isOwner, enabled]);
-
+    }, [dispatch, isOwner, enabled, sipLogin, hasLiveConsult]);
     useEffect(() => {
         if (!(activeCalls[0] && Object.keys(activeCalls[0]).length > 0)) return
         const first = activeCalls[0]

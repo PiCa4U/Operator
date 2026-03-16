@@ -23,7 +23,6 @@ const fmtDT = (iso?: string) => {
     });
 };
 
-// ISO-датки в тексте (Z / +00:00 / -03:00 / с миллисекундами)
 const ISO_RX = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+\-]\d{2}:\d{2})/g;
 const localizeMessageDates = (s: string) =>
     String(s || "").replace(ISO_RX, (m) => fmtDT(m));
@@ -36,12 +35,10 @@ export const NotificationsPanel: React.FC<{
     const { query, markAllAsReadNow } = useManagerSignals(managerLogin);
     const { data: opDir } = useOperatorsDirectory();
 
-    // какие ids были unread на момент первого открытия модалки (для подсветки)
     const enteredUnread = useRef<number[] | null>(null);
 
     useEffect(() => {
         if (!open) {
-            // ✅ важно: иначе при следующем открытии автопрочтение не сработает
             enteredUnread.current = null;
             return;
         }
@@ -50,26 +47,30 @@ export const NotificationsPanel: React.FC<{
 
         if (!enteredUnread.current) {
             enteredUnread.current = ids;
-
-            // ✅ автопрочтение при открытии (как у тебя было)
             markAllAsReadNow();
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, query.data]);
+    }, [open, query.data, markAllAsReadNow]);
 
     const all: SignalItem[] = useMemo(() => {
         const hist = managerLogin ? readHistory(managerLogin) : [];
         const unread = query.data ?? [];
 
         const map = new Map<number, SignalItem>();
-        for (const i of hist) map.set(i.id, i);
-        for (const i of unread) map.set(i.id, i);
+        for (const item of hist) map.set(item.id, item);
+        for (const item of unread) map.set(item.id, item);
 
         return Array.from(map.values()).sort((a, b) => b.id - a.id);
     }, [managerLogin, query.data]);
 
-    const meta = useMemo(() => (managerLogin ? readMeta(managerLogin) : {}), [managerLogin, open, query.data]);
-    const unreadIds = useMemo(() => new Set((query.data ?? []).map((x) => x.id)), [query.data]);
+    const meta = useMemo(
+        () => (managerLogin ? readMeta(managerLogin) : {}),
+        [managerLogin, open, query.data]
+    );
+
+    const unreadIds = useMemo(
+        () => new Set((query.data ?? []).map((x) => x.id)),
+        [query.data]
+    );
 
     if (!open) return null;
 
@@ -103,13 +104,14 @@ export const NotificationsPanel: React.FC<{
                 <div className="list-group">
                     {all.map((n) => {
                         const wasUnreadAtEnter = enteredUnread.current?.includes(n.id);
-
                         const m = meta[String(n.id)] || {};
                         const receivedAt = m.receivedAt;
                         const readAt = m.readAt;
-
-                        // на случай лагов: если сервер ещё считает unread, а readAt не проставился
                         const isUnread = unreadIds.has(n.id) && !readAt;
+
+                        const operatorText = n.login
+                            ? formatOperatorLine(n.login, opDir, n.department, true)
+                            : "";
 
                         return (
                             <div
@@ -120,24 +122,31 @@ export const NotificationsPanel: React.FC<{
                                     background: wasUnreadAtEnter ? "rgba(253, 230, 138, .25)" : "#fff",
                                 }}
                             >
-                                <div className="d-flex align-items-center gap-2 mb-1">
-                                    <span>
-                                        {n.signal_type === "warning"
-                                            ? "⚠️"
-                                            : n.signal_type === "error"
-                                                ? "⛔"
-                                                : n.signal_type === "success"
-                                                    ? "✅"
-                                                    : "ℹ️"}
-                                    </span>
-                                    <strong>{n.title}</strong>
-                                </div>
+                                {(n.title || n.signal_type) && (
+                                    <div className="d-flex align-items-center gap-2 mb-1">
+                                        <span>
+                                            {n.signal_type === "warning"
+                                                ? "⚠️"
+                                                : n.signal_type === "error"
+                                                    ? "⛔"
+                                                    : n.signal_type === "success"
+                                                        ? "✅"
+                                                        : "ℹ️"}
+                                        </span>
+                                        {n.title && <strong>{n.title}</strong>}
+                                    </div>
+                                )}
 
-                                <div className="text-muted" style={{ whiteSpace: "pre-wrap" }}>
-                                    {localizeMessageDates(n.message)}
-                                </div>
+                                {n.message && (
+                                    <div className="text-muted" style={{ whiteSpace: "pre-wrap" }}>
+                                        {localizeMessageDates(n.message)}
+                                    </div>
+                                )}
 
-                                <div className="mt-2 d-flex justify-content-between align-items-start" style={{ fontSize: 12, color: "#6b7280" }}>
+                                <div
+                                    className="mt-2 d-flex justify-content-between align-items-start"
+                                    style={{ fontSize: 12, color: "#6b7280" }}
+                                >
                                     <div>
                                         <div>
                                             Получено: <span className="text-monospace">{fmtDT(receivedAt) || "—"}</span>
@@ -155,9 +164,17 @@ export const NotificationsPanel: React.FC<{
                                     </div>
                                 </div>
 
-                                <div className="mt-1" style={{ fontSize: 12, color: "#6b7280" }}>
-                                    Оператор: {formatOperatorLine(n.login, opDir, n.department, true)}
-                                </div>
+                                {operatorText && (
+                                    <div className="mt-1" style={{ fontSize: 12, color: "#6b7280" }}>
+                                        Оператор: {operatorText}
+                                    </div>
+                                )}
+
+                                {!operatorText && n.department && (
+                                    <div className="mt-1" style={{ fontSize: 12, color: "#6b7280" }}>
+                                        Отдел: {n.department}
+                                    </div>
+                                )}
                             </div>
                         );
                     })}

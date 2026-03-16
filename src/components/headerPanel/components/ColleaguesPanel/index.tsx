@@ -27,10 +27,11 @@ type UsersObjectResponse = {
     users?: Record<
         string,
         {
-            name?: string;
+            name?: string | null;
             department?: string | null;
-            is_deleted?: boolean;
-            fields?: Record<string, any>;
+            is_deleted?: boolean | null;
+            user_fields?: Record<string, any> | null;
+            post_obrabotka?: boolean | null;
         }
     >;
 };
@@ -38,6 +39,76 @@ type UsersObjectResponse = {
 type UsersArrayResponse = { result?: RawUser[]; data?: RawUser[] };
 
 type UsersApiResponse = UsersObjectResponse & UsersArrayResponse;
+
+type UserFieldDef = {
+    id: number;
+    glagol_parent: string;
+    name: string;
+    slug: string;
+    description: string | null;
+    field_type: string;
+    field_value: string | null;
+    active: boolean;
+    created_dt: string;
+    modified_dt: string;
+};
+
+type DialplanExtensionMeta = {
+    name?: string | null;
+    label?: string | null;
+    project?: string | null;
+    [key: string]: any;
+};
+
+type DialplanExtensionsResponse = Record<
+    string,
+    Record<string, DialplanExtensionMeta>
+>;
+
+type DialplanExtensionRow = {
+    id: string;
+    ext: string;
+    title: string;
+    project_name: string;
+};
+
+
+function parseDialplanExtensions(resp: DialplanExtensionsResponse): DialplanExtensionRow[] {
+    const out: DialplanExtensionRow[] = [];
+    const seen = new Set<string>();
+
+    Object.entries(resp || {}).forEach(([projectKey, bucket]) => {
+        if (!bucket || typeof bucket !== "object") return;
+
+        Object.entries(bucket).forEach(([extKey, meta]) => {
+            if (!meta || typeof meta !== "object") return;
+
+            const ext = String(extKey || "").trim();
+            const project_name = String(meta.project || projectKey || "").trim();
+            const title = String(meta.label || meta.name || ext).trim();
+
+            if (!ext || !project_name) return;
+
+            const id = `${project_name}|${ext}`;
+            if (seen.has(id)) return;
+            seen.add(id);
+
+            out.push({
+                id,
+                ext,
+                title: title || ext,
+                project_name,
+            });
+        });
+    });
+
+    return out.sort((a, b) => {
+        if (a.project_name !== b.project_name) {
+            return a.project_name.localeCompare(b.project_name, "ru");
+        }
+        return a.title.localeCompare(b.title, "ru", { numeric: true });
+    });
+}
 
 export type ApiUserRow = {
     login: string;
@@ -60,8 +131,9 @@ function normalizeUsersApi(data: UsersApiResponse): ApiUserRow[] {
             login,
             name: u?.name || login,
             department: (u as any)?.department ?? null,
-            is_deleted: (u as any)?.is_deleted,
-            fields: (u as any)?.fields,
+            is_deleted: (u as any)?.is_deleted ?? false,
+            user_fields: (u as any)?.user_fields ?? {},
+            post_obrabotka: (u as any)?.post_obrabotka ?? undefined,
         }));
     }
 
@@ -72,6 +144,7 @@ function normalizeUsersApi(data: UsersApiResponse): ApiUserRow[] {
             login: u.login,
             name: u.name || u.login,
             is_deleted: u.is_deleted,
+            user_fields: {},
         }));
 }
 
@@ -256,6 +329,85 @@ const splitSqlValues = (raw: string): string[] => {
         .filter(Boolean);
 };
 
+type AppliedFieldFilter = {
+    fieldSlugs: string[];
+    op: FieldFilterOp;
+    values: string[];
+} | null;
+
+function matchUserFieldFilter(user: ApiUserRow, filter: AppliedFieldFilter): boolean {
+    if (!filter || !filter.fieldSlugs.length || !filter.values.length) return true;
+
+    const haystack = getSelectedUserFieldValues(user, filter.fieldSlugs).map((s) => s.toLowerCase());
+    const needles = filter.values.map((s) => s.toLowerCase());
+
+    switch (filter.op) {
+        case "like":
+            return needles.some((n) => haystack.some((h) => h.includes(n)));
+
+        case "not_like":
+            return needles.every((n) => haystack.every((h) => !h.includes(n)));
+
+        case "eq":
+            return needles.some((n) => haystack.some((h) => h === n));
+
+        case "neq":
+            return needles.every((n) => haystack.every((h) => h !== n));
+
+        case "in":
+            return needles.some((n) => haystack.includes(n));
+
+        case "not_in":
+            return needles.every((n) => !haystack.includes(n));
+
+        default:
+            return true;
+    }
+}
+function scalarToStrings(value: any): string[] {
+    const full = String(value ?? "").trim();
+    if (!full) return [];
+
+    const parts = full
+        .split(/\r?\n|,|;/g)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+    return Array.from(new Set([full, ...parts]));
+}
+
+function flattenFieldValueToStrings(value: any): string[] {
+    if (value == null) return [];
+
+    if (Array.isArray(value)) {
+        return value.flatMap(flattenFieldValueToStrings);
+    }
+
+    if (typeof value === "object") {
+        if ("value" in value) {
+            return flattenFieldValueToStrings((value as any).value);
+        }
+        return Object.values(value).flatMap(flattenFieldValueToStrings);
+    }
+
+    return scalarToStrings(value);
+}
+
+function getSelectedUserFieldValues(user: ApiUserRow, fieldSlugs: string[]): string[] {
+    const fields = getCustomFields(user);
+    const uniq = new Set<string>();
+
+    for (const slug of fieldSlugs) {
+        const vals = flattenFieldValueToStrings(fields?.[slug]);
+        for (const v of vals) {
+            const s = String(v).trim();
+            if (s) uniq.add(s);
+        }
+    }
+
+    return Array.from(uniq);
+}
+
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
 function usePopoverPosition(
@@ -317,9 +469,10 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
     const dispatch = useDispatch();
     const { enabled: webrtcEnabled, callOperator, makeCall } = useSip();
 
-    const { monitorUsers, monitorProjects, monitorCallcenter } = useSelector(
+    const { monitorUsers, monitorProjects, monitorCallcenter, allProjects } = useSelector(
         (s: RootState) => s.operator.monitorData
     );
+
     const userStatuses = useSelector((s: RootState) => s.operator.userStatuses);
 
     const rawInterCalls = useSelector((state: RootState) => (state.operator as any).interCalls);
@@ -339,6 +492,14 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
 
     const [deptFilter, setDeptFilter] = useState<string[]>([]);
     const [projectFilter, setProjectFilter] = useState<string[]>([]);
+
+    const [dialplanExtensions, setDialplanExtensions] = useState<DialplanExtensionRow[]>([]);
+    const [dialplanLoading, setDialplanLoading] = useState(false);
+    const [dialplanError, setDialplanError] = useState<string | null>(null);
+
+    const [activeTab, setActiveTab] = useState<"users" | "extensions">("users");
+    const [extensionProjectFilter, setExtensionProjectFilter] = useState<string[]>([]);
+
 
     const [dialingLogin, setDialingLogin] = useState<string | null>(null);
 
@@ -374,19 +535,33 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
 // на unmount — чистим таймер
     useEffect(() => () => clearDialing(), [clearDialing]);
 
+    const getProjectDisplayName = useCallback(
+        (projectName: string) => {
+            return String((allProjects as any)?.[projectName]?.glagol_name || projectName || "").trim();
+        },
+        [allProjects]
+    );
     // ===== SQL user_fields filter (server param)
-    const [fieldFilters, setFieldFilters] = useState<string | null>(null); // applied param
-    const currentFieldFilter = fieldFilters;
+    const [appliedFieldFilter, setAppliedFieldFilter] = useState<AppliedFieldFilter>(null);
+    const currentFieldFilter = appliedFieldFilter;
 
-    const ffActiveCount = useMemo(() => {
-        if (!currentFieldFilter) return 0;
-        const [, rest = ""] = String(currentFieldFilter).split("|");
-        return rest ? rest.split("--").filter(Boolean).length : 0;
-    }, [currentFieldFilter]);
+    const hasActiveFieldFilter = !!(
+        currentFieldFilter?.fieldSlugs?.length &&
+        currentFieldFilter?.values?.length
+    );
+
+    const ffActiveCount = currentFieldFilter?.values?.length ?? 0;
+
+    // const ffActiveCount = useMemo(() => {
+    //     if (!currentFieldFilter) return 0;
+    //     const [, rest = ""] = String(currentFieldFilter).split("|");
+    //     return rest ? rest.split("--").filter(Boolean).length : 0;
+    // }, [currentFieldFilter]);
 
     // draft UI
     const [ffMethodLabel, setFfMethodLabel] = useState<FieldFilterLabel>("Содержит");
     const [ffValuesRaw, setFfValuesRaw] = useState<string>("");
+    const [ffSelectedFieldSlugs, setFfSelectedFieldSlugs] = useState<string[]>([]);
 
     const [ffOpen, setFfOpen] = useState(false);
     const ffBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -420,51 +595,100 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
         };
     }, [ffOpen]);
 
+    const userFieldsQuery = useQuery({
+        queryKey: ["colleaguesUserFields", glagolParent],
+        queryFn: async (): Promise<UserFieldDef[]> => {
+            const { data } = await axios.get<UserFieldDef[]>("/api/v1/user_fields", {
+                params: { glagol_parent: glagolParent },
+            });
+            return Array.isArray(data) ? data : [];
+        },
+        enabled: show && !!glagolParent && activeTab === "users",
+        staleTime: 30 * 60 * 1000,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: false,
+        refetchInterval: false,
+    });
     // sync draft when applied value changes
     useEffect(() => {
         if (!currentFieldFilter) {
+            setFfSelectedFieldSlugs([]);
             setFfMethodLabel("Содержит");
             setFfValuesRaw("");
             return;
         }
 
-        const [opRaw, rest = ""] = String(currentFieldFilter).split("|");
-        const op: FieldFilterOp | null = isFieldFilterOp(opRaw) ? opRaw : null;
-
-        setFfMethodLabel(op ? FIELD_FILTER_LABEL_BY_CODE[op] : "Содержит");
-        setFfValuesRaw(rest.split("--").join("\n"));
+        setFfSelectedFieldSlugs(currentFieldFilter.fieldSlugs);
+        setFfMethodLabel(FIELD_FILTER_LABEL_BY_CODE[currentFieldFilter.op]);
+        setFfValuesRaw(currentFieldFilter.values.join("\n"));
     }, [currentFieldFilter]);
 
-    const buildFieldFiltersParam = useCallback((): string | null => {
+    const applyFieldFilter = useCallback(() => {
         const op: FieldFilterOp = FIELD_FILTER_CODE_BY_LABEL[ffMethodLabel];
         const vals = splitSqlValues(ffValuesRaw);
-        if (!vals.length) return null;
-        return `${op}|${vals.join("--")}`;
-    }, [ffMethodLabel, ffValuesRaw]);
 
-    const applyFieldFilter = useCallback(() => {
-        const param = buildFieldFiltersParam();
-        setFieldFilters(param);
-    }, [buildFieldFiltersParam]);
+        if (!ffSelectedFieldSlugs.length || !vals.length) return;
+
+        setAppliedFieldFilter({
+            fieldSlugs: ffSelectedFieldSlugs,
+            op,
+            values: vals,
+        });
+    }, [ffMethodLabel, ffValuesRaw, ffSelectedFieldSlugs]);
 
     const clearFieldFilter = useCallback(() => {
+        setFfSelectedFieldSlugs([]);
         setFfMethodLabel("Содержит");
         setFfValuesRaw("");
-        setFieldFilters(null);
+        setAppliedFieldFilter(null);
     }, []);
+
+
+    useEffect(() => {
+        if (!show || !glagolParent) {
+            setDialplanExtensions([]);
+            setDialplanError(null);
+            setDialplanLoading(false);
+            return;
+        }
+
+        let cancelled = false;
+        setDialplanLoading(true);
+        setDialplanError(null);
+
+        axios
+            .get<DialplanExtensionsResponse>("/api/v1/dialplan/extensions", {
+                params: { glagol_parent: glagolParent },
+            })
+            .then(({ data }) => {
+                if (cancelled) return;
+                setDialplanExtensions(parseDialplanExtensions(data));
+                setDialplanError(null);
+            })
+            .catch((error) => {
+                if (cancelled) return;
+                console.error("Ошибка при загрузке внутренних номеров:", error);
+                setDialplanExtensions([]);
+                setDialplanError(String(error?.message || "Не удалось загрузить внутренние номера"));
+            })
+            .finally(() => {
+                if (!cancelled) setDialplanLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [show, glagolParent]);
+
 
     // ===== /api/v1/users query (уникальный ключ + field_filters в key)
     const lastDirRef = useRef<{ sig: string; data: ApiUserRow[] }>({ sig: "", data: [] });
 
     const usersQuery = useQuery({
-        queryKey: ["colleaguesUsers", glagolParent, fieldFilters], // ✅ меняется только по "Применить/Сбросить"
+        queryKey: ["colleaguesUsers", glagolParent],
         queryFn: async (): Promise<UsersApiResponse> => {
             const { data } = await axios.get<UsersApiResponse>("/api/v1/users", {
-                params: {
-                    glagol_parent: glagolParent,
-                    // ✅ SQL фильтр как в менеджере
-                    ...(fieldFilters ? { field_filters: fieldFilters } : {}),
-                },
+                params: { glagol_parent: glagolParent },
             });
             return data;
         },
@@ -480,7 +704,9 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
             const sig = directorySig(next);
             if (sig === lastDirRef.current.sig) return lastDirRef.current.data;
 
-            const sorted = [...next].sort((a, b) => String(a.login).localeCompare(String(b.login), "ru"));
+            const sorted = [...next].sort((a, b) =>
+                String(a.login).localeCompare(String(b.login), "ru")
+            );
             lastDirRef.current = { sig, data: sorted };
             return sorted;
         },
@@ -518,13 +744,58 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
             if (prev) {
                 map.set(login, { ...prev, ...patch });
             } else {
-                // ✅ ключевая строка: если включён server field_filters — НЕ добавляем лишних
-                if (!fieldFilters) map.set(login, patch);
+                map.set(login, patch);
             }
         }
 
         return Array.from(map.values()).filter((u) => !u.is_deleted);
-    }, [directoryUsers, monitorUsers, fieldFilters]);
+    }, [directoryUsers, monitorUsers]);
+
+    const visibleUserFieldDefs = useMemo(() => {
+        const rows = Array.isArray(userFieldsQuery.data) ? userFieldsQuery.data : [];
+        return rows
+            .filter((f) => String(f?.slug || "").trim())
+            .filter((f) => f.active !== false); // если нужны только активные
+    }, [userFieldsQuery.data]);
+
+    const fieldOptionBySlug = useMemo(() => {
+        const map = new Map<string, string>();
+
+        for (const f of visibleUserFieldDefs) {
+            const slug = String(f.slug || "").trim();
+            const name = String(f.name || f.slug || "").trim();
+            if (!slug) continue;
+
+            map.set(slug, `${name} (${slug})`);
+        }
+
+        return map;
+    }, [visibleUserFieldDefs]);
+
+    const fieldSlugByOption = useMemo(() => {
+        const map = new Map<string, string>();
+
+        for (const f of visibleUserFieldDefs) {
+            const slug = String(f.slug || "").trim();
+            const name = String(f.name || f.slug || "").trim();
+            if (!slug) continue;
+
+            map.set(`${name} (${slug})`, slug);
+        }
+
+        return map;
+    }, [visibleUserFieldDefs]);
+
+    const operatorFieldOptions = useMemo(() => {
+        return visibleUserFieldDefs.map((f) => ({
+            label: String(f.name || f.slug || "").trim(),
+            value: String(f.slug || "").trim(),
+        }));
+    }, [visibleUserFieldDefs]);
+
+    const ffSelectedFieldOptionValues = useMemo(() => {
+        return ffSelectedFieldSlugs.map((slug) => fieldOptionBySlug.get(slug) ?? slug);
+    }, [ffSelectedFieldSlugs, fieldOptionBySlug]);
 
     const deptOptions = useMemo(() => {
         return Array.from(new Set(usersList.map(getDepartmentName))).sort((a, b) => a.localeCompare(b, "ru"));
@@ -714,6 +985,32 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
         );
     };
 
+    const handleCallExtension = useCallback(
+        async (ext: string) => {
+            if (!webrtcEnabled) {
+                Swal.fire({
+                    icon: "info",
+                    title: "Телефония выключена",
+                    timer: 1500,
+                    showConfirmButton: false,
+                });
+                return;
+            }
+
+            try {
+                await makeCall(String(ext));
+            } catch (e: any) {
+                console.error(e);
+                Swal.fire({
+                    icon: "error",
+                    title: "Не удалось позвонить",
+                    text: String(e?.message || e),
+                });
+            }
+        },
+        [webrtcEnabled, makeCall]
+    );
+
     const handleCall = useCallback(
         async (operatorLogin: string) => {
             if (!webrtcEnabled) {
@@ -763,7 +1060,10 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
     const groupsVm: GroupVM[] = useMemo(() => {
         let filtered: ApiUserRow[] = usersList;
 
-        // 1) поиск
+        if (currentFieldFilter) {
+            filtered = filtered.filter((u) => matchUserFieldFilter(u, currentFieldFilter));
+        }
+
         if (searchTerm.trim()) {
             const q = searchTerm.trim().toLowerCase();
             filtered = filtered.filter((u) => {
@@ -833,319 +1133,629 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
         isUserOnline,
         getProjectNamesForLogin,
         sortUsersInGroup,
+        currentFieldFilter
     ]);
+
+    const extensionProjectOptions = useMemo(() => {
+        const set = new Set<string>();
+
+        for (const row of dialplanExtensions) {
+            const label = getProjectDisplayName(row.project_name);
+            if (label) set.add(label);
+        }
+
+        return Array.from(set).sort((a, b) => a.localeCompare(b, "ru"));
+    }, [dialplanExtensions, getProjectDisplayName]);
+
+    const filteredDialplanExtensions = useMemo(() => {
+        let rows = dialplanExtensions;
+
+        if (searchTerm.trim()) {
+            const q = searchTerm.trim().toLowerCase();
+            rows = rows.filter((r) => {
+                const ext = r.ext.toLowerCase();
+                const title = r.title.toLowerCase();
+                const rawProject = r.project_name.toLowerCase();
+                const projectLabel = getProjectDisplayName(r.project_name).toLowerCase();
+
+                return (
+                    ext.includes(q) ||
+                    title.includes(q) ||
+                    rawProject.includes(q) ||
+                    projectLabel.includes(q)
+                );
+            });
+        }
+
+        if (extensionProjectFilter.length) {
+            const set = new Set(extensionProjectFilter);
+            rows = rows.filter((r) => {
+                const raw = r.project_name;
+                const label = getProjectDisplayName(r.project_name);
+                return set.has(raw) || set.has(label);
+            });
+        }
+
+        return rows;
+    }, [dialplanExtensions, searchTerm, extensionProjectFilter, getProjectDisplayName]);
+
+    const groupedDialplanExtensions = useMemo(() => {
+        const groups: Record<string, DialplanExtensionRow[]> = {};
+
+        for (const row of filteredDialplanExtensions) {
+            const key = row.project_name || "Без проекта";
+            if (!groups[key]) groups[key] = [];
+            groups[key].push(row);
+        }
+
+        return Object.entries(groups)
+            .sort(([a], [b]) => a.localeCompare(b, "ru"))
+            .map(([name, rows]) => ({
+                name,
+                rows: [...rows].sort((a, b) => a.title.localeCompare(b.title, "ru", { numeric: true })),
+            }));
+    }, [filteredDialplanExtensions]);
 
     const totalFilteredCount = useMemo(() => {
         return groupsVm.reduce((acc, g) => acc + g.rows.length, 0);
     }, [groupsVm]);
 
+    const getSideTabButtonStyle = (isActive: boolean): React.CSSProperties => ({
+        width: 56,
+        height: 56,
+        borderRadius: 16,
+        border: isActive ? "1px solid #0bb918" : "1px solid #0bb918",
+        background: isActive ? "#0bb918" : "#fff",
+        color: isActive ? "#fff" : "#6c757d",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        position: "relative",
+        transition: "all .3s ease",
+        cursor: "pointer",
+        padding: 0,
+    });
+
     return (
         <div id="active_sips" className="row col-12 pr-0 py-2">
             <div className="card col-12 mx-3 pl-0" style={{ width: "100%" }}>
                 <div className="card-header mt-0">
-                    <h5 style={{ marginRight: "20px", whiteSpace: "nowrap" }}>Список коллег онлайн</h5>
+                    <h5 style={{ marginRight: "20px", whiteSpace: "nowrap" }}>Компания</h5>
 
                     <div className="d-flex align-items-center flex-wrap" style={{ gap: 15 }}>
-                        <div style={{ width: "220px" }}>
-                            <label style={{ whiteSpace: "nowrap" }}>Поиск</label>
-                            <input
-                                type="text"
-                                className="form-control"
-                                placeholder="Поиск оператора/робота"
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                style={{ width: "220px" }}
-                            />
-                        </div>
+                        <div className="d-flex align-items-center flex-wrap" style={{ gap: 15 }}>
+                            <div style={{ width: "220px" }}>
+                                <label style={{ whiteSpace: "nowrap" }}>Поиск</label>
+                                <input
+                                    type="text"
+                                    className="form-control"
+                                    placeholder={
+                                        activeTab === "users"
+                                            ? "Поиск сотрудника"
+                                            : "Поиск номера, названия или проекта"
+                                    }
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    style={{ width: "220px" }}
+                                />
+                            </div>
 
-                        <div style={{ width: "220px" }}>
-                            <label style={{ whiteSpace: "nowrap" }}>Постобработка</label>
-                            <select
-                                className="form-control"
-                                value={postFilter}
-                                onChange={(e) => setPostFilter(e.target.value as any)}
-                                style={{ width: "220px" }}
-                            >
-                                <option value="all">Все</option>
-                                <option value="on">Вкл</option>
-                                <option value="off">Выкл</option>
-                            </select>
-                        </div>
+                            {activeTab === "users" ? (
+                                <>
+                                    <div style={{ width: "220px" }}>
+                                        <label style={{ whiteSpace: "nowrap" }}>Постобработка</label>
+                                        <select
+                                            className="form-control"
+                                            value={postFilter}
+                                            onChange={(e) => setPostFilter(e.target.value as any)}
+                                            style={{ width: "220px" }}
+                                        >
+                                            <option value="all">Все</option>
+                                            <option value="on">Вкл</option>
+                                            <option value="off">Выкл</option>
+                                        </select>
+                                    </div>
 
-                        <div style={{ width: "220px" }}>
-                            <label style={{ whiteSpace: "nowrap" }}>Статус</label>
-                            <select
-                                className="form-control"
-                                value={statusFilter}
-                                onChange={(e) => setStatusFilter(e.target.value as any)}
-                                style={{ width: "220px" }}
-                            >
-                                <option value="all">Все</option>
-                                <option value="online">Онлайн</option>
-                                <option value="offline">Оффлайн</option>
-                            </select>
-                        </div>
+                                    <div style={{ width: "220px" }}>
+                                        <label style={{ whiteSpace: "nowrap" }}>Статус</label>
+                                        <select
+                                            className="form-control"
+                                            value={statusFilter}
+                                            onChange={(e) => setStatusFilter(e.target.value as any)}
+                                            style={{ width: "220px" }}
+                                        >
+                                            <option value="all">Все</option>
+                                            <option value="online">Онлайн</option>
+                                            <option value="offline">Оффлайн</option>
+                                        </select>
+                                    </div>
 
-                        <div style={{ width: "220px" }}>
-                            <label style={{ whiteSpace: "nowrap" }}>Группировка</label>
-                            <select
-                                className="form-control"
-                                value={groupMode}
-                                onChange={(e) => setGroupMode(e.target.value as any)}
-                                style={{ width: "220px" }}
-                            >
-                                <option value="departments">По отделам</option>
-                                <option value="projects">По проектам</option>
-                            </select>
-                        </div>
+                                    <div style={{ width: "220px" }}>
+                                        <label style={{ whiteSpace: "nowrap" }}>Группировка</label>
+                                        <select
+                                            className="form-control"
+                                            value={groupMode}
+                                            onChange={(e) => setGroupMode(e.target.value as any)}
+                                            style={{ width: "220px" }}
+                                        >
+                                            <option value="departments">По отделам</option>
+                                            <option value="projects">По проектам</option>
+                                        </select>
+                                    </div>
 
-                        {/* ✅ динамический мультиселект: отделы/проекты */}
-                        <div style={{ width: "320px" }}>
-                            <label style={{ whiteSpace: "nowrap" }}>{groupFilterLabel}</label>
-                            <OperatorsSelect
-                                isMulti
-                                value={groupFilterValue}
-                                options={groupFilterOptions}
-                                onChange={(vals: any) => setGroupFilterValue(vals)}
-                                placeholder={groupMode === "projects" ? "Все проекты" : "Все отделы"}
-                                withCheckboxes
-                                classNamePrefix={groupMode === "projects" ? "proj" : "dept"}
-                            />
-                        </div>
+                                    <div style={{ width: "320px" }}>
+                                        <label style={{ whiteSpace: "nowrap" }}>{groupFilterLabel}</label>
+                                        <OperatorsSelect
+                                            isMulti
+                                            value={groupFilterValue}
+                                            options={groupFilterOptions}
+                                            onChange={(vals: any) => setGroupFilterValue(vals)}
+                                            placeholder={groupMode === "projects" ? "Все проекты" : "Все отделы"}
+                                            withCheckboxes
+                                            classNamePrefix={groupMode === "projects" ? "proj" : "dept"}
+                                        />
+                                    </div>
 
-                        {/* ✅ SQL фильтр по пользовательским полям (как у менеджера) */}
-                        <div style={{ flex: "0 0 auto" }}>
-                            <button
-                                ref={ffBtnRef}
-                                type="button"
-                                className={`btn ${currentFieldFilter ? "btn-danger" : "btn-outline-secondary"} d-inline-flex align-items-center gap-2 position-relative`}
-                                onClick={() => setFfOpen((v) => !v)}
-                                title="Фильтр по пользовательским полям"
-                                style={{ borderRadius: 18, padding: "8px 14px", lineHeight: 1 }}
-                            >
-                <span className="material-icons" style={{ fontSize: 18, lineHeight: 1 }}>
-                  filter_alt
-                </span>
+                                    <div style={{ flex: "0 0 auto" }}>
+                                        <button
+                                            ref={ffBtnRef}
+                                            type="button"
+                                            className={`btn ${hasActiveFieldFilter ? "btn-success" : "btn-outline-success"} ...`}
+                                            onClick={() => setFfOpen((v) => !v)}
+                                            title="Фильтр по пользовательским полям"
+                                            style={{ display: "flex", flexDirection: "row", alignItems: "center", height: 38, marginTop: 32 }}
+                                        >
+                                            <span className="material-icons" style={{ fontSize: 18 }}>
+                                                filter_alt
+                                            </span>
 
-                                <span style={{ lineHeight: 1 }}>Фильтр по полям</span>
+                                            <span >Фильтр по полям</span>
 
-                                {currentFieldFilter && ffActiveCount > 0 && (
-                                    <span
-                                        className="badge bg-light text-dark ms-2"
-                                        style={{ borderRadius: 999, fontWeight: 700 }}
-                                        title={`Активных значений: ${ffActiveCount}`}
-                                    >
-                    {ffActiveCount}
-                  </span>
-                                )}
-                            </button>
+                                        </button>
 
-                            {ffOpen &&
-                                createPortal(
-                                    <div
-                                        ref={ffPanelRef}
-                                        style={{
-                                            position: "fixed",
-                                            top: ffPos.top,
-                                            left: ffPos.left,
-                                            width: ffPos.width,
-                                            maxHeight: ffPos.maxHeight,
-                                            overflow: "auto",
-                                            zIndex: 1900,
-                                            background: "#fff",
-                                            borderRadius: 18,
-                                            border: "1px solid rgba(0,0,0,0.10)",
-                                            boxShadow: "0 12px 28px rgba(0,0,0,0.18)",
-                                            padding: 16,
-                                        }}
-                                    >
-                                        <div className="d-flex align-items-center gap-2 mb-3">
-                                            <div className="fw-semibold">Фильтр по пользовательским полям</div>
-                                        </div>
+                                        {ffOpen &&
+                                            createPortal(
+                                                <div
+                                                    ref={ffPanelRef}
+                                                    style={{
+                                                        position: "fixed",
+                                                        top: ffPos.top,
+                                                        left: ffPos.left,
+                                                        width: ffPos.width,
+                                                        maxHeight: ffPos.maxHeight,
+                                                        overflow: "auto",
+                                                        zIndex: 1900,
+                                                        background: "#fff",
+                                                        borderRadius: 18,
+                                                        border: "1px solid rgba(0,0,0,0.10)",
+                                                        boxShadow: "0 12px 28px rgba(0,0,0,0.18)",
+                                                        padding: 16,
+                                                    }}
+                                                >
+                                                    <div className="d-flex align-items-center gap-2 mb-3">
+                                                        <div className="fw-semibold">Фильтр по пользовательским полям</div>
+                                                    </div>
 
-                                        <div className="mb-3">
-                                            <div className="text-muted mb-1" style={{ fontSize: 12 }}>
-                                                Критерий
-                                            </div>
+                                                    <div className="mb-3">
+                                                        <div className="text-muted mb-1" style={{ fontSize: 12 }}>
+                                                            Поля оператора
+                                                        </div>
 
-                                            <OperatorsSelect
-                                                value={ffMethodLabel}
-                                                options={[...FIELD_FILTER_LABELS]}
-                                                isClearable={false}
-                                                isSearchable={false}
-                                                onChange={(v: any) => setFfMethodLabel(((v as FieldFilterLabel) || "Содержит"))}
-                                                placeholder="Выберите..."
-                                                classNamePrefix={FF_SELECT_PREFIX}
-                                            />
-                                        </div>
+                                                        <OperatorsSelect
+                                                            isMulti
+                                                            value={ffSelectedFieldSlugs}
+                                                            options={operatorFieldOptions}
+                                                            onChange={(vals: any) => setFfSelectedFieldSlugs(Array.isArray(vals) ? vals : [])}
+                                                            placeholder="Выберите одно или несколько полей"
+                                                            withCheckboxes
+                                                            classNamePrefix={FF_SELECT_PREFIX}
+                                                        />
 
-                                        <div className="mb-2">
-                                            <div className="text-muted mb-1" style={{ fontSize: 12 }}>
-                                                Значение (можно несколько: новая строка, запятая, ;)
-                                            </div>
+                                                        {!ffSelectedFieldSlugs.length && (
+                                                            <div className="text-muted mt-2" style={{ fontSize: 12 }}>
+                                                                Сначала выберите поле оператора, затем задайте критерий и значения.
+                                                            </div>
+                                                        )}
+                                                    </div>
 
-                                            <textarea
-                                                className="form-control"
-                                                value={ffValuesRaw}
-                                                onChange={(e) => setFfValuesRaw(e.currentTarget.value)}
-                                                placeholder="Введите значение..."
-                                                style={{ borderRadius: 18, minHeight: 90 }}
-                                            />
-                                        </div>
+                                                    <div className="mb-3">
+                                                        <div className="text-muted mb-1" style={{ fontSize: 12 }}>
+                                                            Критерий
+                                                        </div>
 
-                                        <div style={{ display: "flex", flexDirection: "row", gap: 8, marginTop: 16 }}>
-                                            <button
-                                                type="button"
-                                                className="btn btn-sm btn-outline-secondary"
-                                                style={{ borderRadius: 18, padding: "10px 18px" }}
-                                                onClick={() => {
-                                                    clearFieldFilter();
-                                                    setFfOpen(false);
-                                                }}
-                                                disabled={!currentFieldFilter}
-                                            >
-                                                Сбросить
-                                            </button>
+                                                        <OperatorsSelect
+                                                            value={ffMethodLabel}
+                                                            options={[...FIELD_FILTER_LABELS]}
+                                                            isClearable={false}
+                                                            isSearchable={false}
+                                                            onChange={(v: any) =>
+                                                                setFfMethodLabel((v as FieldFilterLabel) || "Содержит")
+                                                            }
+                                                            placeholder="Выберите..."
+                                                            classNamePrefix={FF_SELECT_PREFIX}
+                                                            isDisabled={!ffSelectedFieldSlugs.length}
+                                                        />
+                                                    </div>
 
-                                            <button
-                                                type="button"
-                                                className="btn btn-sm btn-danger ms-auto"
-                                                style={{ borderRadius: 18, padding: "10px 18px" }}
-                                                onClick={() => {
-                                                    applyFieldFilter();
-                                                    setFfOpen(false);
-                                                }}
-                                                disabled={!splitSqlValues(ffValuesRaw).length}
-                                            >
-                                                Применить
-                                            </button>
-                                        </div>
-                                    </div>,
-                                    document.body
-                                )}
+                                                    <div className="mb-2">
+                                                        <div className="text-muted mb-1" style={{ fontSize: 12 }}>
+                                                            Значение (можно несколько: новая строка, запятая, ;)
+                                                        </div>
+
+                                                        <textarea
+                                                            className="form-control"
+                                                            value={ffValuesRaw}
+                                                            onChange={(e) => setFfValuesRaw(e.currentTarget.value)}
+                                                            placeholder="Введите значение..."
+                                                            style={{ borderRadius: 18, minHeight: 90 }}
+                                                            disabled={!ffSelectedFieldSlugs.length}
+                                                        />
+                                                    </div>
+
+                                                    <div
+                                                        style={{
+                                                            display: "flex",
+                                                            flexDirection: "row",
+                                                            gap: 8,
+                                                            marginTop: 16,
+                                                        }}
+                                                    >
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-sm btn-danger"
+                                                            style={{ borderRadius: 18, padding: "10px 18px" }}
+                                                            onClick={() => {
+                                                                clearFieldFilter();
+                                                                setFfOpen(false);
+                                                            }}
+                                                            disabled={!hasActiveFieldFilter && !ffSelectedFieldSlugs.length && !ffValuesRaw.trim()}
+                                                        >
+                                                            Сбросить
+                                                        </button>
+
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-sm btn-outline-success ms-auto"
+                                                            style={{ borderRadius: 18, padding: "10px 18px" }}
+                                                            onClick={() => {
+                                                                applyFieldFilter();
+                                                                setFfOpen(false);
+                                                            }}
+                                                            disabled={!ffSelectedFieldSlugs.length || !splitSqlValues(ffValuesRaw).length}
+                                                        >
+                                                            Применить
+                                                        </button>
+                                                    </div>
+                                                </div>,
+                                                document.body
+                                            )}
+                                    </div>
+                                </>
+                            ) : (
+                                <div style={{ width: "320px" }}>
+                                    <label style={{ whiteSpace: "nowrap" }}>Проекты</label>
+                                    <OperatorsSelect
+                                        isMulti
+                                        value={extensionProjectFilter}
+                                        options={extensionProjectOptions}
+                                        onChange={(vals: any) => setExtensionProjectFilter(vals)}
+                                        placeholder="Все проекты"
+                                        withCheckboxes
+                                        classNamePrefix="extproj"
+                                    />
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
 
-                <div className="card-body mt-0" style={{ maxHeight: "520px", overflowY: "auto", width: "100%" }}>
-                    {usersLoading && <div className="text-muted">Обновляем список…</div>}
-                    {usersError && <div className="text-danger">Ошибка: {usersError}</div>}
+                <div className="card-body mt-0" style={{ width: "100%" }}>
+                    <div style={{ display: "flex", gap: 16, alignItems: "stretch" }}>
+                        <div
+                            style={{
+                                flex: 1,
+                                minWidth: 0,
+                                maxHeight: "520px",
+                                overflowY: "auto",
+                                paddingRight: 4,
+                            }}
+                        >
+                            {activeTab === "extensions" ? (
+                                <div>
+                                    <div
+                                        className="d-flex align-items-center justify-content-between mb-2"
+                                        style={{ gap: 12, flexWrap: "wrap" }}
+                                    >
+                                        <div style={{ fontWeight: 700 }}>Внутренние номера</div>
+                                        <div className="text-muted" style={{ fontSize: 13 }}>
+                                            Найдено: {filteredDialplanExtensions.length}
+                                        </div>
+                                    </div>
 
-                    {!usersLoading && !usersError && (
-                        <>
-                            <div className="mb-2" style={{ fontSize: 13, opacity: 0.8 }}>
-                                Сотрудников: {totalFilteredCount}
-                            </div>
+                                    {dialplanLoading && (
+                                        <div className="text-muted mb-2">Обновляем внутренние номера…</div>
+                                    )}
 
-                            {groupsVm.length === 0 ? (
-                                <div className="text-muted">Ничего не найдено</div>
-                            ) : (
-                                <div className="table-responsive" style={{ width: "100%" }}>
-                                    <table className="table table-sm table-hover align-middle mb-0 w-100">
-                                        <thead>
-                                        <tr>
-                                            <th style={{ width: 56 }} title="Авторизация / Линия">
-                                                Статус
-                                            </th>
-                                            <th style={{ width: 260 }}>Оператор</th>
-                                            <th>Проекты</th>
-                                            <th style={{ width: 90, textAlign: "right" }}>Вызов</th>
-                                        </tr>
-                                        </thead>
+                                    {dialplanError && (
+                                        <div className="text-danger mb-2">Ошибка: {dialplanError}</div>
+                                    )}
 
-                                        <tbody>
-                                        {groupsVm.map((g) => (
-                                            <React.Fragment key={g.name}>
-                                                <tr className="table-light">
-                                                    <td colSpan={4} style={{ fontWeight: 700 }}>
-                                                        {g.name} <span style={{ fontWeight: 500, opacity: 0.7 }}>({g.rows.length})</span>
-                                                    </td>
+                                    {!dialplanLoading && !dialplanError && filteredDialplanExtensions.length === 0 && (
+                                        <div className="text-muted mb-2">Ничего не найдено</div>
+                                    )}
+
+                                    {!dialplanLoading && !dialplanError && groupedDialplanExtensions.length > 0 && (
+                                        <div className="table-responsive" style={{ width: "100%" }}>
+                                            <table className="table table-sm table-hover align-middle mb-0 w-100">
+                                                <thead>
+                                                <tr>
+                                                    <th style={{ width: 260 }}>Название</th>
+                                                    <th>Проект</th>
+                                                    <th style={{ width: 120 }}>Номер</th>
+                                                    <th style={{ width: 90, textAlign: "right" }}>Вызов</th>
                                                 </tr>
+                                                </thead>
 
-                                                {g.rows.map((u) => {
-                                                    const login = getSipKey(u);
-                                                    const name = u?.name || login;
-
-
-                                                    const sofia = getSofiaDot(login);
-                                                    const line = getLineDot(login);
-
-                                                    const canCalling =
-                                                        isUserOnline(login) &&
-                                                        String(login) !== String(meLogin) &&
-                                                        !hasInterCall;
-
-                                                    const isDialingThis = dialingLogin === login;
-                                                    const projects = getProjectNamesForLogin(login);
-                                                    const isThisDial = dialingLogin === login;
-
-                                                    const callPhase: "idle" | "dialing" | "ringing" | "active" =
-                                                        isThisDial
-                                                            ? interCall && interPeerLogin === login
-                                                                ? String((interCall as any)?.callstate ?? "").toUpperCase() === "ACTIVE"
-                                                                    ? "active"
-                                                                    : "ringing"
-                                                                : "dialing"
-                                                            : "idle";
-
-                                                    const showCallCell = isThisDial || (canCalling && isUserOnline(login) && String(login) !== String(meLogin) && !hasInterCall);
-                                                    const canStartCall = !isThisDial && !hasInterCall && !dialingLogin && canCalling && isUserOnline(login) && String(login) !== String(meLogin);
-
-                                                    return (
-                                                        <tr key={`${g.name}:${login}`}>
-                                                            <td>
-                                                                <div style={{ display: "flex", alignItems: "center" }}>
-                                                                    <StatusDot color={sofia.color} title={sofia.title} />
-                                                                    <StatusDot color={line.color} title={line.title} />
-                                                                </div>
-                                                            </td>
-
-                                                            <td>
-                                                                <div style={{ lineHeight: 1.1 }}>
-                                                                    <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                                                        {name}
-                                                                    </div>
-                                                                    <div className="text-muted" style={{ fontSize: 12 }}>
-                                                                        {login}
-                                                                    </div>
-                                                                </div>
-                                                            </td>
-
-                                                            <td>{renderProjectsBadges(projects)}</td>
-
-                                                            <td style={{ textAlign: "right" }}>
-                                                                {!showCallCell ? (
-                                                                    <span className="text-muted">—</span>
-                                                                ) : isThisDial ? (
-                                                                    <button className="btn btn-sm btn-outline-success" disabled style={{ minWidth: 110 }}>
-                                                                        <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
-                                                                        {callPhase === "active" ? "В разговоре" : "Звоним…"}
-                                                                    </button>
-                                                                ) : (
-                                                                    <button
-                                                                        className="btn btn-sm btn-outline-success"
-                                                                        disabled={!canStartCall || !webrtcEnabled}
-                                                                        onClick={() => handleCall(login)}
-                                                                        title={`Позвонить ${name}`}
-                                                                        style={{ minWidth: 42 }}
-                                                                    >
-                                                                        <span className="material-icons" style={{ fontSize: 18, lineHeight: 1 }}>
-                                                                           call
-                                                                        </span>
-                                                                    </button>
-                                                                )}
+                                                <tbody>
+                                                {groupedDialplanExtensions.map((g) => (
+                                                    <React.Fragment key={g.name}>
+                                                        <tr className="table-light">
+                                                            <td colSpan={4} style={{ fontWeight: 700 }}>
+                                                                {getProjectDisplayName(g.name)}{" "}
+                                                                <span style={{ fontWeight: 500, opacity: 0.7 }}>
+                                                        ({g.rows.length})
+                                                    </span>
                                                             </td>
                                                         </tr>
-                                                    );
-                                                })}
-                                            </React.Fragment>
-                                        ))}
-                                        </tbody>
-                                    </table>
+
+                                                        {g.rows.map((row) => (
+                                                            <tr key={row.id}>
+                                                                <td>
+                                                                    <div style={{ fontWeight: 600 }}>{row.title}</div>
+                                                                </td>
+
+                                                                <td>
+                                                        <span
+                                                            className="badge bg-light text-dark border"
+                                                            title={row.project_name}
+                                                        >
+                                                            {getProjectDisplayName(row.project_name)}
+                                                        </span>
+                                                                </td>
+
+                                                                <td>
+                                                                    <code>{row.ext}</code>
+                                                                </td>
+
+                                                                <td style={{ textAlign: "right" }}>
+                                                                    <button
+                                                                        className="btn btn-sm btn-outline-success"
+                                                                        disabled={!webrtcEnabled}
+                                                                        onClick={() => handleCallExtension(row.ext)}
+                                                                        title={`Позвонить на ${row.ext}`}
+                                                                        style={{ minWidth: 42 }}
+                                                                    >
+                                                            <span
+                                                                className="material-icons"
+                                                                style={{ fontSize: 18, lineHeight: 1 }}
+                                                            >
+                                                                call
+                                                            </span>
+                                                                    </button>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </React.Fragment>
+                                                ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
                                 </div>
+                            ) : (
+                                <>
+                                    {usersLoading && <div className="text-muted">Обновляем список…</div>}
+                                    {usersError && <div className="text-danger">Ошибка: {usersError}</div>}
+
+                                    {!usersLoading && !usersError && (
+                                        <>
+                                            <div className="mb-2" style={{ fontSize: 13, opacity: 0.8 }}>
+                                                Сотрудников: {totalFilteredCount}
+                                            </div>
+
+                                            {groupsVm.length === 0 ? (
+                                                <div className="text-muted">Ничего не найдено</div>
+                                            ) : (
+                                                <div className="table-responsive" style={{ width: "100%" }}>
+                                                    <table className="table table-sm table-hover align-middle mb-0 w-100">
+                                                        <thead>
+                                                        <tr>
+                                                            <th style={{ width: 56 }} title="Авторизация / Линия">
+                                                                Статус
+                                                            </th>
+                                                            <th style={{ width: 260 }}>Оператор</th>
+                                                            <th>Проекты</th>
+                                                            <th style={{ width: 90, textAlign: "right" }}>Вызов</th>
+                                                        </tr>
+                                                        </thead>
+
+                                                        <tbody>
+                                                        {groupsVm.map((g) => (
+                                                            <React.Fragment key={g.name}>
+                                                                <tr className="table-light">
+                                                                    <td colSpan={4} style={{ fontWeight: 700 }}>
+                                                                        {g.name}{" "}
+                                                                        <span style={{ fontWeight: 500, opacity: 0.7 }}>
+                                                                ({g.rows.length})
+                                                            </span>
+                                                                    </td>
+                                                                </tr>
+
+                                                                {g.rows.map((u) => {
+                                                                    const login = getSipKey(u);
+                                                                    const name = u?.name || login;
+
+                                                                    const sofia = getSofiaDot(login);
+                                                                    const line = getLineDot(login);
+
+                                                                    const canCalling =
+                                                                        isUserOnline(login) &&
+                                                                        String(login) !== String(meLogin) &&
+                                                                        !hasInterCall;
+
+                                                                    const isThisDial = dialingLogin === login;
+                                                                    const projects = getProjectNamesForLogin(login);
+
+                                                                    const callPhase: "idle" | "dialing" | "ringing" | "active" =
+                                                                        isThisDial
+                                                                            ? interCall && interPeerLogin === login
+                                                                                ? String((interCall as any)?.callstate ?? "").toUpperCase() === "ACTIVE"
+                                                                                    ? "active"
+                                                                                    : "ringing"
+                                                                                : "dialing"
+                                                                            : "idle";
+
+                                                                    const showCallCell =
+                                                                        isThisDial ||
+                                                                        (canCalling &&
+                                                                            isUserOnline(login) &&
+                                                                            String(login) !== String(meLogin) &&
+                                                                            !hasInterCall);
+
+                                                                    const canStartCall =
+                                                                        !isThisDial &&
+                                                                        !hasInterCall &&
+                                                                        !dialingLogin &&
+                                                                        canCalling &&
+                                                                        isUserOnline(login) &&
+                                                                        String(login) !== String(meLogin);
+
+                                                                    return (
+                                                                        <tr key={`${g.name}:${login}`}>
+                                                                            <td>
+                                                                                <div
+                                                                                    style={{
+                                                                                        display: "flex",
+                                                                                        alignItems: "center",
+                                                                                    }}
+                                                                                >
+                                                                                    <StatusDot
+                                                                                        color={sofia.color}
+                                                                                        title={sofia.title}
+                                                                                    />
+                                                                                    <StatusDot
+                                                                                        color={line.color}
+                                                                                        title={line.title}
+                                                                                    />
+                                                                                </div>
+                                                                            </td>
+
+                                                                            <td>
+                                                                                <div style={{ lineHeight: 1.1 }}>
+                                                                                    <div
+                                                                                        style={{
+                                                                                            fontWeight: 600,
+                                                                                            whiteSpace: "nowrap",
+                                                                                            overflow: "hidden",
+                                                                                            textOverflow: "ellipsis",
+                                                                                        }}
+                                                                                    >
+                                                                                        {name}
+                                                                                    </div>
+                                                                                    <div
+                                                                                        className="text-muted"
+                                                                                        style={{ fontSize: 12 }}
+                                                                                    >
+                                                                                        {login}
+                                                                                    </div>
+                                                                                </div>
+                                                                            </td>
+
+                                                                            <td>{renderProjectsBadges(projects)}</td>
+
+                                                                            <td style={{ textAlign: "right" }}>
+                                                                                {!showCallCell ? (
+                                                                                    <span className="text-muted">—</span>
+                                                                                ) : isThisDial ? (
+                                                                                    <button
+                                                                                        className="btn btn-sm btn-outline-success"
+                                                                                        disabled
+                                                                                        style={{ minWidth: 110 }}
+                                                                                    >
+                                                                            <span
+                                                                                className="spinner-border spinner-border-sm me-2"
+                                                                                role="status"
+                                                                                aria-hidden="true"
+                                                                            />
+                                                                                        {callPhase === "active"
+                                                                                            ? "В разговоре"
+                                                                                            : "Звоним…"}
+                                                                                    </button>
+                                                                                ) : (
+                                                                                    <button
+                                                                                        className="btn btn-sm btn-outline-success"
+                                                                                        disabled={!canStartCall || !webrtcEnabled}
+                                                                                        onClick={() => handleCall(login)}
+                                                                                        title={`Позвонить ${name}`}
+                                                                                        style={{ minWidth: 42 }}
+                                                                                    >
+                                                                            <span
+                                                                                className="material-icons"
+                                                                                style={{ fontSize: 18, lineHeight: 1 }}
+                                                                            >
+                                                                                call
+                                                                            </span>
+                                                                                    </button>
+                                                                                )}
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })}
+                                                            </React.Fragment>
+                                                        ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </>
                             )}
-                        </>
-                    )}
+                        </div>
+
+                        <div
+                            style={{
+                                flex: "0 0 56px",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 12,
+                                alignItems: "center",
+                                paddingTop: 4,
+                            }}
+                        >
+                            <button
+                                type="button"
+                                onClick={() => setActiveTab("users")}
+                                style={getSideTabButtonStyle(activeTab === "users")}
+                                title="Сотрудники"
+                            >
+                                <span className="material-icons" style={{ fontSize: 22 }}>
+                                    groups
+                                </span>
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => setActiveTab("extensions")}
+                                style={getSideTabButtonStyle(activeTab === "extensions")}
+                                title="Добавочные номера"
+                            >
+                                <span className="material-icons" style={{ fontSize: 22 }}>
+                                    dialpad
+                                </span>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

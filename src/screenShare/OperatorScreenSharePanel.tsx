@@ -149,9 +149,6 @@ export const OperatorScreenSharePanel: React.FC = () => {
             if (!rid) return;
 
             if (consumeIfViewerInitiated()) {
-                if (process.env.NODE_ENV !== "production") {
-                    console.log("[operator] ignore start because viewer-initiated (same tab)", payload);
-                }
                 return;
             }
 
@@ -191,9 +188,6 @@ export const OperatorScreenSharePanel: React.FC = () => {
             const pend = (pendingRoomRef.current || "").trim();
 
             if (rid && cur && rid !== cur && rid !== pend) {
-                if (process.env.NODE_ENV !== "production") {
-                    console.log("[operator] ignore stale stop", { rid, cur, pend, payload });
-                }
                 return;
             }
 

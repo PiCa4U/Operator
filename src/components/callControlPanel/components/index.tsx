@@ -7,25 +7,119 @@ import {ru} from "date-fns/locale";
 import MapField, {MapFieldMapping} from "./mapField";
 
 type MapDefaults = Partial<{
-    lat:string|number; lon:string|number; q:string;
-    country:string; state:string; city:string; city_district:string;
-    road:string; house_number:string; postcode:string;
+    lat: string | number;
+    lon: string | number;
+    q: string;
+    country: string;
+    state: string;
+    city: string;
+    city_district: string;
+    road: string;
+    house_number: string;
+    postcode: string;
 }>;
-function parseMapConfig(raw: unknown): { mapping: MapFieldMapping; defaults: MapDefaults } {
+
+type MapOverlayConfig = Partial<{
+    type: "kml";
+    url: string;
+    field_id: string;
+    fitBounds: boolean;
+}>;
+
+function tryParseJson<T = any>(value: unknown): T | null {
+    if (typeof value !== "string") return null;
+    const s = value.trim();
+    if (!s) return null;
+
+    try {
+        return JSON.parse(s) as T;
+    } catch {
+        return null;
+    }
+}
+
+function normalizeLooseObjectString(raw: string): string {
+    let s = raw.trim();
+
+    // если это строка вида "{defaults:{},overlay:{...}}"
+    // убираем внешние кавычки
+    if (
+        (s.startsWith('"') && s.endsWith('"')) ||
+        (s.startsWith("'") && s.endsWith("'"))
+    ) {
+        s = s.slice(1, -1).trim();
+    }
+
+    // ключи без кавычек -> в кавычки
+    s = s.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
+
+    // type:kml -> type:"kml"
+    s = s.replace(/("type"\s*:\s*)(kml)(?=\s*[,}])/g, '$1"$2"');
+
+    // url:https://... -> url:"https://..."
+    s = s.replace(/("url"\s*:\s*)(https?:\/\/[^,}]+)/g, '$1"$2"');
+
+    return s;
+}
+
+function parseMapConfig(raw: unknown): {
+    mapping: MapFieldMapping;
+    defaults: MapDefaults;
+    overlay?: MapOverlayConfig;
+} {
     let mapping: MapFieldMapping = {};
     let defaults: MapDefaults = {};
-    if (typeof raw === "string" && raw.trim()) {
-        try {
-            const p = JSON.parse(raw);
-            if (p && typeof p === "object" && ("mapping" in p || "defaults" in p)) {
-                if (p.mapping && typeof p.mapping === "object") mapping = p.mapping as MapFieldMapping;
-                if (p.defaults && typeof p.defaults === "object") defaults = p.defaults as MapDefaults;
-            } else if (p && typeof p === "object") {
-                defaults = p as MapDefaults;
-            }
-        } catch {}
+    let overlay: MapOverlayConfig | undefined;
+
+    if (raw == null) {
+        return { mapping, defaults, overlay };
     }
-    return { mapping, defaults };
+
+    let parsed: any = raw;
+
+    // 1) если это строка -> пробуем JSON.parse
+    if (typeof parsed === "string") {
+        const first = tryParseJson(parsed);
+        if (first != null) {
+            parsed = first;
+        }
+    }
+
+    // 2) если после первого parse всё ещё строка -> возможно это
+    // "{defaults:{},overlay:{type:kml,url:https://...}}"
+    if (typeof parsed === "string") {
+        const normalized = normalizeLooseObjectString(parsed);
+        const second = tryParseJson(normalized);
+        if (second != null) {
+            parsed = second;
+        }
+    }
+
+    // 3) если это уже объект нужного формата
+    if (
+        parsed &&
+        typeof parsed === "object" &&
+        ("mapping" in parsed || "defaults" in parsed || "overlay" in parsed)
+    ) {
+        if (parsed.mapping && typeof parsed.mapping === "object") {
+            mapping = parsed.mapping as MapFieldMapping;
+        }
+        if (parsed.defaults && typeof parsed.defaults === "object") {
+            defaults = parsed.defaults as MapDefaults;
+        }
+        if (parsed.overlay && typeof parsed.overlay === "object") {
+            overlay = parsed.overlay as MapOverlayConfig;
+        }
+
+        return { mapping, defaults, overlay };
+    }
+
+    // 4) если это просто defaults-объект старого формата
+    if (parsed && typeof parsed === "object") {
+        defaults = parsed as MapDefaults;
+    }
+
+    return { mapping, defaults, overlay };
 }
 
 const TEXTAREA_MAX_HEIGHT = 360;
@@ -345,8 +439,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         )}
                         {param.field_type === 'map' && (() => {
                             const storeFieldId = param.field_id;
-                            const { mapping, defaults } = parseMapConfig(param.field_vals);
-
+                            const { mapping, defaults, overlay } = parseMapConfig(param.field_vals);
                             const isDefaultsOnly = !mapping || Object.keys(mapping).length === 0;
                             const virtualMapping: MapFieldMapping = {
                                 lat: "__lat__", lon: "__lon__", q: "__q__",
@@ -355,6 +448,15 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                 house_number: "__house_number__", postcode: "__postcode__",
                             };
                             const mappingForChild: MapFieldMapping = isDefaultsOnly ? virtualMapping : mapping;
+
+                            const overlayUrl =
+                                String(
+                                    overlay?.field_id
+                                        ? fieldValues[overlay.field_id] || initialValues[overlay.field_id] || ""
+                                        : overlay?.url || ""
+                                ).trim();
+
+                            const fitKmlBounds = overlay?.fitBounds ?? true;
 
                             let savedObj: Record<string, string> = {};
                             if (isDefaultsOnly) {
@@ -388,11 +490,13 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                         initialValues={initial}
                                         readOnly={!param.editable}
                                         compact={compact}
+                                        fitKmlBounds={fitKmlBounds}
+                                        overlayUrl={overlayUrl}
                                         onPatch={(patch) => {
                                             if (isDefaultsOnly) {
-                                                // 1) читаем уже сохранённый объект из storeFieldId (если был)
                                                 let prevObj: Record<string, string> = {};
                                                 const rawPrev = String(fieldValues[storeFieldId] || "").trim();
+
                                                 if (
                                                     (rawPrev.startsWith("{") && rawPrev.endsWith("}")) ||
                                                     (rawPrev.startsWith("[") && rawPrev.endsWith("]"))
@@ -403,20 +507,17 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                                     } catch {}
                                                 }
 
-                                                // 2) собираем ПОЛНЫЙ объект со всеми ключами (пустые строки + defaults)
                                                 const full: Record<string, string> = {};
                                                 for (const k of MAP_KEYS) {
                                                     full[k] = String((prevObj as any)[k] ?? (defaults as any)?.[k] ?? "");
                                                 }
 
-                                                // 3) накатываем patch (обычно он частичный — lat/lon и т.п.)
                                                 for (const [fid, v] of Object.entries(patch)) {
                                                     const k = keyByFid[fid] as MapKey | undefined;
                                                     if (k) full[k] = String(v ?? "");
                                                 }
 
                                                 const json = JSON.stringify(full);
-
                                                 const nextAll = { ...fieldValues, [storeFieldId]: json };
                                                 setFieldValues(nextAll);
                                                 onChange?.(nextAll);

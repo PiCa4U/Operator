@@ -819,6 +819,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [mergedFields,    setMergedFields]    = useState<MergedField[]>([]);
     const [values, setValues] = useState<GroupFieldValues>({});
 
+    useEffect(() => {
+        console.log("values: ", values)
+    }, [values]);
+
+
     const [isParams, setIsParams] = useState<boolean>(true)
     const [groupSelectedIds, setGroupSelectedIds] = useState<number[]>([]);
     const swalRef = useRef<any>(null);

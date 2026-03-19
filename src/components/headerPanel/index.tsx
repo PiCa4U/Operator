@@ -357,15 +357,15 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             });
 
             setIsLoading(true);
-            socket.emit("outbound_call_update", {
-                worker,
-                session_key: sessionKey,
-                ...(assignedKey ? { assigned_key: assignedKey } : {}),
-                log_status: "finished",
-                phone_status: "finished",
-                special_key: specialKey,
-                project_name: outActiveProjectName,
-            });
+            // socket.emit("outbound_call_update", {
+            //     worker,
+            //     session_key: sessionKey,
+            //     ...(assignedKey ? { assigned_key: assignedKey } : {}),
+            //     log_status: "finished",
+            //     phone_status: "finished",
+            //     special_key: specialKey,
+            //     project_name: outActiveProjectName,
+            // });
             setPostCallData({});
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -571,27 +571,27 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                         if (result.isConfirmed) {
                             outProjectClickToCall(phone, project_name, msg[0].special_key);
                             if (projectPoolForCall.length > 0) {
-                                socket.emit("outbound_call_update", {
-                                    worker,
-                                    session_key: sessionKey,
-                                    assigned_key: msg[0].assigned_key,
-                                    log_status: "taken",
-                                    phone_status: "taken",
-                                    special_key: msg[0].special_key,
-                                });
+                                // socket.emit("outbound_call_update", {
+                                //     worker,
+                                //     session_key: sessionKey,
+                                //     assigned_key: msg[0].assigned_key,
+                                //     log_status: "taken",
+                                //     phone_status: "taken",
+                                //     special_key: msg[0].special_key,
+                                // });
                             }
                         } else {
                             changeStateFs("waiting", "outbound_reject");
                             setOutPreparation(false);
                             if (projectPoolForCall.length > 0) {
-                                socket.emit("outbound_call_update", {
-                                    worker,
-                                    session_key: sessionKey,
-                                    assigned_key: msg[0].assigned_key,
-                                    log_status: "reject",
-                                    phone_status: msg[0]?.phone?.status,
-                                    special_key: msg[0]?.phone?.special_key,
-                                });
+                                // socket.emit("outbound_call_update", {
+                                //     worker,
+                                //     session_key: sessionKey,
+                                //     assigned_key: msg[0].assigned_key,
+                                //     log_status: "reject",
+                                //     phone_status: msg[0]?.phone?.status,
+                                //     special_key: msg[0]?.phone?.special_key,
+                                // });
                             }
                         }
                     });
@@ -608,14 +608,14 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                             if (msg[0].auto_start) outProjectClickToCall(phone, project_name, msg[0].special_key);
 
                             if (projectPoolForCall.length > 0 && msg[0].auto_start) {
-                                socket.emit("outbound_call_update", {
-                                    worker,
-                                    session_key: sessionKey,
-                                    assigned_key: msg[0].assigned_key,
-                                    log_status: "taken",
-                                    phone_status: "taken",
-                                    special_key: msg[0].special_key,
-                                });
+                                // socket.emit("outbound_call_update", {
+                                //     worker,
+                                //     session_key: sessionKey,
+                                //     assigned_key: msg[0].assigned_key,
+                                //     log_status: "taken",
+                                //     phone_status: "taken",
+                                //     special_key: msg[0].special_key,
+                                // });
                             }
                         });
                     }
@@ -631,25 +631,25 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             if (msg?.status === "OK") {
                 Swal.fire({ title: "Звонок запускается", icon: "success", timer: 1000 });
                 if (assignedKey && specialKey) {
-                    socket.emit("outbound_call_update", {
-                        worker,
-                        session_key: sessionKey,
-                        ...(assignedKey ? { assigned_key: assignedKey } : {}),
-                        log_status: "ringing",
-                        phone_status: "ringing",
-                        special_key: specialKey,
-                    });
+                    // socket.emit("outbound_call_update", {
+                    //     worker,
+                    //     session_key: sessionKey,
+                    //     ...(assignedKey ? { assigned_key: assignedKey } : {}),
+                    //     log_status: "ringing",
+                    //     phone_status: "ringing",
+                    //     special_key: specialKey,
+                    // });
                 }
             } else {
                 Swal.fire({ title: "Ошибка при старте звонка", icon: "error" });
-                socket.emit("outbound_call_update", {
-                    worker,
-                    session_key: sessionKey,
-                    ...(assignedKey ? { assigned_key: assignedKey } : {}),
-                    log_status: "error",
-                    phone_status: "error",
-                    special_key: specialKey,
-                });
+                // socket.emit("outbound_call_update", {
+                //     worker,
+                //     session_key: sessionKey,
+                //     ...(assignedKey ? { assigned_key: assignedKey } : {}),
+                //     log_status: "error",
+                //     phone_status: "error",
+                //     special_key: specialKey,
+                // });
                 socket.emit("change_status_fs", {
                     sip_login: sipLogin,
                     worker,

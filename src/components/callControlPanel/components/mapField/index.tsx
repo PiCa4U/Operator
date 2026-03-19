@@ -6,11 +6,14 @@ import {
     useMapEvents,
     AttributionControl,
     useMap,
+    GeoJSON,
+    Pane,
 } from "react-leaflet";
 import L, { LatLngTuple, LeafletMouseEvent } from "leaflet";
 import axios from "axios";
 import { store } from "../../../../redux/store";
 import "leaflet/dist/leaflet.css";
+import {loadOverlayAsGeoJson} from "../mapOverlayParser";
 
 type Addr = Partial<{
     country: string;
@@ -45,12 +48,36 @@ export type MapFieldMapping = Partial<
     >
 >;
 
+const TEST_KML_URL = "https://pm.ru/files/delivery_map.kml?v=20250807";
+
 type Props = {
     mapping: MapFieldMapping;
     initialValues?: Record<string, string>;
     onPatch: (patch: Record<string, string>) => void;
     readOnly?: boolean;
     compact?: boolean;
+    fitKmlBounds?: boolean;
+    overlayUrl?: string;
+};
+
+const KmlBoundsUpdater: React.FC<{
+    bounds: L.LatLngBounds | null;
+    enabled?: boolean;
+}> = ({ bounds, enabled }) => {
+    const map = useMap();
+    const lastKeyRef = useRef("");
+
+    useEffect(() => {
+        if (!enabled || !bounds || !bounds.isValid()) return;
+
+        const nextKey = bounds.toBBoxString();
+        if (lastKeyRef.current === nextKey) return;
+        lastKeyRef.current = nextKey;
+
+        map.fitBounds(bounds, { padding: [24, 24] });
+    }, [bounds, enabled, map]);
+
+    return null;
 };
 
 const START = { lat: 55.751244, lon: 37.618423 };
@@ -66,7 +93,6 @@ const DefaultIcon = L.icon({
     iconSize: [25, 41],
     iconAnchor: [12, 41],
 });
-(L.Marker.prototype as any).options.icon = DefaultIcon;
 
 /** Двигаем карту при смене center */
 const ViewUpdater: React.FC<{
@@ -113,12 +139,46 @@ const SizeFix: React.FC = () => {
     return null;
 };
 
+function parseYandexColor(raw?: string): { color: string; opacity: number } {
+    const value = String(raw || "").replace(/^#/, "").trim();
+
+    if (!/^[0-9a-fA-F]{8}$/.test(value)) {
+        return {
+            color: "#2563eb",
+            opacity: 1,
+        };
+    }
+
+    const rgb = value.slice(0, 6);
+    const alphaHex = value.slice(6, 8);
+
+    return {
+        color: `#${rgb}`,
+        opacity: Math.max(0, Math.min(1, parseInt(alphaHex, 16) / 255)),
+    };
+}
+
+const SmallMarkerIcon = L.divIcon({
+    className: "gl-small-marker",
+    html: `
+      <img
+        src="https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png"
+        alt=""
+      />
+    `,
+    iconSize: [14, 23],
+    iconAnchor: [7, 23],
+    popupAnchor: [0, -18],
+});
+
 export default function MapField({
                                      mapping,
                                      initialValues = {},
                                      onPatch,
                                      readOnly,
                                      compact,
+                                     fitKmlBounds = false,
+                                     overlayUrl,
                                  }: Props) {
     const { glagolParent } = store.getState().credentials;
 
@@ -140,8 +200,60 @@ export default function MapField({
         Number.isFinite(lon0) ? lon0 : START.lon,
     ]);
 
+    const [kmlGeoJson, setKmlGeoJson] = useState<any | null>(null);
+    const [kmlBounds, setKmlBounds] = useState<L.LatLngBounds | null>(null);
+    const [kmlLayerKey, setKmlLayerKey] = useState(0);
+    const [overlayStatus, setOverlayStatus] = useState("");
+
     const [q, setQ] = useState(() => (mapping.q && initialValues[mapping.q]) || "");
     const [status, setStatus] = useState("");
+
+
+
+    useEffect(() => {
+        const url = String(overlayUrl || "").trim();
+
+        if (!url) {
+            setKmlGeoJson(null);
+            setKmlBounds(null);
+            setOverlayStatus("");
+            return;
+        }
+
+        let cancelled = false;
+
+        const loadOverlay = async () => {
+            setOverlayStatus("Загружаем разметку...");
+
+            try {
+                const geojson = await loadOverlayAsGeoJson(url);
+
+                if (cancelled) return;
+
+                setKmlGeoJson(geojson);
+                setKmlLayerKey((v) => v + 1);
+
+                const tmpLayer = L.geoJSON(geojson as any);
+                const bounds = tmpLayer.getBounds();
+
+                setKmlBounds(bounds.isValid() ? bounds : null);
+                setOverlayStatus("Разметка загружена");
+            } catch (error) {
+                if (cancelled) return;
+
+                console.error("Ошибка загрузки разметки:", error);
+                setKmlGeoJson(null);
+                setKmlBounds(null);
+                setOverlayStatus("Ошибка загрузки разметки");
+            }
+        };
+
+        void loadOverlay();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [overlayUrl]);
 
     const toNumber = (v: any) =>
         typeof v === "string" || typeof v === "number" ? Number(v) : NaN;
@@ -163,38 +275,57 @@ export default function MapField({
         const style = document.createElement("style");
         style.id = "leaflet-hotfix";
         style.textContent = `
-      .glMap .leaflet-container { overflow: hidden; }
-      .glMap .leaflet-container .leaflet-marker-pane img,
-      .glMap .leaflet-container .leaflet-shadow-pane img,
-      .glMap .leaflet-container .leaflet-tile-pane img,
-      .glMap .leaflet-container img.leaflet-image-layer,
-      .glMap .leaflet-container .leaflet-tile {
-        max-width: none !important;
-        max-height: none !important;
-        width: auto !important;
-        height: auto !important;
-        padding: 0 !important;
-        border: 0 !important;
-        box-sizing: content-box !important;
-      }
-      .glMap .leaflet-tile {
-        width: 256px !important;
-        height: 256px !important;
-        position: absolute !important;
-        left: 0; top: 0;
-      }
-      .glMap .leaflet-pane,
-      .glMap .leaflet-tile-container,
-      .glMap .leaflet-marker-icon,
-      .glMap .leaflet-marker-shadow,
-      .glMap .leaflet-pane > svg,
-      .glMap .leaflet-pane > canvas,
-      .glMap .leaflet-zoom-box,
-      .glMap .leaflet-image-layer,
-      .glMap .leaflet-layer {
-        position: absolute !important; left: 0; top: 0;
-      }
-    `;
+          .glMap .leaflet-container { overflow: hidden; }
+          .glMap .leaflet-container .leaflet-marker-pane img,
+          .glMap .leaflet-container .leaflet-shadow-pane img,
+          .glMap .leaflet-container .leaflet-tile-pane img,
+          .glMap .leaflet-container img.leaflet-image-layer,
+          .glMap .leaflet-container .leaflet-tile {
+            max-width: none !important;
+            max-height: none !important;
+            width: auto !important;
+            height: auto !important;
+            padding: 0 !important;
+            border: 0 !important;
+            box-sizing: content-box !important;
+          }
+        
+          .glMap .leaflet-tile {
+            width: 256px !important;
+            height: 256px !important;
+            position: absolute !important;
+            left: 0;
+            top: 0;
+          }
+        
+          .glMap .leaflet-pane,
+          .glMap .leaflet-tile-container,
+          .glMap .leaflet-marker-icon,
+          .glMap .leaflet-marker-shadow,
+          .glMap .leaflet-pane > svg,
+          .glMap .leaflet-pane > canvas,
+          .glMap .leaflet-zoom-box,
+          .glMap .leaflet-image-layer,
+          .glMap .leaflet-layer {
+            position: absolute !important;
+            left: 0;
+            top: 0;
+          }
+        
+          .glMap .leaflet-interactive {
+            outline: none !important;
+            -webkit-tap-highlight-color: transparent !important;
+          }
+        
+          .glMap .leaflet-interactive:focus {
+            outline: none !important;
+          }
+        
+          .glMap svg:focus,
+          .glMap path:focus {
+            outline: none !important;
+          }
+        `;
         document.head.appendChild(style);
     }, []);
 
@@ -299,6 +430,25 @@ export default function MapField({
     const lastResolvedRef = useRef<string>("");
     const lastSearchedRef = useRef<string>("");
 
+    const commitPoint = useCallback(
+        async (lat: number, lon: number) => {
+            setPos([lat, lon]);
+            setCenter([lat, lon]);
+            setStatus("Определяем адрес…");
+
+            try {
+                const info = await reverse(lon, lat);
+                const pretty = formatAddress(info);
+                setQ(pretty);
+                apply(info, pretty);
+                setStatus("Готово");
+            } catch {
+                apply({ lat, lon }, undefined);
+                setStatus("Готово");
+            }
+        },
+        [apply, reverse]
+    );
     // хелпер: поиск по произвольной строке (не из state q)
     const runSearchFor = useCallback(
         async (query: string) => {
@@ -351,7 +501,6 @@ export default function MapField({
     }, []);
 
     useEffect(() => {
-        // 1) Приоритет: если есть валидные lat/lon
         if (Number.isFinite(lat0) && Number.isFinite(lon0)) {
             const key = `${lon0},${lat0}`;
             setPos([lat0, lon0]);
@@ -372,10 +521,9 @@ export default function MapField({
                     }
                 })();
             }
-            return; // координаты важнее q
+            return;
         }
 
-        // 2) Иначе, если пришёл q → запускаем поиск (однократно на строку)
         const qq = (propQ || "").trim();
         if (qq && lastSearchedRef.current !== qq) {
             lastSearchedRef.current = qq;
@@ -404,7 +552,7 @@ export default function MapField({
                 return;
             }
             setPos([lat, lon]);
-            setCenter([lat, lon]); // триггерим ViewUpdater
+            setCenter([lat, lon]);
             try {
                 const info = await reverse(lon, lat);
                 const pretty = formatAddress(info) || first.display_name || qq;
@@ -419,30 +567,71 @@ export default function MapField({
         }
     }, [apply, q, reverse, search]);
 
-    // клик по карте → перенос маркера
     const ClickHandler: React.FC = () => {
         useMapEvents({
             click: async (e: LeafletMouseEvent) => {
                 if (readOnly) return;
-                const lat = e.latlng.lat,
-                    lon = e.latlng.lng;
-                setPos([lat, lon]);
-                setCenter([lat, lon]); // триггерим ViewUpdater
-                setStatus("Определяем адрес…");
-                try {
-                    const info = await reverse(lon, lat);
-                    const pretty = formatAddress(info);
-                    setQ(pretty);
-                    apply(info, pretty);
-                    setStatus("Готово");
-                } catch {
-                    apply({ lat, lon }, undefined);
-                    setStatus("Готово");
-                }
+                await commitPoint(e.latlng.lat, e.latlng.lng);
             },
         });
         return null;
     };
+
+    const zoneStyle = useCallback((feature: any): L.PathOptions => {
+        const props = feature?.properties || {};
+
+        const stroke = parseYandexColor(props.strokeColorRaw);
+        const fill = parseYandexColor(props.fillColorRaw);
+
+        const rawWidth = Number(props.strokeWidthRaw);
+        const weight = Number.isFinite(rawWidth)
+            ? Math.max(1, rawWidth / 100)
+            : 2;
+
+        return {
+            color: stroke.color,
+            opacity: stroke.opacity,
+            fillColor: fill.color,
+            fillOpacity: fill.opacity,
+            weight,
+        };
+    }, []);
+
+    const onEachZone = useCallback((feature: any, layer: L.Layer) => {
+        const name =
+            String(feature?.properties?.name || "").trim() || "Без названия";
+
+        const pathLayer = layer as L.Path & {
+            bindTooltip?: (content: string, options?: L.TooltipOptions) => any;
+            on?: (type: string | Record<string, any>, fn?: any) => any;
+        };
+
+        if ("bindTooltip" in pathLayer) {
+            pathLayer.bindTooltip(name, {
+                sticky: true,
+                direction: "top",
+                opacity: 0.95,
+            });
+        }
+
+        if ("on" in pathLayer) {
+            pathLayer.on({
+                click: async (e: any) => {
+                    if (readOnly) return;
+
+                    const latlng = e?.latlng;
+                    if (!latlng) return;
+
+                    const target = e?.originalEvent?.target as HTMLElement | undefined;
+                    if (target && typeof target.blur === "function") {
+                        target.blur();
+                    }
+
+                    await commitPoint(latlng.lat, latlng.lng);
+                },
+            });
+        }
+    }, [commitPoint, readOnly]);
 
     return (
         <div style={{ display: "grid", gridTemplateRows: "auto 1fr", gap: 8 }}>
@@ -488,9 +677,11 @@ export default function MapField({
                         </button>
                     </div>
 
-                    <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
-                        {status}
-                    </div>
+                    {!!overlayStatus && (
+                        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>
+                            {overlayStatus}
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -510,7 +701,6 @@ export default function MapField({
                     scrollWheelZoom={true}
                     attributionControl={false}
                 >
-                    {/* фикс размеров/скрытых вкладок */}
                     <SizeFix />
 
                     {/* убираем слово Leaflet, оставляем OSM */}
@@ -520,6 +710,18 @@ export default function MapField({
                         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                         attribution="&copy; OpenStreetMap contributors"
                     />
+                    {Boolean(kmlGeoJson) && (
+                        <Pane name="kmlPane" style={{ zIndex: 450}}>
+                            <GeoJSON
+                                key={kmlLayerKey}
+                                data={kmlGeoJson}
+                                style={zoneStyle}
+                                onEachFeature={onEachZone}
+                            />
+                        </Pane>
+                    )}
+
+                    <KmlBoundsUpdater bounds={kmlBounds} enabled={fitKmlBounds} />
 
                     {/* Обновление вида при смене center */}
                     <ViewUpdater center={center} animate zoom={16} />
@@ -527,28 +729,13 @@ export default function MapField({
                     <ClickHandler />
 
                     <Marker
+                        icon={SmallMarkerIcon}
                         position={pos}
                         draggable={!readOnly}
                         eventHandlers={{
-                            dragend: (e) => {
+                            dragend: async (e) => {
                                 const ll = (e.target as L.Marker).getLatLng();
-                                const lat = ll.lat,
-                                    lon = ll.lng;
-                                setPos([lat, lon]);
-                                setCenter([lat, lon]); // тоже двигаем карту
-                                setStatus("Определяем адрес…");
-                                (async () => {
-                                    try {
-                                        const info = await reverse(lon, lat);
-                                        const pretty = formatAddress(info);
-                                        setQ(pretty);
-                                        apply(info, pretty);
-                                        setStatus("Готово");
-                                    } catch {
-                                        apply({ lat, lon }, undefined);
-                                        setStatus("Готово");
-                                    }
-                                })();
+                                await commitPoint(ll.lat, ll.lng);
                             },
                         }}
                     />

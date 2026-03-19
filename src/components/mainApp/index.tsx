@@ -1929,14 +1929,14 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             if (pl?.special_key) {
                 setSpecialKey(pl.special_key);
                 if (assignedKey && pl.special_key) {
-                    socket.emit("outbound_call_update", {
-                        worker,
-                        session_key: sessionKey,
-                        ...(assignedKey ? { assigned_key: assignedKey } : {}),
-                        log_status: "ringing",
-                        phone_status: "ringing",
-                        special_key: pl.special_key,
-                    });
+                    // socket.emit("outbound_call_update", {
+                    //     worker,
+                    //     session_key: sessionKey,
+                    //     ...(assignedKey ? { assigned_key: assignedKey } : {}),
+                    //     log_status: "ringing",
+                    //     phone_status: "ringing",
+                    //     special_key: pl.special_key,
+                    // });
                 }
             }
 

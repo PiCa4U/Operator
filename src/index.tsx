@@ -100,7 +100,7 @@
 //         label: "1112 / 113.privet@pm.ru",
 //         sipLogin: "1112",
 //         worker: "113.privet@pm.ru",
-//         sessionKey: "s:113.privet@pm.ru:3535ac30099eca3129e811f32ebf667a4620b0ed2c9d9017",
+//         sessionKey: "s:113.privet@pm.ru:a79b73e4fca5ebb60c1eb837f8089bc467adb24b38005e56",
 //     },
 // ] as const;
 //

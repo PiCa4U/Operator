@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useRef, useMemo} from 'react';
+import React, {useState, useEffect, useRef, useMemo, useCallback} from 'react';
 import { socket } from '../../socket';
 import PhoneProjectSelect from './components/PhoneProjectSelect';
 import { useSelector } from "react-redux";
@@ -45,6 +45,123 @@ const runningModulesCountRef = { current: 0 } as React.MutableRefObject<number>;
 
 const alertsQueueRef = { current: [] as AlertMsg[] } as React.MutableRefObject<AlertMsg[]>;
 const isShowingAlertRef = { current: false } as React.MutableRefObject<boolean>;
+
+const MAP_JSON_KEYS = [
+    "lat",
+    "lon",
+    "country",
+    "state",
+    "city",
+    "city_district",
+    "road",
+    "house_number",
+    "postcode",
+    "q",
+] as const;
+
+type MapJsonKey = typeof MAP_JSON_KEYS[number];
+
+function tryParseJsonObject(raw: unknown): Record<string, any> | null {
+    if (typeof raw !== "string") return null;
+    const s = raw.trim();
+    if (!s) return null;
+
+    try {
+        const parsed = JSON.parse(s);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? parsed
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function buildPrettyAddress(obj?: Record<string, any> | null): string {
+    if (!obj) return "";
+
+    const q = String(obj.q ?? "").trim();
+    if (q) return q;
+
+    return [
+        obj.country,
+        obj.state,
+        obj.city,
+        obj.road,
+        obj.house_number,
+    ]
+        .map(v => String(v ?? "").trim())
+        .filter(Boolean)
+        .join(", ");
+}
+
+function hasCoords(obj?: Record<string, any> | null): boolean {
+    if (!obj) return false;
+    const lat = String(obj.lat ?? "").trim();
+    const lon = String(obj.lon ?? "").trim();
+    return lat !== "" && lon !== "";
+}
+
+function hasAddress(obj?: Record<string, any> | null): boolean {
+    if (!obj) return false;
+    return Boolean(
+        String(obj.q ?? "").trim() ||
+        String(obj.country ?? "").trim() ||
+        String(obj.state ?? "").trim() ||
+        String(obj.city ?? "").trim() ||
+        String(obj.city_district ?? "").trim() ||
+        String(obj.road ?? "").trim() ||
+        String(obj.house_number ?? "").trim() ||
+        String(obj.postcode ?? "").trim()
+    );
+}
+
+function toNum(v: unknown): number {
+    if (typeof v === "number") return v;
+    if (typeof v === "string" && v.trim() !== "") return Number(v);
+    return NaN;
+}
+
+function parseMapFieldConfig(raw: unknown): {
+    mapping: Record<string, string>;
+    defaults: Record<string, any>;
+    overlay?: Record<string, any>;
+} {
+    let mapping: Record<string, string> = {};
+    let defaults: Record<string, any> = {};
+    let overlay: Record<string, any> | undefined;
+
+    if (raw == null) return { mapping, defaults, overlay };
+
+    let parsed: any = raw;
+
+    if (typeof parsed === "string") {
+        try {
+            parsed = JSON.parse(parsed);
+        } catch {
+            return { mapping, defaults, overlay };
+        }
+    }
+
+    if (
+        parsed &&
+        typeof parsed === "object" &&
+        ("mapping" in parsed || "defaults" in parsed || "overlay" in parsed)
+    ) {
+        if (parsed.mapping && typeof parsed.mapping === "object") {
+            mapping = parsed.mapping;
+        }
+        if (parsed.defaults && typeof parsed.defaults === "object") {
+            defaults = parsed.defaults;
+        }
+        if (parsed.overlay && typeof parsed.overlay === "object") {
+            overlay = parsed.overlay;
+        }
+    } else if (parsed && typeof parsed === "object") {
+        defaults = parsed;
+    }
+
+    return { mapping, defaults, overlay };
+}
 
 const mapIcon = (t?: string): 'success'|'error'|'warning'|'info' => {
     const s = String(t || '').toLowerCase();
@@ -1871,7 +1988,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     if (value == null) v = '';
                     else if (typeof value === 'object') v = JSON.stringify(value);
                     else v = String(value);
-                    applyFieldUpdate(project, fieldKey, v);
+                    void applyFieldUpdate(project, fieldKey, v);
                 });
                 return;
             }
@@ -1886,7 +2003,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         if (value == null) v = '';
                         else if (typeof value === 'object') v = JSON.stringify(value);
                         else v = String(value);
-                        applyFieldUpdate(project, fieldKey, v);
+                        void applyFieldUpdate(project, fieldKey, v);
                     });
                 });
                 return;
@@ -1912,7 +2029,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 else if (typeof value === 'object') v = JSON.stringify(value);
                 else v = String(value);
 
-                applyFieldUpdate(project, fieldKey, v);
+                void applyFieldUpdate(project, fieldKey, v);
             });
         };
 
@@ -1930,9 +2047,181 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         activeCalls,
     ]);
 
+    const hydrateMapJsonValue = useCallback(
+        async (
+            project: string,
+            fieldKey: string,
+            rawValue: string
+        ): Promise<string> => {
+            const fieldMeta = mergedFieldsAll.find(
+                (f) => f.type === "map" && f.fieldIds[project] === fieldKey
+            );
 
+            if (!fieldMeta) {
+                return rawValue;
+            }
 
-    function applyFieldUpdate(project: string, fieldKey: string, v: string) {
+            const { mapping, defaults } = parseMapFieldConfig(fieldMeta.values);
+            const isDefaultsOnly = !mapping || Object.keys(mapping).length === 0;
+
+            // Пока гидрируем только старый формат map-поля, где всё хранится в одном JSON
+            if (!isDefaultsOnly) {
+                return rawValue;
+            }
+
+            const incomingObj = tryParseJsonObject(rawValue);
+            if (!incomingObj) {
+                return rawValue;
+            }
+
+            const prevRaw = valuesRef.current?.[project]?.[fieldKey];
+            const prevObj = tryParseJsonObject(prevRaw);
+
+            // собираем базовый объект
+            const full: Record<string, string> = {};
+            for (const k of MAP_JSON_KEYS) {
+                full[k] = String(incomingObj[k] ?? defaults?.[k] ?? "");
+            }
+
+            const coordsExist = hasCoords(full);
+            const addressExist = hasAddress(full);
+
+            // 1) Есть координаты, но нет адреса → reverse
+            if (coordsExist && !addressExist) {
+                const lat = toNum(full.lat);
+                const lon = toNum(full.lon);
+
+                if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                    try {
+                        const { data } = await axios.get("/api/v1/location/reverse", {
+                            params: {
+                                glagol_parent: glagolParent,
+                                lon,
+                                lat,
+                            },
+                        });
+
+                        const raw =
+                            data && typeof data === "object" && "data" in data
+                                ? (data as any).data
+                                : data;
+
+                        const address =
+                            raw?.address && typeof raw.address === "object"
+                                ? raw.address
+                                : raw || {};
+
+                        full.country = String(address.country ?? full.country ?? "");
+                        full.state = String(address.state ?? address.region ?? full.state ?? "");
+                        full.city = String(address.city ?? full.city ?? "");
+                        full.city_district = String(address.city_district ?? full.city_district ?? "");
+                        full.road = String(address.road ?? full.road ?? "");
+                        full.house_number = String(address.house_number ?? full.house_number ?? "");
+                        full.postcode = String(address.postcode ?? full.postcode ?? "");
+
+                        const pretty = buildPrettyAddress(full);
+                        if (pretty) {
+                            full.q = pretty;
+                        }
+                    } catch (e) {
+                        // fallback: если раньше уже был хороший адрес — не теряем его
+                        if (prevObj && hasCoords(prevObj) && hasAddress(prevObj)) {
+                            const sameLat = String(prevObj.lat ?? "").trim() === String(full.lat ?? "").trim();
+                            const sameLon = String(prevObj.lon ?? "").trim() === String(full.lon ?? "").trim();
+
+                            if (sameLat && sameLon) {
+                                for (const k of MAP_JSON_KEYS) {
+                                    if (!String(full[k] ?? "").trim()) {
+                                        full[k] = String(prevObj[k] ?? "");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2) Есть адрес, но нет координат → search (+ при желании нормализуем reverse)
+            if (!hasCoords(full) && hasAddress(full)) {
+                const q = buildPrettyAddress(full);
+
+                if (q) {
+                    try {
+                        const { data } = await axios.get("/api/v1/location/search", {
+                            params: {
+                                glagol_parent: glagolParent,
+                                q,
+                            },
+                        });
+
+                        let raw: any = data;
+                        if (raw && typeof raw === "object" && "data" in raw) raw = raw.data;
+
+                        let arr: any[] = [];
+                        if (Array.isArray(raw)) arr = raw;
+                        else if (Array.isArray(raw?.result)) arr = raw.result;
+                        else if (Array.isArray(data?.result)) arr = data.result;
+                        else if (raw && typeof raw === "object" && ("lat" in raw || "lon" in raw)) arr = [raw];
+                        else if (data && typeof data === "object" && ("lat" in data || "lon" in data)) arr = [data];
+
+                        const first = arr[0];
+                        const lat = toNum(first?.lat ?? first?.data?.lat);
+                        const lon = toNum(first?.lon ?? first?.data?.lon);
+
+                        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                            full.lat = String(lat);
+                            full.lon = String(lon);
+
+                            // лучше добить reverse, чтобы получить нормальные address-поля
+                            try {
+                                const { data: reverseData } = await axios.get("/api/v1/location/reverse", {
+                                    params: {
+                                        glagol_parent: glagolParent,
+                                        lon,
+                                        lat,
+                                    },
+                                });
+
+                                const reverseRaw =
+                                    reverseData && typeof reverseData === "object" && "data" in reverseData
+                                        ? (reverseData as any).data
+                                        : reverseData;
+
+                                const address =
+                                    reverseRaw?.address && typeof reverseRaw.address === "object"
+                                        ? reverseRaw.address
+                                        : reverseRaw || {};
+
+                                full.country = String(address.country ?? full.country ?? "");
+                                full.state = String(address.state ?? address.region ?? full.state ?? "");
+                                full.city = String(address.city ?? full.city ?? "");
+                                full.city_district = String(address.city_district ?? full.city_district ?? "");
+                                full.road = String(address.road ?? full.road ?? "");
+                                full.house_number = String(address.house_number ?? full.house_number ?? "");
+                                full.postcode = String(address.postcode ?? full.postcode ?? "");
+
+                                const pretty = buildPrettyAddress(full);
+                                if (pretty) {
+                                    full.q = pretty;
+                                }
+                            } catch {
+                                if (!String(full.q).trim()) {
+                                    full.q = q;
+                                }
+                            }
+                        }
+                    } catch {
+                        // если поиск не удался — оставляем как есть
+                    }
+                }
+            }
+
+            return JSON.stringify(full);
+        },
+        [mergedFieldsAll, glagolParent]
+    );
+
+    async function applyFieldUpdate(project: string, fieldKey: string, v: string) {
         if (fieldKey === 'alert' || fieldKey === 'title' || fieldKey === 'text' || fieldKey === 'type' || fieldKey === 'destination') {
             return;
         }
@@ -1944,21 +2233,33 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     if (maybe && typeof maybe === 'object' && (maybe.title || maybe.text)) {
                         enqueueAlert({ title: maybe.title, text: maybe.text, type: mapIcon(maybe.type) }, swalRef);
                     }
-                } catch { /* ignore */ }
+                } catch {}
                 return;
 
-            case 'call_reason': setCallReason(v); return;
-            case 'call_result': setCallResult(v); return;
-            case 'comment':     setComment(v);    return;
+            case 'call_reason':
+                setCallReason(v);
+                return;
 
-            default:
+            case 'call_result':
+                setCallResult(v);
+                return;
+
+            case 'comment':
+                setComment(v);
+                return;
+
+            default: {
+                const normalizedValue = await hydrateMapJsonValue(project, fieldKey, v);
+
                 setValues(prev => ({
                     ...prev,
                     [project]: {
                         ...prev[project],
-                        [fieldKey]: v
+                        [fieldKey]: normalizedValue
                     }
                 }));
+                return;
+            }
         }
     }
 

@@ -1,19 +1,19 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-    MapContainer,
-    TileLayer,
-    Marker,
-    useMapEvents,
     AttributionControl,
-    useMap,
     GeoJSON,
+    MapContainer,
+    Marker,
     Pane,
+    TileLayer,
+    useMap,
+    useMapEvents,
 } from "react-leaflet";
 import L, { LatLngTuple, LeafletMouseEvent } from "leaflet";
 import axios from "axios";
 import { store } from "../../../../redux/store";
 import "leaflet/dist/leaflet.css";
-import {loadOverlayAsGeoJson} from "../mapOverlayParser";
+import { loadOverlayAsGeoJson } from "../mapOverlayParser";
 
 type Addr = Partial<{
     country: string;
@@ -25,6 +25,7 @@ type Addr = Partial<{
     house_number: string;
     postcode: string;
 }>;
+
 type Item = {
     display_name?: string;
     lat?: number | string;
@@ -48,8 +49,6 @@ export type MapFieldMapping = Partial<
     >
 >;
 
-const TEST_KML_URL = "https://pm.ru/files/delivery_map.kml?v=20250807";
-
 type Props = {
     mapping: MapFieldMapping;
     initialValues?: Record<string, string>;
@@ -60,84 +59,12 @@ type Props = {
     overlayUrl?: string;
 };
 
-const KmlBoundsUpdater: React.FC<{
-    bounds: L.LatLngBounds | null;
-    enabled?: boolean;
-}> = ({ bounds, enabled }) => {
-    const map = useMap();
-    const lastKeyRef = useRef("");
-
-    useEffect(() => {
-        if (!enabled || !bounds || !bounds.isValid()) return;
-
-        const nextKey = bounds.toBBoxString();
-        if (lastKeyRef.current === nextKey) return;
-        lastKeyRef.current = nextKey;
-
-        map.fitBounds(bounds, { padding: [24, 24] });
-    }, [bounds, enabled, map]);
-
-    return null;
-};
-
 const START = { lat: 55.751244, lon: 37.618423 };
+const EPS = 1e-9;
 
-/** фиксим дефолтные иконки leaflet (пути к ассетам) */
-const DefaultIcon = L.icon({
-    iconUrl:
-        "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-    iconRetinaUrl:
-        "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-    shadowUrl:
-        "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-});
-
-/** Двигаем карту при смене center */
-const ViewUpdater: React.FC<{
-    center: LatLngTuple;
-    zoom?: number;
-    animate?: boolean;
-}> = ({ center, zoom, animate }) => {
-    const map = useMap();
-    const first = useRef(true);
-    useEffect(() => {
-        const z = zoom ?? map.getZoom();
-        if (first.current) {
-            first.current = false;
-            map.setView(center, z, { animate: false });
-            return;
-        }
-        if (animate) map.flyTo(center, z, { duration: 0.7 });
-        else map.setView(center, z);
-    }, [center[0], center[1], zoom, animate, map]);
-    return null;
-};
-
-/** Пересчёт размеров, если контейнер показывается/ресайзится */
-const SizeFix: React.FC = () => {
-    const map = useMap();
-    useEffect(() => {
-        const fix = () => map.invalidateSize();
-        const ro = new ResizeObserver(fix);
-        ro.observe(map.getContainer());
-        fix();
-
-        const events = ["shown.bs.tab", "shown.bs.collapse"];
-        events.forEach((ev) => document.addEventListener(ev, fix));
-        window.addEventListener("resize", fix);
-
-        return () => {
-            ro.disconnect();
-            events.forEach((ev) =>
-                document.removeEventListener(ev, fix)
-            );
-            window.removeEventListener("resize", fix);
-        };
-    }, [map]);
-    return null;
-};
+function samePoint(a: LatLngTuple, b: LatLngTuple) {
+    return Math.abs(a[0] - b[0]) < EPS && Math.abs(a[1] - b[1]) < EPS;
+}
 
 function parseYandexColor(raw?: string): { color: string; opacity: number } {
     const value = String(raw || "").replace(/^#/, "").trim();
@@ -171,6 +98,140 @@ const SmallMarkerIcon = L.divIcon({
     popupAnchor: [0, -18],
 });
 
+function useLeafletCssFix() {
+    useEffect(() => {
+        if (document.getElementById("leaflet-hotfix-lite")) return;
+
+        const style = document.createElement("style");
+        style.id = "leaflet-hotfix-lite";
+        style.textContent = `
+          .glMap {
+            position: relative;
+            isolation: isolate;
+            contain: layout paint;
+            z-index: 0;
+          }
+        
+          .glMap .leaflet-container {
+            overflow: hidden;
+            transform: translateZ(0);
+            backface-visibility: hidden;
+            will-change: transform;
+          }
+        
+          .glMap .leaflet-pane,
+          .glMap .leaflet-map-pane,
+          .glMap .leaflet-tile-pane,
+          .glMap .leaflet-overlay-pane,
+          .glMap .leaflet-marker-pane,
+          .glMap .leaflet-shadow-pane {
+            backface-visibility: hidden;
+            transform: translateZ(0);
+          }
+        
+          .glMap .leaflet-container img.leaflet-tile,
+          .glMap .leaflet-container img.leaflet-marker-icon,
+          .glMap .leaflet-container img.leaflet-marker-shadow,
+          .glMap .leaflet-container img.leaflet-image-layer {
+            max-width: none !important;
+            max-height: none !important;
+          }
+        
+          .glMap .leaflet-interactive,
+          .glMap .leaflet-interactive:focus,
+          .glMap svg:focus,
+          .glMap path:focus {
+            outline: none !important;
+            -webkit-tap-highlight-color: transparent !important;
+          }
+        `;
+        document.head.appendChild(style);
+    }, []);
+}
+
+const KmlBoundsUpdater: React.FC<{
+    bounds: L.LatLngBounds | null;
+    enabled?: boolean;
+    onDone?: () => void;
+}> = ({ bounds, enabled, onDone }) => {
+    const map = useMap();
+    const lastKeyRef = useRef("");
+
+    useEffect(() => {
+        if (!enabled || !bounds || !bounds.isValid()) return;
+
+        const nextKey = bounds.toBBoxString();
+        if (lastKeyRef.current === nextKey) return;
+        lastKeyRef.current = nextKey;
+
+        map.invalidateSize(false);
+
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                map.fitBounds(bounds, { padding: [24, 24] });
+                onDone?.();
+            });
+        });
+    }, [bounds, enabled, map, onDone]);
+
+    return null;
+};
+
+const ViewUpdater: React.FC<{
+    center: LatLngTuple;
+    zoom: number;
+    animate?: boolean;
+}> = ({ center, zoom, animate }) => {
+    const map = useMap();
+    const first = useRef(true);
+
+    useEffect(() => {
+        if (first.current) {
+            first.current = false;
+            map.setView(center, zoom, { animate: false });
+            return;
+        }
+
+        if (animate) {
+            map.flyTo(center, zoom, { duration: 0.5 });
+        } else {
+            map.setView(center, zoom, { animate: false });
+        }
+    }, [center, zoom, animate, map]);
+
+    return null;
+};
+
+const SizeFix: React.FC = () => {
+    const map = useMap();
+
+    useEffect(() => {
+        let raf = 0;
+
+        const fix = () => {
+            cancelAnimationFrame(raf);
+            raf = requestAnimationFrame(() => {
+                map.invalidateSize(false);
+            });
+        };
+
+        const container = map.getContainer();
+        const ro = new ResizeObserver(fix);
+        ro.observe(container);
+
+        fix();
+        window.addEventListener("resize", fix);
+
+        return () => {
+            cancelAnimationFrame(raf);
+            ro.disconnect();
+            window.removeEventListener("resize", fix);
+        };
+    }, [map]);
+
+    return null;
+};
+
 export default function MapField({
                                      mapping,
                                      initialValues = {},
@@ -180,83 +241,15 @@ export default function MapField({
                                      fitKmlBounds = false,
                                      overlayUrl,
                                  }: Props) {
+    useLeafletCssFix();
+
     const { glagolParent } = store.getState().credentials;
 
-    const lat0 = useMemo(
-        () => Number(initialValues[mapping.lat ?? ""]),
-        [initialValues, mapping.lat]
-    );
-    const lon0 = useMemo(
-        () => Number(initialValues[mapping.lon ?? ""]),
-        [initialValues, mapping.lon]
-    );
-
-    const [center, setCenter] = useState<LatLngTuple>([
-        Number.isFinite(lat0) ? lat0 : START.lat,
-        Number.isFinite(lon0) ? lon0 : START.lon,
-    ]);
-    const [pos, setPos] = useState<LatLngTuple>([
-        Number.isFinite(lat0) ? lat0 : START.lat,
-        Number.isFinite(lon0) ? lon0 : START.lon,
-    ]);
-
-    const [kmlGeoJson, setKmlGeoJson] = useState<any | null>(null);
-    const [kmlBounds, setKmlBounds] = useState<L.LatLngBounds | null>(null);
-    const [kmlLayerKey, setKmlLayerKey] = useState(0);
-    const [overlayStatus, setOverlayStatus] = useState("");
-
-    const [q, setQ] = useState(() => (mapping.q && initialValues[mapping.q]) || "");
-    const [status, setStatus] = useState("");
-
-
-
-    useEffect(() => {
-        const url = String(overlayUrl || "").trim();
-
-        if (!url) {
-            setKmlGeoJson(null);
-            setKmlBounds(null);
-            setOverlayStatus("");
-            return;
-        }
-
-        let cancelled = false;
-
-        const loadOverlay = async () => {
-            setOverlayStatus("Загружаем разметку...");
-
-            try {
-                const geojson = await loadOverlayAsGeoJson(url);
-
-                if (cancelled) return;
-
-                setKmlGeoJson(geojson);
-                setKmlLayerKey((v) => v + 1);
-
-                const tmpLayer = L.geoJSON(geojson as any);
-                const bounds = tmpLayer.getBounds();
-
-                setKmlBounds(bounds.isValid() ? bounds : null);
-                setOverlayStatus("Разметка загружена");
-            } catch (error) {
-                if (cancelled) return;
-
-                console.error("Ошибка загрузки разметки:", error);
-                setKmlGeoJson(null);
-                setKmlBounds(null);
-                setOverlayStatus("Ошибка загрузки разметки");
-            }
-        };
-
-        void loadOverlay();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [overlayUrl]);
-
-    const toNumber = (v: any) =>
-        typeof v === "string" || typeof v === "number" ? Number(v) : NaN;
+    const toNumber = (v: unknown) => {
+        if (typeof v === "number") return v;
+        if (typeof v === "string" && v.trim() !== "") return Number(v);
+        return NaN;
+    };
 
     const formatAddress = (src?: { address?: Addr } | Addr): string => {
         const a: Addr = (src && "address" in src ? (src as any).address : src) || {};
@@ -266,68 +259,53 @@ export default function MapField({
             a.city?.trim(),
             a.road?.trim(),
             a.house_number?.trim(),
-        ].filter(Boolean).join(", ");
+        ]
+            .filter(Boolean)
+            .join(", ");
     };
 
-    /** Втыкаем «антидот» стилей один раз в <head> */
-    useEffect(() => {
-        if (document.getElementById("leaflet-hotfix")) return;
-        const style = document.createElement("style");
-        style.id = "leaflet-hotfix";
-        style.textContent = `
-          .glMap .leaflet-container { overflow: hidden; }
-          .glMap .leaflet-container .leaflet-marker-pane img,
-          .glMap .leaflet-container .leaflet-shadow-pane img,
-          .glMap .leaflet-container .leaflet-tile-pane img,
-          .glMap .leaflet-container img.leaflet-image-layer,
-          .glMap .leaflet-container .leaflet-tile {
-            max-width: none !important;
-            max-height: none !important;
-            width: auto !important;
-            height: auto !important;
-            padding: 0 !important;
-            border: 0 !important;
-            box-sizing: content-box !important;
-          }
-        
-          .glMap .leaflet-tile {
-            width: 256px !important;
-            height: 256px !important;
-            position: absolute !important;
-            left: 0;
-            top: 0;
-          }
-        
-          .glMap .leaflet-pane,
-          .glMap .leaflet-tile-container,
-          .glMap .leaflet-marker-icon,
-          .glMap .leaflet-marker-shadow,
-          .glMap .leaflet-pane > svg,
-          .glMap .leaflet-pane > canvas,
-          .glMap .leaflet-zoom-box,
-          .glMap .leaflet-image-layer,
-          .glMap .leaflet-layer {
-            position: absolute !important;
-            left: 0;
-            top: 0;
-          }
-        
-          .glMap .leaflet-interactive {
-            outline: none !important;
-            -webkit-tap-highlight-color: transparent !important;
-          }
-        
-          .glMap .leaflet-interactive:focus {
-            outline: none !important;
-          }
-        
-          .glMap svg:focus,
-          .glMap path:focus {
-            outline: none !important;
-          }
-        `;
-        document.head.appendChild(style);
-    }, []);
+    const lat0 = toNumber(initialValues[mapping.lat ?? ""]);
+    const lon0 = toNumber(initialValues[mapping.lon ?? ""]);
+
+    const [center, setCenter] = useState<LatLngTuple>([
+        Number.isFinite(lat0) ? lat0 : START.lat,
+        Number.isFinite(lon0) ? lon0 : START.lon,
+    ]);
+
+    const [pos, setPos] = useState<LatLngTuple>([
+        Number.isFinite(lat0) ? lat0 : START.lat,
+        Number.isFinite(lon0) ? lon0 : START.lon,
+    ]);
+
+    const [zoom, setZoom] = useState<number>(
+        Number.isFinite(lat0) && Number.isFinite(lon0) ? 14 : 5
+    );
+
+    const [kmlGeoJson, setKmlGeoJson] = useState<GeoJSON.FeatureCollection | null>(null);
+    const [kmlBounds, setKmlBounds] = useState<L.LatLngBounds | null>(null);
+    const [overlayStatus, setOverlayStatus] = useState("");
+
+    const [overlayFitted, setOverlayFitted] = useState(false);
+
+    const [q, setQ] = useState(() => (mapping.q && initialValues[mapping.q]) || "");
+    const [status, setStatus] = useState("");
+
+    const lastResolvedRef = useRef("");
+    const lastSearchedRef = useRef("");
+
+    const setPointState = useCallback(
+        (lat: number, lon: number, nextZoom?: number) => {
+            const next: LatLngTuple = [lat, lon];
+
+            setPos((prev) => (samePoint(prev, next) ? prev : next));
+            setCenter((prev) => (samePoint(prev, next) ? prev : next));
+
+            if (typeof nextZoom === "number") {
+                setZoom((prev) => (prev === nextZoom ? prev : nextZoom));
+            }
+        },
+        []
+    );
 
     const apply = useCallback(
         (it: Item, saveQ?: string) => {
@@ -336,12 +314,18 @@ export default function MapField({
                 ...(it as any)?.country ? { country: (it as any).country } : {},
                 ...(it as any)?.state ? { state: (it as any).state } : {},
                 ...(it as any)?.city ? { city: (it as any).city } : {},
-                ...(it as any)?.city_district ? { city_district: (it as any).city_district } : {},
+                ...(it as any)?.city_district
+                    ? { city_district: (it as any).city_district }
+                    : {},
                 ...(it as any)?.road ? { road: (it as any).road } : {},
-                ...(it as any)?.house_number ? { house_number: (it as any).house_number } : {},
+                ...(it as any)?.house_number
+                    ? { house_number: (it as any).house_number }
+                    : {},
                 ...(it as any)?.postcode ? { postcode: (it as any).postcode } : {},
             };
+
             const patch: Record<string, string> = {};
+
             if (mapping.lat) patch[mapping.lat] = it.lat != null ? String(it.lat) : "";
             if (mapping.lon) patch[mapping.lon] = it.lon != null ? String(it.lon) : "";
             if (mapping.country) patch[mapping.country] = A.country ?? "";
@@ -352,19 +336,29 @@ export default function MapField({
             if (mapping.house_number) patch[mapping.house_number] = A.house_number ?? "";
             if (mapping.postcode) patch[mapping.postcode] = A.postcode ?? "";
             if (mapping.q && saveQ != null) patch[mapping.q] = saveQ;
+
             onPatch(patch);
         },
         [mapping, onPatch]
     );
+
+    const applyRef = useRef(apply);
+    useEffect(() => {
+        applyRef.current = apply;
+    }, [apply]);
 
     const search = useCallback(
         async (query: string): Promise<Item[]> => {
             const { data } = await axios.get("/api/v1/location/search", {
                 params: { glagol_parent: glagolParent, q: query },
             });
+
             let raw: any = data;
+
             if (raw && typeof raw === "object" && "data" in raw) raw = raw.data;
+
             let arr: any[] = [];
+
             if (Array.isArray(raw)) arr = raw;
             else if (Array.isArray(raw?.result)) arr = raw.result;
             else if (Array.isArray(data?.result)) arr = data.result;
@@ -378,6 +372,7 @@ export default function MapField({
                     const display_name =
                         x?.display_name ?? x?.name ?? x?.formatted ?? x?.label ?? String(query);
                     const address: Addr | undefined = x?.address ?? x?.properties?.address;
+
                     return { lat, lon, display_name, address };
                 })
                 .filter(
@@ -394,19 +389,31 @@ export default function MapField({
             const { data } = await axios.get("/api/v1/location/reverse", {
                 params: { glagol_parent: glagolParent, lon, lat },
             });
+
             const raw = data && typeof data === "object" && "data" in data ? data.data : data;
 
             let address: Addr | undefined = undefined;
+
             if (raw && typeof raw === "object") {
                 if ("address" in raw) {
                     const a = (raw as any).address as Addr;
                     address = { ...a, state: a.state ?? a.region };
                 } else {
-                    const { country, state, region, city, city_district, road, house_number, postcode } = raw as any;
+                    const {
+                        country,
+                        state,
+                        region,
+                        city,
+                        city_district,
+                        road,
+                        house_number,
+                        postcode,
+                    } = raw as any;
+
                     address = {
                         country,
                         region,
-                        state: state ?? region, // NEW
+                        state: state ?? region,
                         city,
                         city_district,
                         road,
@@ -415,167 +422,204 @@ export default function MapField({
                     };
                 }
             }
+
             return { lat, lon, address };
         },
         [glagolParent]
     );
 
-    // значение q, пришедшее извне
-    const propQ = useMemo(
-        () => (mapping.q && initialValues[mapping.q]) || "",
-        [initialValues, mapping.q]
+    const reverseRef = useRef(reverse);
+    useEffect(() => {
+        reverseRef.current = reverse;
+    }, [reverse]);
+
+    const runSearchFor = useCallback(
+        async (query: string) => {
+            const qq = query.trim();
+            if (!qq) return;
+
+            setStatus("Поиск…");
+            lastSearchedRef.current = qq;
+
+            try {
+                const [first] = await search(qq);
+
+                if (!first) {
+                    setStatus("Ничего не найдено");
+                    return;
+                }
+
+                const lat = Number(first.lat);
+                const lon = Number(first.lon);
+
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+                    setStatus("Ошибка координат");
+                    return;
+                }
+
+                lastResolvedRef.current = `${lat},${lon}`;
+                setPointState(lat, lon, 16);
+
+                try {
+                    const info = await reverse(lon, lat);
+                    const pretty = formatAddress(info) || first.display_name || qq;
+
+                    setQ((prev) => (prev === pretty ? prev : pretty));
+                    apply({ ...info, lat, lon }, pretty);
+                } catch {
+                    apply(first, qq);
+                }
+
+                setStatus("Готово");
+            } catch {
+                setStatus("Ошибка поиска");
+            }
+        },
+        [apply, reverse, search, setPointState]
     );
 
-    // чтобы не крутиться по кругу
-    const lastResolvedRef = useRef<string>("");
-    const lastSearchedRef = useRef<string>("");
+    const runSearchForRef = useRef(runSearchFor);
+    useEffect(() => {
+        runSearchForRef.current = runSearchFor;
+    }, [runSearchFor]);
+
+    const propQ = (mapping.q && initialValues[mapping.q]) || "";
+
+    useEffect(() => {
+        setOverlayFitted(false);
+    }, [overlayUrl]);
+
+    useEffect(() => {
+        const url = String(overlayUrl || "").trim();
+
+        if (!url) {
+            setKmlGeoJson(null);
+            setKmlBounds(null);
+            setOverlayStatus("");
+            setOverlayFitted(false);
+            return;
+        }
+
+        let cancelled = false;
+
+        const loadOverlay = async () => {
+            setOverlayFitted(false);
+            setOverlayStatus("Загружаем разметку...");
+
+            try {
+                const geojson = await loadOverlayAsGeoJson(url);
+                if (cancelled) return;
+
+                setKmlGeoJson(geojson);
+
+                const tmpLayer = L.geoJSON(geojson as any);
+                const bounds = tmpLayer.getBounds();
+
+                setKmlBounds(bounds.isValid() ? bounds : null);
+                setOverlayStatus("Разметка загружена");
+            } catch (error) {
+                if (cancelled) return;
+
+                console.error("Ошибка загрузки разметки:", error);
+                setKmlGeoJson(null);
+                setKmlBounds(null);
+                setOverlayStatus("Ошибка загрузки разметки");
+                setOverlayFitted(false);
+            }
+        };
+
+        void loadOverlay();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [overlayUrl]);
+
+    useEffect(() => {
+        if (Number.isFinite(lat0) && Number.isFinite(lon0)) {
+            const key = `${lat0},${lon0}`;
+
+            setPointState(lat0, lon0, 14);
+
+            if (lastResolvedRef.current === key) return;
+            lastResolvedRef.current = key;
+
+            let cancelled = false;
+
+            (async () => {
+                setStatus("Определяем адрес…");
+
+                try {
+                    const info = await reverseRef.current(lon0, lat0);
+                    if (cancelled) return;
+
+                    const pretty = formatAddress(info);
+
+                    if (pretty) {
+                        setQ((prev) => (prev === pretty ? prev : pretty));
+                    }
+
+                    applyRef.current({ ...info, lat: lat0, lon: lon0 }, pretty || undefined);
+                    setStatus("Готово");
+                } catch {
+                    if (cancelled) return;
+
+                    applyRef.current({ lat: lat0, lon: lon0 }, undefined);
+                    setStatus("");
+                }
+            })();
+
+            return () => {
+                cancelled = true;
+            };
+        }
+
+        const qq = String(propQ || "").trim();
+        if (!qq) return;
+
+        if (lastSearchedRef.current === qq) {
+            setQ((prev) => (prev === qq ? prev : qq));
+            return;
+        }
+
+        setQ((prev) => (prev === qq ? prev : qq));
+        void runSearchForRef.current(qq);
+    }, [lat0, lon0, propQ, setPointState]);
 
     const commitPoint = useCallback(
         async (lat: number, lon: number) => {
-            setPos([lat, lon]);
-            setCenter([lat, lon]);
+            lastResolvedRef.current = `${lat},${lon}`;
+            setPointState(lat, lon, 16);
             setStatus("Определяем адрес…");
 
             try {
                 const info = await reverse(lon, lat);
                 const pretty = formatAddress(info);
-                setQ(pretty);
-                apply(info, pretty);
+
+                if (pretty) {
+                    setQ((prev) => (prev === pretty ? prev : pretty));
+                }
+
+                apply({ ...info, lat, lon }, pretty);
                 setStatus("Готово");
             } catch {
                 apply({ lat, lon }, undefined);
                 setStatus("Готово");
             }
         },
-        [apply, reverse]
+        [apply, reverse, setPointState]
     );
-    // хелпер: поиск по произвольной строке (не из state q)
-    const runSearchFor = useCallback(
-        async (query: string) => {
-            const qq = query.trim();
-            if (!qq) return;
-            setStatus("Поиск…");
-            try {
-                const [first] = await search(qq);
-                if (!first) {
-                    setStatus("Ничего не найдено");
-                    return;
-                }
-                const lat = Number(first.lat),
-                    lon = Number(first.lon);
-                if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-                    setStatus("Ошибка координат");
-                    return;
-                }
-                setPos([lat, lon]);
-                setCenter([lat, lon]);
-                try {
-                    const info = await reverse(lon, lat);
-                    const pretty = formatAddress(info) || first.display_name || qq;
-                    setQ(pretty);
-                    apply(info, pretty);
-                } catch {
-                    apply(first, qq);
-                }
-                setStatus("Готово");
-            } catch {
-                setStatus("Ошибка поиска");
-            }
-        },
-        [apply, reverse, search]
-    );
-
-    // первичное заполнение из lat/lon
-    useEffect(() => {
-        if (Number.isFinite(lat0) && Number.isFinite(lon0)) {
-            (async () => {
-                try {
-                    const info = await reverse(lon0, lat0);
-                    const pretty = formatAddress(info);
-                    if (pretty) setQ(pretty);
-                    apply(info, pretty || q);
-                } catch {}
-            })();
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    useEffect(() => {
-        if (Number.isFinite(lat0) && Number.isFinite(lon0)) {
-            const key = `${lon0},${lat0}`;
-            setPos([lat0, lon0]);
-            setCenter([lat0, lon0]);
-            if (lastResolvedRef.current !== key) {
-                lastResolvedRef.current = key;
-                (async () => {
-                    setStatus("Определяем адрес…");
-                    try {
-                        const info = await reverse(lon0, lat0);
-                        const pretty = formatAddress(info);
-                        setQ(pretty);
-                        apply(info, pretty);
-                        setStatus("Готово");
-                    } catch {
-                        apply({ lat: lat0, lon: lon0 }, undefined);
-                        setStatus("");
-                    }
-                })();
-            }
-            return;
-        }
-
-        const qq = (propQ || "").trim();
-        if (qq && lastSearchedRef.current !== qq) {
-            lastSearchedRef.current = qq;
-            setQ(qq);
-            runSearchFor(qq);
-        }
-    }, [lat0, lon0, propQ, apply, reverse, runSearchFor]);
 
     const runSearch = useCallback(async () => {
         const qq = q.trim();
+
         if (!qq) {
             setStatus("Введите адрес");
             return;
         }
-        setStatus("Поиск…");
-        try {
-            const [first] = await search(qq);
-            if (!first) {
-                setStatus("Ничего не найдено");
-                return;
-            }
-            const lat = Number(first.lat),
-                lon = Number(first.lon);
-            if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-                setStatus("Ошибка координат");
-                return;
-            }
-            setPos([lat, lon]);
-            setCenter([lat, lon]);
-            try {
-                const info = await reverse(lon, lat);
-                const pretty = formatAddress(info) || first.display_name || qq;
-                setQ(pretty);
-                apply(info, pretty);
-            } catch {
-                apply(first, qq);
-            }
-            setStatus("Готово");
-        } catch {
-            setStatus("Ошибка поиска");
-        }
-    }, [apply, q, reverse, search]);
 
-    const ClickHandler: React.FC = () => {
-        useMapEvents({
-            click: async (e: LeafletMouseEvent) => {
-                if (readOnly) return;
-                await commitPoint(e.latlng.lat, e.latlng.lng);
-            },
-        });
-        return null;
-    };
+        await runSearchFor(qq);
+    }, [q, runSearchFor]);
 
     const zoneStyle = useCallback((feature: any): L.PathOptions => {
         const props = feature?.properties || {};
@@ -597,51 +641,63 @@ export default function MapField({
         };
     }, []);
 
-    const onEachZone = useCallback((feature: any, layer: L.Layer) => {
-        const name =
-            String(feature?.properties?.name || "").trim() || "Без названия";
+    const onEachZone = useCallback(
+        (feature: any, layer: L.Layer) => {
+            const name =
+                String(feature?.properties?.name || "").trim() || "Без названия";
 
-        const pathLayer = layer as L.Path & {
-            bindTooltip?: (content: string, options?: L.TooltipOptions) => any;
-            on?: (type: string | Record<string, any>, fn?: any) => any;
-        };
+            const pathLayer = layer as L.Path & {
+                bindTooltip?: (content: string, options?: L.TooltipOptions) => any;
+                on?: (type: string | Record<string, any>, fn?: any) => any;
+            };
 
-        if ("bindTooltip" in pathLayer) {
-            pathLayer.bindTooltip(name, {
-                sticky: true,
-                direction: "top",
-                opacity: 0.95,
-            });
-        }
+            if ("bindTooltip" in pathLayer) {
+                pathLayer.bindTooltip(name, {
+                    sticky: true,
+                    direction: "top",
+                    opacity: 0.95,
+                });
+            }
 
-        if ("on" in pathLayer) {
-            pathLayer.on({
-                click: async (e: any) => {
-                    if (readOnly) return;
+            if ("on" in pathLayer) {
+                pathLayer.on({
+                    click: async (e: any) => {
+                        if (readOnly) return;
 
-                    const latlng = e?.latlng;
-                    if (!latlng) return;
+                        const latlng = e?.latlng;
+                        if (!latlng) return;
 
-                    const target = e?.originalEvent?.target as HTMLElement | undefined;
-                    if (target && typeof target.blur === "function") {
-                        target.blur();
-                    }
+                        const target = e?.originalEvent?.target as HTMLElement | undefined;
+                        if (target && typeof target.blur === "function") {
+                            target.blur();
+                        }
 
-                    await commitPoint(latlng.lat, latlng.lng);
-                },
-            });
-        }
-    }, [commitPoint, readOnly]);
+                        await commitPoint(latlng.lat, latlng.lng);
+                    },
+                });
+            }
+        },
+        [commitPoint, readOnly]
+    );
+
+    const ClickHandler: React.FC = () => {
+        useMapEvents({
+            click: async (e: LeafletMouseEvent) => {
+                if (readOnly) return;
+                await commitPoint(e.latlng.lat, e.latlng.lng);
+            },
+        });
+
+        return null;
+    };
 
     return (
         <div style={{ display: "grid", gridTemplateRows: "auto 1fr", gap: 8 }}>
             {!readOnly && (
                 <div
                     className="map-search-wrap"
-                    // было: minWidth: 280, maxWidth: 520
                     style={{ position: "relative", width: "100%" }}
                 >
-                    {/* инпут тянется на 1fr, кнопка — по содержимому */}
                     <div
                         style={{
                             display: "grid",
@@ -659,18 +715,16 @@ export default function MapField({
                             onKeyDown={(e) => {
                                 if (e.key === "Enter") {
                                     e.preventDefault();
-                                    runSearch();
+                                    void runSearch();
                                 }
                             }}
-                            // важно для корректного ужимания внутри grid/flex
                             style={{ width: "100%", minWidth: 0 }}
-                            // покажет полный адрес по ховеру
                             title={q}
                         />
                         <button
                             type="button"
                             className="btn btn-primary"
-                            onClick={runSearch}
+                            onClick={() => void runSearch()}
                             disabled={!q.trim()}
                         >
                             Найти
@@ -680,6 +734,12 @@ export default function MapField({
                     {!!overlayStatus && (
                         <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>
                             {overlayStatus}
+                        </div>
+                    )}
+
+                    {!!status && (
+                        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>
+                            {status}
                         </div>
                     )}
                 </div>
@@ -692,28 +752,29 @@ export default function MapField({
                     border: "1px solid #e0e0e0",
                     borderRadius: 10,
                     overflow: "hidden",
+                    position: "relative",
+                    isolation: "isolate",
+                    contain: "layout paint",
                 }}
             >
                 <MapContainer
                     center={center}
-                    zoom={Number.isFinite(lat0) && Number.isFinite(lon0) ? 14 : 5}
+                    zoom={zoom}
                     style={{ height: "100%", width: "100%" }}
-                    scrollWheelZoom={true}
+                    scrollWheelZoom
                     attributionControl={false}
                 >
                     <SizeFix />
-
-                    {/* убираем слово Leaflet, оставляем OSM */}
                     <AttributionControl position="bottomright" prefix={false} />
 
                     <TileLayer
                         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                         attribution="&copy; OpenStreetMap contributors"
                     />
-                    {Boolean(kmlGeoJson) && (
-                        <Pane name="kmlPane" style={{ zIndex: 450}}>
+
+                    {kmlGeoJson && (
+                        <Pane name="kmlPane" style={{ zIndex: 450 }}>
                             <GeoJSON
-                                key={kmlLayerKey}
                                 data={kmlGeoJson}
                                 style={zoneStyle}
                                 onEachFeature={onEachZone}
@@ -721,10 +782,15 @@ export default function MapField({
                         </Pane>
                     )}
 
-                    <KmlBoundsUpdater bounds={kmlBounds} enabled={fitKmlBounds} />
+                    <KmlBoundsUpdater
+                        bounds={kmlBounds}
+                        enabled={fitKmlBounds && !overlayFitted}
+                        onDone={() => setOverlayFitted(true)}
+                    />
 
-                    {/* Обновление вида при смене center */}
-                    <ViewUpdater center={center} animate zoom={16} />
+                    {(!fitKmlBounds || overlayFitted || !kmlBounds) && (
+                        <ViewUpdater center={center} zoom={zoom} animate />
+                    )}
 
                     <ClickHandler />
 

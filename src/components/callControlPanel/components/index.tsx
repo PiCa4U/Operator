@@ -122,6 +122,75 @@ function parseMapConfig(raw: unknown): {
     return { mapping, defaults, overlay };
 }
 
+function splitOptions(raw: string): string[] {
+    if (!raw) return [];
+    return (raw.includes("|_|_|") ? raw.split("|_|_|") : raw.split(","))
+        .map(s => String(s).trim())
+        .filter(Boolean);
+}
+
+function isJsonLike(raw: string): boolean {
+    const s = raw.trim();
+    return (
+        (s.startsWith("{") && s.endsWith("}")) ||
+        (s.startsWith("[") && s.endsWith("]"))
+    );
+}
+
+function parseManyValue(rawField: string, rawFieldVals: string | null) {
+    const baseOptions = splitOptions(rawFieldVals || "");
+    const trimmed = String(rawField || "").trim();
+
+    let options = baseOptions;
+    let selected: string[] = [];
+
+    if (isJsonLike(trimmed)) {
+        try {
+            const parsed = JSON.parse(trimmed);
+
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                if (Array.isArray(parsed.options)) {
+                    options = parsed.options.map((v: any) => String(v).trim()).filter(Boolean);
+                }
+
+                if (parsed.select != null) {
+                    selected = Array.isArray(parsed.select)
+                        ? parsed.select.map((v: any) => String(v).trim()).filter(Boolean)
+                        : [String(parsed.select).trim()].filter(Boolean);
+                }
+            } else if (Array.isArray(parsed)) {
+                selected = parsed.map((v: any) => String(v).trim()).filter(Boolean);
+            }
+        } catch {
+            selected = splitOptions(rawField);
+        }
+    } else {
+        selected = splitOptions(rawField);
+    }
+
+    return { options, selected };
+}
+
+function buildManyStoredValue(rawField: string, options: string[], selected: string[]): string {
+    const trimmed = String(rawField || "").trim();
+
+    if (isJsonLike(trimmed)) {
+        try {
+            const parsed = JSON.parse(trimmed);
+
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                return JSON.stringify({
+                    ...parsed,
+                    options,
+                    select: selected,
+                });
+            }
+        } catch {}
+    }
+
+    return selected.join(",");
+}
+
 const TEXTAREA_MAX_HEIGHT = 360;
 
 const MAP_KEYS = [
@@ -369,6 +438,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
         >
             {visibleParams.map(param => {
                 const currentValue = fieldValues[param.field_id] || '';
+                const stableParamId = String(param.id ?? param.field_id);
 
                 const commonProps = {
                     className: "form-control",
@@ -380,7 +450,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
 
                 return (
                     <div
-                        key={param.id}
+                        key={stableParamId}
                         className="form-group"
                         style={{
                             display: 'flex',
@@ -617,14 +687,14 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                 <input
                                     type="checkbox"
                                     className="form-check-input"
-                                    id={`checkbox_${param.id}`}
+                                    id={`checkbox_${stableParamId}`}
                                     checked={currentValue === 'true'}
                                     disabled={!param.editable}
                                     onChange={e =>
                                         handleChange(param.field_id, e.target.checked ? 'true' : 'false')
                                     }
                                 />
-                                <label className="form-check-label" htmlFor={`checkbox_${param.id}`}>
+                                <label className="form-check-label" htmlFor={`checkbox_${stableParamId}`}>
                                     {param.field_vals || 'Выбрать'}
                                 </label>
                             </div>
@@ -641,8 +711,8 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                         <input
                                             type="radio"
                                             className="form-check-input"
-                                            id={`radio_${param.id}_${idx}`}
-                                            name={param.field_id}
+                                            id={`radio_${stableParamId}_${idx}`}
+                                            name={stableParamId}
                                             value={opt}
                                             checked={currentValue === opt}
                                             disabled={!param.editable}
@@ -650,7 +720,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                         />
                                         <label
                                             className="form-check-label"
-                                            htmlFor={`radio_${param.id}_${idx}`}
+                                            htmlFor={`radio_${stableParamId}_${idx}`}
                                         >
                                             {opt}
                                         </label>
@@ -660,64 +730,35 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         )}
 
                         {param.field_type === 'many' && (() => {
-                            const rawVals = param.field_vals || "";
-                            const baseOpts = rawVals.split(",").map(s => s.trim()).filter(Boolean);
-
                             const rawField = fieldValues[param.field_id] || "";
-                            const trimmed = rawField.trim();
-                            let opts
-                            if (!baseOptionsRef.current.length) {
-                                opts = baseOpts
-                            } else {
-                                opts = baseOptionsRef.current
-                            }
-                            let selectedArr: string[] = rawField
-                                .split(",")
-                                .map(v => v.trim())
-                                .filter(Boolean);
-
-                            if (
-                                (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-                                (trimmed.startsWith("[") && trimmed.endsWith("]"))
-                            ) {
-                                try {
-                                    const parsed = JSON.parse(trimmed);
-                                    if (Array.isArray(parsed.options) && parsed.options.length) {
-                                        opts = parsed.options;
-                                        baseOptionsRef.current = opts
-                                    }
-                                    if (parsed.select) {
-                                        selectedArr = Array.isArray(parsed.select)
-                                            ? parsed.select.map((v: any) => String(v))
-                                            : [String(parsed.select)];
-
-                                        onChange({[param.field_id]: selectedArr.join(",")})
-                                    }
-                                } catch {
-                                }
-                            }
+                            const { options, selected } = parseManyValue(rawField, param.field_vals);
+                            const stableParamId = String(param.id ?? param.field_id);
 
                             return (
                                 <div style={{ marginLeft: "8px" }}>
-                                    {opts.map((opt: any, idx: any) => {
-                                        const isChecked = selectedArr.includes(opt);
+                                    {options.map((opt, idx) => {
+                                        const isChecked = selected.includes(opt);
+                                        const inputId = `many_${stableParamId}_${idx}`;
+
                                         return (
-                                            <div className="form-check" key={idx} style={{ marginRight: "10px" }}>
+                                            <div className="form-check" key={inputId} style={{ marginRight: "10px" }}>
                                                 <input
                                                     type="checkbox"
                                                     className="form-check-input"
-                                                    id={`many_${param.id}_${idx}`}
+                                                    id={inputId}
                                                     value={opt}
                                                     checked={isChecked}
                                                     disabled={!param.editable}
                                                     onChange={e => {
                                                         const next = e.target.checked
-                                                            ? [...selectedArr, opt]
-                                                            : selectedArr.filter(v => v !== opt);
-                                                        handleChange(param.field_id, next.join(","));
+                                                            ? [...selected, opt]
+                                                            : selected.filter(v => v !== opt);
+
+                                                        const nextValue = buildManyStoredValue(rawField, options, next);
+                                                        handleChange(param.field_id, nextValue);
                                                     }}
                                                 />
-                                                <label className="form-check-label" htmlFor={`many_${param.id}_${idx}`}>
+                                                <label className="form-check-label" htmlFor={inputId}>
                                                     {opt}
                                                 </label>
                                             </div>

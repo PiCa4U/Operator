@@ -35,6 +35,23 @@ export interface MonitorData {
     monitorCallcenter: Record<string, string[]>;
 }
 
+export interface OperatorProfile {
+    login?: string;
+    name?: string;
+    glagol_service?: string | null;
+    type?: string | null;
+    [key: string]: any;
+}
+
+export interface OperatorAccess {
+    loaded: boolean;
+    presetIds: number[] | null;
+    flowIds: number[] | null;
+    queues: string[];
+    bootstrapProjects: string[];
+    allowedProjects: string[];
+}
+
 export interface TurnCredentials {
     urls: string[];
     username: string;
@@ -57,7 +74,8 @@ export interface OperatorState {
     userStatuses: Record<string, UserStatus>;
     ha1: string;
     turnCreds: TurnCredentials | null;
-
+    operatorProfile: OperatorProfile | null;
+    operatorAccess: OperatorAccess;
 }
 
 export interface UserStatus {
@@ -86,7 +104,15 @@ const initialState: OperatorState = {
     userStatuses: {},
     ha1: "",
     turnCreds: null,
-
+    operatorProfile: null,
+    operatorAccess: {
+        loaded: false,
+        presetIds: null,
+        flowIds: null,
+        queues: [],
+        bootstrapProjects: [],
+        allowedProjects: [],
+    },
 };
 
 export const makeSelectFullProjectPool = (sipLogin: string) =>
@@ -100,6 +126,52 @@ export const makeSelectFullProjectPool = (sipLogin: string) =>
                 // .filter(proj => proj && proj.out_active);
         }
     );
+
+export const selectOperatorProfile = (state: RootState) => state.operator.operatorProfile;
+export const selectOperatorAccess = (state: RootState) => state.operator.operatorAccess;
+
+export const selectOperatorAllowedProjects = createSelector(
+    [selectOperatorAccess],
+    (operatorAccess) => operatorAccess.allowedProjects
+);
+
+export const selectOperatorBootstrapProjects = createSelector(
+    [selectOperatorAccess],
+    (operatorAccess) => operatorAccess.bootstrapProjects
+);
+
+export const makeSelectAccessibleProjectPool = (sipLogin: string) =>
+    createSelector(
+        (state: RootState) => state.operator.monitorData.allProjects,
+        selectOperatorAccess,
+        (state: RootState) => state.operator.monitorData.monitorCallcenter[sipLogin] || [],
+        (allProjects, operatorAccess, legacyProjects) => {
+            let projectNames: string[] = legacyProjects;
+
+            if (operatorAccess.loaded) {
+                if (operatorAccess.presetIds !== null) {
+                    projectNames = operatorAccess.allowedProjects;
+                } else if (operatorAccess.bootstrapProjects.length) {
+                    projectNames = operatorAccess.bootstrapProjects;
+                }
+            }
+
+            return projectNames
+                .map((pName: string) => allProjects[pName])
+                .filter(Boolean);
+        }
+    );
+
+export const selectAccessibleProjectNames = createSelector(
+    [selectOperatorAccess],
+    (operatorAccess) => {
+        if (operatorAccess.presetIds !== null) {
+            return operatorAccess.allowedProjects;
+        }
+
+        return operatorAccess.bootstrapProjects;
+    }
+);
 
 export const selectMyProjects = createSelector(
     [(state: RootState) => state.operator.monitorData.monitorCallcenter, (_: RootState, sipLogin: string) => sipLogin],
@@ -180,6 +252,16 @@ const operatorSlice = createSlice({
         setTurnCreds(state, action: PayloadAction<TurnCredentials>) {
             state.turnCreds = action.payload;
         },
+        setOperatorProfile(state, action: PayloadAction<OperatorProfile | null>) {
+            if (!isEqual(state.operatorProfile, action.payload)) {
+                state.operatorProfile = action.payload;
+            }
+        },
+        setOperatorAccess(state, action: PayloadAction<OperatorAccess>) {
+            if (!isEqual(state.operatorAccess, action.payload)) {
+                state.operatorAccess = action.payload;
+            }
+        },
     },
 });
 
@@ -196,6 +278,8 @@ export const {
     setUserStatuses,
     setHa1,
     setTurnCreds,
+    setOperatorProfile,
+    setOperatorAccess,
 } = operatorSlice.actions;
 
 export default operatorSlice.reducer;

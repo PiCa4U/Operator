@@ -19,6 +19,10 @@
     animation: fadeIn .18s ease-out both;
 }
 
+.overlayPassive {
+    pointer-events: none;
+}
+
 @keyframes fadeIn {
     from { opacity: .0; }
     to   { opacity: 1; }
@@ -90,6 +94,77 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .callerHint { font-size: 12px; color: var(--muted); }
+
+.progressPanel {
+    display: grid;
+    gap: 10px;
+    padding-top: 6px;
+}
+
+.stageRow {
+    display: grid;
+    grid-template-columns: 28px 1fr 18px;
+    align-items: center;
+    gap: 12px;
+    min-height: 32px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.06);
+}
+
+.stageRowCurrent {
+    background: rgba(11,185,24,0.10);
+    border-color: rgba(11,185,24,0.24);
+}
+
+.stageDot {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.16);
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 700;
+    background: rgba(255,255,255,0.03);
+}
+
+.stageDotActive {
+    color: #fff;
+    border-color: rgba(11,185,24,0.4);
+    background: rgba(11,185,24,0.28);
+}
+
+.stageDotDone {
+    color: #fff;
+    border-color: rgba(11,185,24,0.45);
+    background: rgba(11,185,24,0.75);
+}
+
+.stageLabel {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.stageLabelDone {
+    color: rgba(233, 237, 241, 0.88);
+}
+
+.stageSpinner {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.22);
+    border-top-color: var(--green);
+    animation: spin .7s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
 
 /* --- Buttons --- */
 .buttons {

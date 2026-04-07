@@ -96,7 +96,7 @@ export function useOperators() {
 
     const [filters, setFilters] = useState<FiltersState>({
         name: "",
-        projects: [],
+        queues: [],
         department: null,
         departments: [],
         robot: "all",
@@ -182,9 +182,9 @@ export function useOperators() {
                 if (isOnlineByFields(a) !== needOnline) return false;
             }
 
-            if (filters.projects.length) {
-                const set = new Set(a?.projects ?? []);
-                const hasAny = filters.projects.some((p) => set.has(p));
+            if (filters.queues.length) {
+                const set = new Set(a?.queues ?? a?.projects ?? []);
+                const hasAny = filters.queues.some((p) => set.has(p));
                 if (!hasAny) return false;
             }
 
@@ -192,12 +192,12 @@ export function useOperators() {
         });
     }, [query.data, filters]);
 
-    const mutateCreate = useMutation<string, unknown, CreateAgentPayload>({
+    const mutateCreate = useMutation<unknown, unknown, CreateAgentPayload>({
         mutationFn: createAgent,
         onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
     });
 
-    const mutateUpdate = useMutation<string, unknown, UpdateAgentPayload>({
+    const mutateUpdate = useMutation<unknown, unknown, UpdateAgentPayload>({
         mutationFn: updateAgent,
         onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
     });

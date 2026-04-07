@@ -7,7 +7,7 @@ import {RootState, store} from '../../redux/store';
 import { socket } from '../../socket';
 import { getCookies } from '../../utils';
 import {CallData} from "../callControlPanel";
-import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
+import {makeSelectAccessibleProjectPool, makeSelectFullProjectPool} from "../../redux/operatorSlice";
 
 function getDisplayNumber(call: any): string {
     if (call.total_direction === 'outbound') {
@@ -55,7 +55,17 @@ const CallsDashboard: React.FC<CallsDashboardProps> = ({isLoading, setIsLoading,
     const [phoneSearch, setPhoneSearch] = useState('');
 
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
-    const projectPool = useSelector(selectFullProjectPool) || [];
+    const rawLegacyProjectPool = useSelector(selectFullProjectPool);
+    const legacyProjectPool = useMemo(() => rawLegacyProjectPool || [], [rawLegacyProjectPool]);
+    const selectAccessibleProjectPool = useMemo(() => makeSelectAccessibleProjectPool(sipLogin), [sipLogin]);
+    const rawAccessibleProjectPool = useSelector(selectAccessibleProjectPool);
+    const accessibleProjectPool = useMemo(
+        () => rawAccessibleProjectPool || [],
+        [rawAccessibleProjectPool]
+    );
+    const projectPool = useMemo(() => {
+        return accessibleProjectPool.length ? accessibleProjectPool : legacyProjectPool;
+    }, [accessibleProjectPool, legacyProjectPool]);
     const forbiddenProjects = ['api_call', 'no_project_out'];
 
     // const [currentPage, setCurrentPage] = useState(1);

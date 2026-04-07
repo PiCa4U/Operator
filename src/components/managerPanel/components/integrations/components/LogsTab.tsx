@@ -11,7 +11,7 @@ import {
 import SearchableSelect from "../../../../callControlPanel/components/select";
 import { useSelector } from "react-redux";
 import { store } from "../../../../../redux/store";
-import { makeSelectFullProjectPool } from "../../../../../redux/operatorSlice";
+import { makeSelectAccessibleProjectPool } from "../../../../../redux/operatorSlice";
 
 type KVRow = { id: string; key: string; values: string };
 
@@ -267,8 +267,9 @@ export const LogsTab: React.FC = () => {
         glagolParent      = ''
     } = store.getState().credentials;
 
-    const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
-    const projectPool = useSelector(selectFullProjectPool) || [];
+    const selectAccessibleProjectPool = useMemo(() => makeSelectAccessibleProjectPool(sipLogin), [sipLogin]);
+    const rawProjectPool = useSelector(selectAccessibleProjectPool);
+    const projectPool = useMemo(() => rawProjectPool || [], [rawProjectPool]);
     const projectOptions = useMemo(
         () =>
             projectPool.map((p: any) => ({

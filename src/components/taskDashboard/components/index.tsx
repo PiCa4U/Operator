@@ -3,7 +3,7 @@ import Swal from 'sweetalert2';
 import { socket } from '../../../socket';
 import {store} from "../../../redux/store";
 import {useSelector} from "react-redux";
-import {makeSelectFullProjectPool} from "../../../redux/operatorSlice";
+import {selectAccessibleProjectNames, selectOperatorAccess} from "../../../redux/operatorSlice";
 import styles from "./checkbox.module.css";
 import stylesModal from "./modal.module.css";
 import {ModuleType} from "../index";
@@ -50,6 +50,7 @@ interface Preset {
     preset_name: string;
     group_table: string;
     group_by: string[];
+    projects?: string[];
 }
 interface RawRow {
     id: number;
@@ -90,7 +91,7 @@ const GroupActionModal: React.FC<Props> = ({
                                                phoneID,
                                                onAfterAction
                                            }) => {
-    const { sipLogin = '', worker = '' } = store.getState().credentials;
+    const { worker = '' } = store.getState().credentials;
     const [rawRows, setRawRows] = useState<RawRow[]>([]);
     const [loading, setLoading] = useState(false);
     const idsUniq = useMemo(() => Array.from(new Set(ids || [])), [ids]);
@@ -117,9 +118,13 @@ const GroupActionModal: React.FC<Props> = ({
         onSelectionChange?.(Array.from(selectedIds));
     }, [selectedIds, onSelectionChange]);
 
-    const projectPool = useSelector(useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]));
-    const projectNames = useMemo(() => projectPool.map(p => p.project_name), [projectPool]);
-    // const projectNames = ["group_project_1", "group_project_2"]
+    const operatorAccess = useSelector(selectOperatorAccess);
+    const accessibleProjectNames = useSelector(selectAccessibleProjectNames);
+    const projectNames = useMemo(() => {
+        const source = operatorAccess.loaded ? accessibleProjectNames : (preset?.projects ?? []);
+
+        return Array.from(new Set(source.map(String).map((value) => value.trim()).filter(Boolean)));
+    }, [accessibleProjectNames, operatorAccess.loaded, preset?.projects]);
 
     const { sessionKey } = store.getState().operator
 
@@ -353,6 +358,18 @@ const GroupActionModal: React.FC<Props> = ({
         setLoading(true);
         (async () => {
             try {
+                if (operatorAccess.loaded && projectNames.length === 0) {
+                    setRawRows([]);
+                    setSelectedIds(new Set());
+                    setSelectedFilters({
+                        group1: new Set(),
+                        group2: new Set(),
+                        group3: new Set(),
+                        status: new Set(),
+                    });
+                    return;
+                }
+
                 type Nested = Record<string, Record<string, Record<string, RawRow[]>>>;
 
                 // собираем фильтры запроса: проект + ИДшники
@@ -396,7 +413,7 @@ const GroupActionModal: React.FC<Props> = ({
             }
         })();
         // добавил projectNames и idsUniq в зависимости
-    }, [isOpen, preset, role, glagolParent, projectNames, idsUniq, phoneID]);
+    }, [glagolParent, idsUniq, isOpen, operatorAccess.loaded, phoneID, preset, projectNames, role]);
 
     if (!isOpen) return null;
     if (loading) return <div className={stylesModal.modal}><div className={stylesModal.modalContent}>Загрузка...</div></div>;

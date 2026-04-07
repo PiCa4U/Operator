@@ -374,6 +374,12 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
         }, [dialplanExtensions, dq, findProjectLabel]);
 
         const canDialExtension = enabled && webrtcEnabled && !hasInterCall && !hasConsult;
+        const canBlindTransferExtension =
+            enabled &&
+            !hasInterCall &&
+            webrtcEnabled &&
+            typeof blindTransfer === "function" &&
+            sipEstablished;
         const canCall = enabled && webrtcEnabled && !hasInterCall && !hasConsult;
 
         const handleCall = useCallback(
@@ -537,6 +543,41 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
             [enabled, webrtcEnabled, startConsultCall, ensureMainCallHeld]
         );
 
+        const handleExtensionBlindTransfer = useCallback(
+            async (item: DialplanExtensionItem) => {
+                if (!enabled) return;
+                if (!webrtcEnabled || typeof blindTransfer !== "function" || !sipEstablished) return;
+
+                const busyKey = `ext:${item.id}`;
+                setBusyLogin(busyKey);
+                setBusyKind("blind");
+
+                try {
+                    await ensureMainCallHeld();
+                    await blindTransfer(String(item.ext));
+
+                    await Swal.fire({
+                        icon: "success",
+                        title: "Слепой перевод выполнен",
+                        text: `Добавочный: ${item.ext}`,
+                        timer: 1100,
+                        showConfirmButton: false,
+                    });
+                } catch (e: any) {
+                    console.error(e);
+                    await Swal.fire({
+                        icon: "error",
+                        title: "Не удалось сделать слепой перевод",
+                        text: String(e?.message || e),
+                    });
+                } finally {
+                    setBusyLogin(null);
+                    setBusyKind(null);
+                }
+            },
+            [enabled, webrtcEnabled, blindTransfer, sipEstablished, ensureMainCallHeld]
+        );
+
         const badge = useMemo(() => {
             const s = String(sipStatus || "").toLowerCase();
 
@@ -698,43 +739,81 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                                                         </div>
                                                     </div>
 
-                                                    <button
-                                                        className="btn btn-sm btn-outline-success"
-                                                        onClick={() => handleExtensionCall(item)}
-                                                        disabled={!canDialExtension || !!busyLogin}
-                                                        title={
-                                                            canDialExtension
-                                                                ? "Начать консультацию на добавочный"
-                                                                : "SIP недоступен"
-                                                        }
-                                                        style={{ whiteSpace: "nowrap" }}
-                                                    >
-                                                        {isBusyThis && busyKind === "extension" ? (
-                                                            <>
-                                                                <span
-                                                                    className="spinner-border spinner-border-sm"
-                                                                    role="status"
-                                                                    aria-hidden="true"
-                                                                    style={{ marginRight: 8, verticalAlign: "middle" }}
-                                                                />
-                                                                Идёт вызов…
-                                                            </>
-                                                        ) : (
-                                                            <>
-                                                                <span
-                                                                    className="material-icons"
-                                                                    style={{
-                                                                        fontSize: 18,
-                                                                        verticalAlign: "middle",
-                                                                        marginRight: 6,
-                                                                    }}
-                                                                >
-                                                                    call
-                                                                </span>
-                                                                Вызвать
-                                                            </>
+                                                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                                        {canBlindTransferExtension && (
+                                                            <button
+                                                                className="btn btn-sm btn-outline-primary"
+                                                                onClick={() => handleExtensionBlindTransfer(item)}
+                                                                disabled={!canBlindTransferExtension || !!busyLogin}
+                                                                title="Слепой перевод на добавочный"
+                                                                style={{ whiteSpace: "nowrap" }}
+                                                            >
+                                                                {isBusyThis && busyKind === "blind" ? (
+                                                                    <>
+                                                                        <span
+                                                                            className="spinner-border spinner-border-sm"
+                                                                            role="status"
+                                                                            aria-hidden="true"
+                                                                            style={{ marginRight: 8, verticalAlign: "middle" }}
+                                                                        />
+                                                                        Перевод…
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <span
+                                                                            className="material-icons"
+                                                                            style={{
+                                                                                fontSize: 18,
+                                                                                verticalAlign: "middle",
+                                                                                marginRight: 6,
+                                                                            }}
+                                                                        >
+                                                                            call_split
+                                                                        </span>
+                                                                        Передать
+                                                                    </>
+                                                                )}
+                                                            </button>
                                                         )}
-                                                    </button>
+
+                                                        <button
+                                                            className="btn btn-sm btn-outline-success"
+                                                            onClick={() => handleExtensionCall(item)}
+                                                            disabled={!canDialExtension || !!busyLogin}
+                                                            title={
+                                                                canDialExtension
+                                                                    ? "Начать консультацию на добавочный"
+                                                                    : "SIP недоступен"
+                                                            }
+                                                            style={{ whiteSpace: "nowrap" }}
+                                                        >
+                                                            {isBusyThis && busyKind === "extension" ? (
+                                                                <>
+                                                                    <span
+                                                                        className="spinner-border spinner-border-sm"
+                                                                        role="status"
+                                                                        aria-hidden="true"
+                                                                        style={{ marginRight: 8, verticalAlign: "middle" }}
+                                                                    />
+                                                                    Идёт вызов…
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <span
+                                                                        className="material-icons"
+                                                                        style={{
+                                                                            fontSize: 18,
+                                                                            verticalAlign: "middle",
+                                                                            marginRight: 6,
+                                                                        }}
+                                                                    >
+                                                                        call
+                                                                    </span>
+                                                                    Вызвать
+                                                                </>
+                                                            )}
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             );
                                         })

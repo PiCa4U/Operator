@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSelector } from "react-redux";
 import { RootState, store } from "./redux/store";
 import { SipProvider, useSip } from "./context/SipContext";
@@ -11,10 +11,42 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import ItsmGuidRoute from "./features/itsm/ItsmGuidRoute";
 import { webrtcOwner } from "./webrtcOwner";
 import { OperatorScreenSharePanel } from "./screenShare/OperatorScreenSharePanel";
+import {
+    selectOperatorProfile,
+    setOperatorAccess,
+    setOperatorProfile,
+} from "./redux/operatorSlice";
 
 type ScreenShareStatus = "idle" | "requesting" | "sharing" | "denied" | "error";
 
 type PhoneMode = "softphone" | "webrtc";
+
+function normalizeStringArray(raw: unknown): string[] {
+    if (!raw) return [];
+    if (Array.isArray(raw)) {
+        return raw.map(String).map((value) => value.trim()).filter(Boolean);
+    }
+
+    return String(raw)
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+}
+
+function normalizeNumberArray(raw: unknown): number[] {
+    const values = Array.isArray(raw)
+        ? raw
+        : raw == null
+            ? []
+            : String(raw)
+                .split(",")
+                .map((value) => value.trim())
+                .filter(Boolean);
+
+    return values
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value));
+}
 
 const Row: React.FC<{ label: string; value: string; mono?: boolean }> = ({
                                                                              label,
@@ -479,12 +511,18 @@ export default function App() {
         store.getState().credentials;
 
     const { ha1, turnCreds } = useSelector((s: RootState) => s.operator);
+    const operatorProfile = useSelector(selectOperatorProfile);
+    const legacyProjectPool = useSelector(
+        (s: RootState) => s.operator.monitorData.monitorCallcenter[sipLogin] || []
+    );
+    const legacyProjectPoolForAccess = useMemo(
+        () => Array.from(new Set(normalizeStringArray(legacyProjectPool))),
+        [legacyProjectPool]
+    );
 
     // screenShare slice (ты сказал что добавил)
     const { status: screenStatus, grantedOnce: screenGrantedOnce } =
         useSelector((s: RootState) => s.screenShare);
-
-    const [userInfo, setUserInfo] = useState<any>({});
 
     const [mode, setMode] = useState<PhoneMode>(() => {
         const saved = localStorage.getItem("phone_mode") as PhoneMode | null;
@@ -515,20 +553,88 @@ export default function App() {
                 const res = await axios.get("/api/v1/agents", {
                     params: { glagol_parent: glagolParent },
                 });
-                const matchOperator = res.data.result.find((oper: any) => oper.login === sipLogin);
-                setUserInfo(matchOperator);
+                const agents = Array.isArray(res?.data?.result) ? res.data.result : [];
+                const matchOperator = agents.find((oper: any) => oper.login === sipLogin) ?? null;
+
+                store.dispatch(setOperatorProfile(matchOperator));
+
+                const bootstrapProjects = Array.from(
+                    new Set(
+                        normalizeStringArray(
+                            matchOperator?.projects ?? matchOperator?.projects_names ?? legacyProjectPoolForAccess
+                        )
+                    )
+                );
+                const presetIds = matchOperator && Object.prototype.hasOwnProperty.call(matchOperator, "presets")
+                    ? normalizeNumberArray(matchOperator?.presets)
+                    : null;
+                const flowIds = matchOperator && Object.prototype.hasOwnProperty.call(matchOperator, "flows")
+                    ? normalizeNumberArray(matchOperator?.flows)
+                    : null;
+                const queues = Array.from(
+                    new Set(normalizeStringArray(matchOperator?.queues ?? matchOperator?.projects))
+                );
+
+                let allowedProjects = presetIds === null ? bootstrapProjects : [];
+
+                if ((presetIds?.length ?? 0) > 0 && bootstrapProjects.length) {
+                    try {
+                        const presetRole = matchOperator?.type === "manager" ? "manager" : "operator";
+                        const presetsResp = await axios.post<any[]>("/api/v1/get_preset_list", {
+                            glagol_parent: glagolParent,
+                            worker,
+                            projects: bootstrapProjects,
+                            role: presetRole,
+                        });
+                        const presetList = Array.isArray(presetsResp.data) ? presetsResp.data : [];
+                        const resolvedProjects = Array.from(
+                            new Set(
+                                presetList
+                                    .filter((preset) => (presetIds ?? []).includes(Number(preset?.id)))
+                                    .flatMap((preset) => normalizeStringArray(preset?.projects))
+                            )
+                        );
+
+                        allowedProjects = resolvedProjects;
+                    } catch (presetErr) {
+                        console.error("Ошибка при построении project scope оператора:", presetErr);
+                    }
+                }
+
+                store.dispatch(
+                    setOperatorAccess({
+                        loaded: true,
+                        presetIds,
+                        flowIds,
+                        queues,
+                        bootstrapProjects,
+                        allowedProjects,
+                    })
+                );
             } catch (err) {
                 console.error("Ошибка загрузки агентов:", err);
+                const fallbackProjects = legacyProjectPoolForAccess;
+                store.dispatch(setOperatorProfile(null));
+                store.dispatch(
+                    setOperatorAccess({
+                        loaded: true,
+                        presetIds: null,
+                        flowIds: null,
+                        queues: [],
+                        bootstrapProjects: fallbackProjects,
+                        allowedProjects: fallbackProjects,
+                    })
+                );
             }
         };
         fetchAgents();
-    }, [sipLogin, glagolParent]);
+    }, [glagolParent, legacyProjectPoolForAccess, sipLogin, worker]);
 
-    const name = userInfo?.name ?? "—";
-    const glagol = userInfo?.glagol_service ?? "—";
-    const phoneLogin = userInfo?.login ?? "—";
+    const name = operatorProfile?.name ?? "—";
+    const glagol = operatorProfile?.glagol_service ?? "—";
+    const phoneLogin = operatorProfile?.login ?? "—";
     const role =
-        userInfo?.type === "manager" ? "Менеджер" : "Оператор";
+        operatorProfile?.type === "manager" ? "Менеджер" : "Оператор";
 
     const [infoOpen, setInfoOpen] = useState(false);
     const infoRef = useRef<HTMLDivElement | null>(null);

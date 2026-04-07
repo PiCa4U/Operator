@@ -1,5 +1,5 @@
 import React, { FC, useMemo, useRef, useEffect } from "react";
-import { makeSelectFullProjectPool } from "../../../../../../redux/operatorSlice";
+import { makeSelectAccessibleProjectPool } from "../../../../../../redux/operatorSlice";
 import { useSelector } from "react-redux";
 import { store } from "../../../../../../redux/store";
 
@@ -98,8 +98,9 @@ export const ReportCard: FC<Props> = ({ selectedReport, fieldsData, reports }) =
     );
 
     const { sipLogin = "" } = store.getState().credentials;
-    const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
-    const projectPool = useSelector(selectFullProjectPool) || [];
+    const selectAccessibleProjectPool = useMemo(() => makeSelectAccessibleProjectPool(sipLogin), [sipLogin]);
+    const rawProjectPool = useSelector(selectAccessibleProjectPool);
+    const projectPool = useMemo(() => rawProjectPool || [], [rawProjectPool]);
 
     const iconCol = primaryCall?.total_direction === "outbound" ? "#f26666" : "#7cd420";
 

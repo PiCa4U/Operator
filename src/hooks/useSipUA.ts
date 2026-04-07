@@ -122,6 +122,21 @@ const responseHasSDP = (res: any) => {
     return (ctype && /sdp/i.test(ctype)) || (typeof body === 'string' && body.includes('m=audio'));
 };
 
+// Voice calls use a faster ICE profile than screen sharing.
+// Screen share sessions override transport policy/timeouts in their own hooks.
+const SIP_VOICE_ICE_GATHERING_TIMEOUT = 500;
+const SIP_VOICE_ICE_POLICY: RTCIceTransportPolicy = "all";
+
+function buildSipVoicePeerConnectionConfiguration(creds: TurnCredentials | null): RTCConfiguration {
+    return {
+        iceTransportPolicy: SIP_VOICE_ICE_POLICY,
+        iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            creds || undefined,
+        ].filter(Boolean) as RTCIceServer[],
+    };
+}
+
 const container = document.getElementById('root');
 if (!container) throw new Error('Root container not found');
 const { sipLogin: rawSipLogin, worker: rawWorker } =
@@ -802,15 +817,8 @@ export function useSipUA(config: {
                 sessionDescriptionHandlerFactoryOptions: {
                     constraints: { audio: true, video: false },
                     mediaStreamFactory: () => Promise.resolve(localStream),
-                    iceGatheringTimeout: 4000,
-                    peerConnectionConfiguration: {
-                        iceTransportPolicy: "relay" as RTCIceTransportPolicy,
-                        iceServers: [
-                            { urls: "stun:stun.l.google.com:19302" },
-
-                            creds || undefined,
-                        ].filter(Boolean) as RTCIceServer[],
-                    },
+                    iceGatheringTimeout: SIP_VOICE_ICE_GATHERING_TIMEOUT,
+                    peerConnectionConfiguration: buildSipVoicePeerConnectionConfiguration(creds),
                     modifiers: [preferG711]
                 }
             };

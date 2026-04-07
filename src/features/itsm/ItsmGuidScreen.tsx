@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import axios from "axios";
+import { useSelector } from "react-redux";
 
 import LocalChat, { type UiMessage, type Role } from "./chat/LocalChat";
 import { chatApi, fetchChatHistory, type RawChatMessage } from "./chat/api";
@@ -8,6 +9,7 @@ import { useChatSocket } from "./chat/useChatSocket";
 import { useChatCollapsed } from "./useChatCollapsed";
 
 import { store } from "../../redux/store";
+import { selectAccessibleProjectNames, selectOperatorAccess } from "../../redux/operatorSlice";
 import CallControlPanel from "../../components/callControlPanel";
 import { ModuleData, MonoProjectsModuleData } from "../../components/mainApp";
 import { formatOperator, useOperatorsDirectory } from "../../features/signals/useOperatorsDirectory";
@@ -129,6 +131,8 @@ export default function ItsmGuidScreen() {
         worker     = '',
         glagolParent      = ''
     } = store.getState().credentials;
+    const operatorAccess = useSelector(selectOperatorAccess);
+    const accessibleProjectNames = useSelector(selectAccessibleProjectNames);
     const hasSip = !!sipLogin?.trim();
     const isClient = !hasSip;
     // если sip есть — оператор, иначе клиент
@@ -212,18 +216,34 @@ export default function ItsmGuidScreen() {
 
         const roleForApi = "operator";
         const workerFromCreds = (store.getState().credentials?.worker ?? "") as string;
+        const presetProjectScope = operatorAccess.loaded ? accessibleProjectNames : [projectName];
 
         (async () => {
+            if (operatorAccess.loaded && presetProjectScope.length === 0) {
+                setPresets([]);
+                setSelectedPreset(null);
+                setPhonesData([]);
+                setOpenedPhones([]);
+                setOpenedGroup([]);
+                setGroupIDs([]);
+                setRelatedGuids([]);
+                return;
+            }
             // 1) пресеты (если ещё не загружены)
             let myPresets = presets;
-            if (myPresets.length === 0) {
+            if (myPresets.length === 0 && presetProjectScope.length > 0) {
                 const resp = await axios.post<Preset[]>("/api/v1/get_preset_list", {
-                    glagol_parent: "fs.at.glagol.ai",
+                    glagol_parent: glagolParent,
                     worker: workerFromCreds,
-                    projects: [projectName],
+                    projects: presetProjectScope,
                     role: roleForApi,
                 });
-                myPresets = resp.data.map(p => ({ value: p.id, label: p.preset_name, preset: p }));
+                const data: Preset[] = Array.isArray(resp.data) ? resp.data : [];
+                const filteredData =
+                    operatorAccess.presetIds === null
+                        ? data
+                        : data.filter((preset) => (operatorAccess.presetIds ?? []).includes(Number(preset.id)));
+                myPresets = filteredData.map(p => ({ value: p.id, label: p.preset_name, preset: p }));
                 setPresets(myPresets);
             }
 
@@ -236,7 +256,7 @@ export default function ItsmGuidScreen() {
 
             // 3) берём группы телефонов
             const resp2 = await axios.post<any>("/api/v1/grouped_contacts", {
-                glagol_parent: "fs.at.glagol.ai",
+                glagol_parent: glagolParent,
                 group_by: matchedPreset.preset.group_by,
                 filter_by: { project: ["IN", matchedPreset.preset.projects]},
                 group_table: matchedPreset.preset.group_table,
@@ -276,7 +296,7 @@ export default function ItsmGuidScreen() {
         })().catch(err => {
             console.error("Ошибка построения группы по первому телефону:", err);
         });
-    }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [accessibleProjectNames, data, glagolParent, operatorAccess.loaded, operatorAccess.presetIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // список GUID для табов (включая текущий из URL)
     const guidsFromOpened = useMemo(() => {

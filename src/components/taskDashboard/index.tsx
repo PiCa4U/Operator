@@ -2,7 +2,10 @@ import React, {useState, useEffect, useMemo, useRef, useCallback, useLayoutEffec
 import * as XLSX from 'xlsx';
 import SearchableSelect from '../callControlPanel/components/select/index';
 import styles from "./components/checkbox.module.css"
-import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
+import {
+    makeSelectAccessibleProjectPool,
+    selectOperatorAccess,
+} from "../../redux/operatorSlice";
 import { useSelector} from "react-redux";
 import GroupActionModal from "./components/index";
 import MultiSelect from "../callControlPanel/components/multiselect";
@@ -96,6 +99,15 @@ function toUiValue(v: unknown): string {
 function withNoneOption(opts: { id: string; name: string }[]) {
     if (opts.some(o => o.id === NONE_TOKEN)) return opts;
     return [{ id: NONE_TOKEN, name: NONE_LABEL }, ...opts];
+}
+
+function normalizeStringArray(raw: unknown): string[] {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw.map(String).map((v) => v.trim()).filter(Boolean);
+    return String(raw)
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean);
 }
 
 function extractActionSteps(act?: { [k: string]: any }): Step[] {
@@ -444,6 +456,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     const inflightPhonesRef = useRef<Set<number>>(new Set());
 
     const [presets, setPresets] = useState<OptionType[]>([]);
+    const [presetsLoaded, setPresetsLoaded] = useState(false);
     const [selectedActionOption, setSelectedActionOption] = useState<ActionOption | null>(null);
     const [tableData, setTableData] = useState<ApiRow[]>([]);
     const [loading, setLoading] = useState(false);
@@ -1076,6 +1089,7 @@ const PresetSelectorTable: React.FC<Props> = ({
     }, [sortConfig]);
 
     useEffect(() => {
+        if (!presetsLoaded) return;
         if (!selectedPreset || !selectedPreset.preset?.id) return;
 
         const freshPreset = presets.find(p => p.preset.id === selectedPreset.preset.id);
@@ -1093,7 +1107,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         } else {
             localStorage.setItem('tasksSelectedPreset', JSON.stringify(selectedPreset));
         }
-    }, [selectedPreset, presets]);
+    }, [presets, presetsLoaded, selectedPreset]);
 
     useEffect(() => {
         const presetId = selectedPreset?.preset?.id;
@@ -1229,8 +1243,55 @@ const PresetSelectorTable: React.FC<Props> = ({
 
     const defaultStatusToState = useRef<boolean>(false)
 
-    const projectPool = useSelector(useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]));
-    const projectNames = useMemo(() => projectPool.map(p => p.project_name), [projectPool]);
+    const operatorAccess = useSelector(selectOperatorAccess);
+    const projectPool = useSelector(useMemo(() => makeSelectAccessibleProjectPool(sipLogin), [sipLogin]));
+    const fullProjectNames = useMemo(
+        () => Array.from(new Set(projectPool.map((p) => String(p?.project_name ?? "").trim()).filter(Boolean))),
+        [projectPool]
+    );
+    const requestedProjectNames = useMemo(() => {
+        const source =
+            operatorAccess.allowedProjects.length
+                ? operatorAccess.allowedProjects
+                : operatorAccess.bootstrapProjects.length
+                    ? operatorAccess.bootstrapProjects
+                    : fullProjectNames;
+
+        return Array.from(new Set(source.map(String).map((v) => v.trim()).filter(Boolean)));
+    }, [fullProjectNames, operatorAccess.allowedProjects, operatorAccess.bootstrapProjects]);
+    const allowedProjectNames = useMemo(() => {
+        if (operatorAccess.presetIds !== null) {
+            return Array.from(
+                new Set(
+                    presets.flatMap((presetOption) =>
+                        normalizeStringArray(presetOption?.preset?.projects)
+                    )
+                )
+            );
+        }
+
+        return requestedProjectNames;
+    }, [operatorAccess.presetIds, presets, requestedProjectNames]);
+    const selectedPresetProjectScope = useMemo(
+        () => normalizeStringArray(selectedPreset?.preset?.projects),
+        [selectedPreset]
+    );
+    const presetRequestProjects = useMemo(() => {
+        const source = requestedProjectNames.length
+            ? requestedProjectNames
+            : selectedPresetProjectScope;
+
+        return Array.from(new Set(source.map(String).map((v) => v.trim()).filter(Boolean)));
+    }, [requestedProjectNames, selectedPresetProjectScope]);
+    const presetRequestProjectsSig = useMemo(
+        () => presetRequestProjects.join("\u001f"),
+        [presetRequestProjects]
+    );
+    const stablePresetRequestProjects = useMemo(
+        () => (presetRequestProjectsSig ? presetRequestProjectsSig.split("\u001f").filter(Boolean) : []),
+        [presetRequestProjectsSig]
+    );
+
 
     const buildExtraFilterByFromMap = (map: Record<string, ServerAppliedByCol>) => {
         const out: Record<string, any> = {};
@@ -1306,9 +1367,9 @@ const PresetSelectorTable: React.FC<Props> = ({
 
         socket.on('get_modules', handler);
 
-        if (projectNames.length) {
+        if (allowedProjectNames.length) {
             socket.emit('get_modules', {
-                projects: projectNames,
+                projects: allowedProjectNames,
                 session_key: sessionKey,
                 worker,
             });
@@ -1317,7 +1378,7 @@ const PresetSelectorTable: React.FC<Props> = ({
         return () => {
             socket.off('get_modules', handler);
         };
-    }, [projectNames, sessionKey, worker]);
+    }, [allowedProjectNames, sessionKey, worker]);
 
 
     useEffect(() => {
@@ -1357,17 +1418,36 @@ const PresetSelectorTable: React.FC<Props> = ({
 
 
     useEffect(() => {
-        if (!role || projectNames.length === 0) return;
+        if (!role || !operatorAccess.loaded) {
+            setPresetsLoaded(false);
+            return;
+        }
+
+        if (stablePresetRequestProjects.length === 0) {
+            setPresets([]);
+            setPresetsLoaded(true);
+            setSelectedPreset(null);
+            localStorage.removeItem('tasksSelectedPreset');
+            return;
+        }
+
+        let cancelled = false;
+        setPresetsLoaded(false);
 
         (async () => {
             const response = await axios.post<Preset[]>('/api/v1/get_preset_list', {
                 glagol_parent: glagolParent,
                 worker,
-                projects: projectNames,
+                projects: stablePresetRequestProjects,
                 role
             });
-            const data: Preset[] = response.data;
-            const presetOptions = data.map(p => ({value: p.id, label: p.preset_name, preset: p}));
+            if (cancelled) return;
+            const data: Preset[] = Array.isArray(response.data) ? response.data : [];
+            const filteredData =
+                operatorAccess.presetIds === null
+                    ? data
+                    : data.filter((preset) => (operatorAccess.presetIds ?? []).includes(Number(preset.id)));
+            const presetOptions = filteredData.map(p => ({value: p.id, label: p.preset_name, preset: p}));
             setPresets(presetOptions);
 
             const savedRaw = localStorage.getItem('tasksSelectedPreset');
@@ -1377,16 +1457,15 @@ const PresetSelectorTable: React.FC<Props> = ({
                     const matched = presetOptions.find(p => p.preset.id === saved.preset.id);
 
                     if (matched) {
-                        const oldStructure = JSON.stringify(saved.preset.structure);
-                        const newStructure = JSON.stringify(matched.preset.structure);
+                        const currentSelectedId = selectedPreset?.preset?.id ?? null;
+                        const currentStructure = JSON.stringify(selectedPreset?.preset?.structure ?? {});
+                        const nextStructure = JSON.stringify(matched.preset.structure ?? {});
 
-                        if (oldStructure !== newStructure) {
+                        if (currentSelectedId !== matched.preset.id || currentStructure !== nextStructure) {
                             console.warn("Структура пресета обновилась — обновляем selectedPreset");
                             setSelectedPreset(matched);
-                            localStorage.setItem('tasksSelectedPreset', JSON.stringify(matched));
-                        } else {
-                            setSelectedPreset(saved);
                         }
+                        localStorage.setItem('tasksSelectedPreset', JSON.stringify(matched));
                     } else {
                         setSelectedPreset(null);
                         localStorage.removeItem('tasksSelectedPreset');
@@ -1396,8 +1475,12 @@ const PresetSelectorTable: React.FC<Props> = ({
                     localStorage.removeItem('tasksSelectedPreset');
                 }
             }
+            setPresetsLoaded(true);
         })();
-    }, [glagolParent, worker, role, projectNames]);
+        return () => {
+            cancelled = true;
+        };
+    }, [glagolParent, operatorAccess.loaded, operatorAccess.presetIds, role, setSelectedPreset, stablePresetRequestProjects, worker]);
 
     const finishChain = () => {
         Swal.fire("Готово", "Действия выполнены", "success");
@@ -2815,6 +2898,23 @@ const PresetSelectorTable: React.FC<Props> = ({
     };
 
     const nextTask = useCallback(() => {
+        const flowIds = Array.from(
+            new Set(
+                (operatorAccess.flowIds ?? [])
+                    .map((id) => Number(id))
+                    .filter((id) => Number.isFinite(id))
+            )
+        );
+
+        if (!flowIds.length) {
+            Swal.fire({
+                icon: 'warning',
+                title: 'Нет доступных flow',
+                text: 'У оператора не настроены flow для получения следующей задачи.',
+            });
+            return;
+        }
+
         socket.emit('outbound_call_get', {
             assign: true,
             batch: 1,
@@ -2823,11 +2923,11 @@ const PresetSelectorTable: React.FC<Props> = ({
             interface: "glagol",
             sip_login: sipLogin,
             session_key: sessionKey,
-            projects_pool: projectNames,
+            flow_ids: flowIds,
             start_type: "auto",
             tz_offset: getTzOffsetMinutes(),
         });
-    }, [worker, sipLogin, sessionKey, projectNames]);
+    }, [operatorAccess.flowIds, worker, sipLogin, sessionKey]);
 
     return (
         <div>
@@ -3045,21 +3145,7 @@ const PresetSelectorTable: React.FC<Props> = ({
                                 border: '1px solid #2563eb',
                                 height: 'calc(1.5em + .75rem + 2px)'
                             }}
-                            onClick={() => {
-                                socket.emit('outbound_call_get', {
-                                    assign: true,
-                                    batch: 1,
-                                    // break: true,
-                                    worker,
-                                    interface: "glagol",
-                                    sip_login: sipLogin,
-                                    session_key: sessionKey,
-                                    projects_pool: projectNames,
-                                    start_type: "auto",
-                                    tz_offset: getTzOffsetMinutes(),
-                                });
-
-                            }}
+                            onClick={nextTask}
                             title="Получить следующую задачу"
                         >
                             <span

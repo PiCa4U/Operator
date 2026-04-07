@@ -1,8 +1,18 @@
 import React, {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from "react";
 import * as XLSX from "xlsx";
 import { useOperators } from "./hooks";
-import {Agent, AppliedFieldFilter, CreateUserFieldPayload, Role, UserFieldDef} from "./types";
+import {
+    Agent,
+    AppliedFieldFilter,
+    CreateUserFieldPayload,
+    Role,
+    UserFieldDef,
+    QueueInfo,
+    FlowInfo,
+    PresetSummary,
+} from "./types";
 import { OperatorModal } from "./components/operatorModal";
+import { getFlows, getPresets, getQueues } from "./api";
 import axios from "axios";
 import OperatorsSelect from "./components/select";
 import Swal from "sweetalert2";
@@ -70,6 +80,73 @@ const splitSqlValues = (raw: string): string[] => {
 };
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+
+const readAgentQueues = (agent?: Pick<Agent, "queues" | "projects"> | null): string[] => {
+    if (agent && Array.isArray(agent.queues)) {
+        return agent.queues.map((queue) => String(queue || "").trim()).filter(Boolean);
+    }
+    if (agent && Array.isArray(agent.projects)) {
+        return agent.projects.map((queue) => String(queue || "").trim()).filter(Boolean);
+    }
+    return [];
+};
+
+const formatQueueLabel = (queue: QueueInfo): string => {
+    const code = String(queue.queue || "").trim();
+    const label = String(queue.label || "").trim();
+    if (!label || label === code) return code;
+    return `${label} (${code})`;
+};
+
+const formatFlowLabel = (
+    flow: FlowInfo,
+    projectLabels: Record<string, string> = {}
+): string => {
+    const name = String(flow.name || "").trim();
+    const projectCode = String(flow.project || "").trim();
+    const project = projectCode ? String(projectLabels[projectCode] || projectCode).trim() : "";
+    const priority =
+        typeof flow.priority === "number" && Number.isFinite(flow.priority)
+            ? ` · ${flow.priority}`
+            : "";
+    return project ? `${project} / ${name}${priority}` : `${name}${priority}`;
+};
+
+const formatPresetLabel = (preset: PresetSummary): string => {
+    return String(preset.preset_name || "").trim();
+};
+
+const extractCreatedLogin = (result: unknown): string | null => {
+    if (!result) return null;
+
+    if (typeof result === "object") {
+        const directLogin = (result as any)?.login ?? (result as any)?.glagol_service;
+        if (directLogin) return String(directLogin).trim();
+
+        const nestedLogin =
+            (result as any)?.result?.login ??
+            (result as any)?.result?.glagol_service ??
+            (result as any)?.user?.login ??
+            (result as any)?.user?.glagol_service;
+
+        if (nestedLogin) return String(nestedLogin).trim();
+    }
+
+    return null;
+};
+
+const getMutationErrorText = (error: any, fallback: string): string => {
+    const message = error?.response?.data?.message || error?.message || fallback;
+    const missingIds = error?.response?.data?.missing_ids;
+    const table = error?.response?.data?.table;
+
+    if (Array.isArray(missingIds) && missingIds.length) {
+        const suffix = table ? ` Таблица: ${table}.` : "";
+        return `${message}${suffix} Ids: ${missingIds.join(", ")}`;
+    }
+
+    return String(message);
+};
 
 function usePopoverPosition(
     open: boolean,
@@ -249,6 +326,7 @@ export const OperatorsTab: React.FC = () => {
         mutateRemoveTier,
         mutateCreate,
     } = useOperators();
+    const allAgents = query.data ?? [];
 
     const { sessionKey } = store.getState().operator;
     const {
@@ -499,6 +577,10 @@ export const OperatorsTab: React.FC = () => {
         [glagol_parent, fetchUserFieldDefs]
     );
     const [projMap, setProjMap] = useState<Record<string, string>>({});
+    const [queueMap, setQueueMap] = useState<Record<string, string>>({});
+    const [queueOptions, setQueueOptions] = useState<Array<{ value: string; label: string }>>([]);
+    const [flowOptions, setFlowOptions] = useState<Array<{ value: string; label: string }>>([]);
+    const [presetOptions, setPresetOptions] = useState<Array<{ value: string; label: string }>>([]);
     const [logUserId, setLogUserId] = useState<string | null>(null);
     const [activityUserId, setActivityUserId] = useState<string | null>(null);
 
@@ -646,21 +728,62 @@ export const OperatorsTab: React.FC = () => {
 
     useEffect(() => {
         let mounted = true;
-        axios
-            .get("/api/v1/projects", { params: { glagol_parent } })
-            .then((resp) => {
-                const arr = Array.isArray(resp.data?.projects) ? resp.data.projects : [];
-                const map: Record<string, string> = {};
-                for (const p of arr) {
-                    const key = p?.project_name;
+        (async () => {
+            try {
+                const [projectsResp, queues, flows] = await Promise.all([
+                    axios.get("/api/v1/projects", { params: { glagol_parent } }),
+                    getQueues(),
+                    getFlows(),
+                ]);
+
+                const arr = Array.isArray(projectsResp.data?.projects) ? projectsResp.data.projects : [];
+                const nextProjMap: Record<string, string> = {};
+                const projectCodes: string[] = [];
+                for (const project of arr) {
+                    const key = String(project?.project_name || "").trim();
                     if (!key) continue;
-                    map[key] = p?.glagol_name || key;
+                    nextProjMap[key] = project?.glagol_name || key;
+                    projectCodes.push(key);
                 }
-                if (mounted) setProjMap(map);
-            })
-            .catch((err) => {
+
+                const nextQueueMap: Record<string, string> = {};
+                const nextQueueOptions = queues
+                    .map((queue) => {
+                        const label = formatQueueLabel(queue);
+                        nextQueueMap[queue.queue] = label;
+                        return { value: queue.queue, label };
+                    })
+                    .sort((a, b) => a.label.localeCompare(b.label, "ru"));
+
+                const nextFlowOptions = flows
+                    .filter((flow) => flow.active !== false)
+                    .map((flow) => ({
+                        value: String(flow.id),
+                        label: formatFlowLabel(flow, nextProjMap),
+                    }))
+                    .sort((a, b) => a.label.localeCompare(b.label, "ru"));
+
+                const presets = projectCodes.length ? await getPresets(projectCodes) : [];
+                const nextPresetOptions = presets
+                    .filter((preset) => preset.active !== false)
+                    .map((preset) => ({
+                        value: String(preset.id),
+                        label: formatPresetLabel(preset),
+                    }))
+                    .sort((a, b) => a.label.localeCompare(b.label, "ru"));
+
+                if (!mounted) return;
+
+                setProjMap(nextProjMap);
+                setQueueMap(nextQueueMap);
+                setQueueOptions(nextQueueOptions);
+                setFlowOptions(nextFlowOptions);
+                setPresetOptions(nextPresetOptions);
+            } catch (err) {
+                console.error("Не удалось загрузить справочники операторов", err);
                 console.error("Не удалось загрузить список проектов", err);
-            });
+            }
+        })();
         return () => {
             mounted = false;
         };
@@ -717,6 +840,109 @@ export const OperatorsTab: React.FC = () => {
         setModalMode("edit");
         setModalOpen(true);
     };
+
+    const getQueueDisplay = useCallback(
+        (queue: string) => queueMap[String(queue || "").trim()] ?? String(queue || "").trim(),
+        [queueMap]
+    );
+
+    const syncAgentQueues = useCallback(
+        async (login: string, prevQueues: string[], nextQueues: string[]) => {
+            const prevSet = new Set(prevQueues.map((queue) => String(queue || "").trim()).filter(Boolean));
+            const nextSet = new Set(nextQueues.map((queue) => String(queue || "").trim()).filter(Boolean));
+
+            const toRemove = Array.from(prevSet).filter((queue) => !nextSet.has(queue));
+            const toAdd = Array.from(nextSet).filter((queue) => !prevSet.has(queue));
+
+            for (const queue of toRemove) {
+                await mutateRemoveTier.mutateAsync({ login, project_name: queue });
+            }
+
+            for (const queue of toAdd) {
+                await mutateAddTier.mutateAsync({ login, project_name: queue });
+            }
+        },
+        [mutateAddTier, mutateRemoveTier]
+    );
+
+    const handleMutationError = useCallback(async (title: string, error: any) => {
+        await Swal.fire({
+            icon: "error",
+            title,
+            text: getMutationErrorText(error, title),
+        });
+    }, []);
+
+    const handleCreateAgent = useCallback(
+        async (payload: any, queues: string[]) => {
+            const prevLogins = new Set((allAgents || []).map((agent) => agent.login));
+
+            try {
+                const result = await mutateCreate.mutateAsync(payload);
+                let createdLogin = extractCreatedLogin(result);
+
+                const refreshed = await query.refetch();
+                const refreshedAgents = refreshed.data ?? allAgents;
+
+                if (!createdLogin) {
+                    const newcomers = refreshedAgents.filter((agent) => !prevLogins.has(agent.login));
+                    if (newcomers.length === 1) {
+                        createdLogin = newcomers[0].login;
+                    } else {
+                        const matchedByName = newcomers.filter(
+                            (agent) => String(agent.name || "").trim() === String(payload.name || "").trim()
+                        );
+                        if (matchedByName.length === 1) {
+                            createdLogin = matchedByName[0].login;
+                        }
+                    }
+                }
+
+                if (queues.length) {
+                    if (createdLogin) {
+                        try {
+                            await syncAgentQueues(createdLogin, [], queues);
+                        } catch (queueError) {
+                            await Swal.fire({
+                                icon: "warning",
+                                title: "Оператор создан, но очереди не применились",
+                                text: getMutationErrorText(
+                                    queueError,
+                                    "Не удалось привязать очереди автоматически."
+                                ),
+                            });
+                        }
+                    } else {
+                        await Swal.fire({
+                            icon: "warning",
+                            title: "Оператор создан",
+                            text: "Не удалось автоматически определить логин для привязки очередей. Их можно назначить через редактирование оператора.",
+                        });
+                    }
+                }
+
+                setModalOpen(false);
+            } catch (error) {
+                await handleMutationError("Не удалось создать оператора", error);
+            }
+        },
+        [allAgents, handleMutationError, mutateCreate, query, syncAgentQueues]
+    );
+
+    const handleUpdateAgent = useCallback(
+        async (payload: any, queues: string[]) => {
+            const prevQueues = readAgentQueues(editing);
+
+            try {
+                await mutateUpdate.mutateAsync(payload);
+                await syncAgentQueues(payload.login, prevQueues, queues);
+                setModalOpen(false);
+            } catch (error) {
+                await handleMutationError("Не удалось сохранить оператора", error);
+            }
+        },
+        [editing, handleMutationError, mutateUpdate, syncAgentQueues]
+    );
 
     const roleName = (role: string) => {
         if (role === "admin") return "Админ";
@@ -1316,7 +1542,7 @@ export const OperatorsTab: React.FC = () => {
                             <th style={stickyTh}>Роль</th>
                             <th style={stickyTh}>Отдел</th>
                             <th style={stickyTh}>Постобработка</th>
-                            <th style={stickyTh}>Проекты</th>
+                            <th style={stickyTh}>Очереди</th>
                             <th style={stickyTh}>Статус</th>
                             <th style={stickyTh}>Состояние</th>
                             <th style={stickyTh}>Вызов</th>
@@ -1378,11 +1604,14 @@ export const OperatorsTab: React.FC = () => {
                                     </td>
                                     <td>
                                         {(() => {
-                                            const projects = Array.isArray(a.projects) ? a.projects.filter(Boolean) : [];
-                                            const display = projects.map((code) => projMap[code] ?? code);
+                                            const queues = readAgentQueues(a);
+                                            const display = queues.map((code) => getQueueDisplay(code));
                                             const maxVisible = 3;
                                             const visible = display.slice(0, maxVisible);
                                             const hidden = display.slice(maxVisible);
+                                            if (!display.length) {
+                                                return <span className="text-muted">Нет очередей</span>;
+                                            }
                                             return (
                                                 <div
                                                     className="position-relative"
@@ -1408,7 +1637,7 @@ export const OperatorsTab: React.FC = () => {
                                                             style={{ cursor: "pointer", whiteSpace: "nowrap" }}
                                                             title={hidden.join(", ")}
                                                         >
-                                                            +{hidden.length} {hidden.length === 1 ? "проект" : hidden.length < 5 ? "проекта" : "проектов"}
+                                                            +{hidden.length} {hidden.length === 1 ? "очередь" : hidden.length < 5 ? "очереди" : "очередей"}
                                                         </span>
                                                     )}
                                                 </div>
@@ -1898,19 +2127,11 @@ export const OperatorsTab: React.FC = () => {
                 mode={modalMode}
                 initial={editing}
                 onClose={() => setModalOpen(false)}
-                onCreate={(payload) => {
-                    mutateCreate.mutate(payload, { onSuccess: () => setModalOpen(false) });
-                }}
-                onUpdate={(payload) => {
-                    mutateUpdate.mutate(payload, { onSuccess: () => setModalOpen(false) });
-                }}
-                projectMap={projMap}
-                onAddProject={(login, project_name) => {
-                    mutateAddTier.mutate({ login, project_name });
-                }}
-                onRemoveProject={(login, project_name) => {
-                    mutateRemoveTier.mutate({ login, project_name });
-                }}
+                onCreate={handleCreateAgent}
+                onUpdate={handleUpdateAgent}
+                queueOptions={queueOptions}
+                flowOptions={flowOptions}
+                presetOptions={presetOptions}
                 userFieldDefs={userFieldDefs}
                 userFieldDefsLoading={userFieldDefsLoading}
                 onCreateUserField={handleCreateUserField}

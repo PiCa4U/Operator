@@ -20,7 +20,7 @@ import OperatorsSelect from "../../../managerPanel/components/operatorManagment/
 
 /** ===== types & helpers ===== */
 
-type RawUser = { id?: number; login: string; name?: string; is_deleted?: boolean };
+type RawUser = { id?: number; login: string; name?: string; is_deleted?: boolean; queues?: string[] | null };
 
 type UsersObjectResponse = {
     status?: string;
@@ -32,6 +32,7 @@ type UsersObjectResponse = {
             is_deleted?: boolean | null;
             user_fields?: Record<string, any> | null;
             post_obrabotka?: boolean | null;
+            queues?: string[] | null;
         }
     >;
 };
@@ -123,6 +124,7 @@ export type ApiUserRow = {
     user_fields?: Record<string, any>;
     custom_fields?: Record<string, any>;
     fields?: Record<string, any>;
+    queues?: string[];
 };
 
 function normalizeUsersApi(data: UsersApiResponse): ApiUserRow[] {
@@ -134,6 +136,7 @@ function normalizeUsersApi(data: UsersApiResponse): ApiUserRow[] {
             is_deleted: (u as any)?.is_deleted ?? false,
             user_fields: (u as any)?.user_fields ?? {},
             post_obrabotka: (u as any)?.post_obrabotka ?? undefined,
+            queues: normalizeToStringArray((u as any)?.queues),
         }));
     }
 
@@ -145,6 +148,7 @@ function normalizeUsersApi(data: UsersApiResponse): ApiUserRow[] {
             name: u.name || u.login,
             is_deleted: u.is_deleted,
             user_fields: {},
+            queues: normalizeToStringArray((u as any)?.queues),
         }));
 }
 
@@ -739,6 +743,7 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
                 post_obrabotka: (mu as any)?.post_obrabotka ?? prev?.post_obrabotka,
                 is_deleted: prev?.is_deleted,
                 fields: prev?.fields,
+                queues: prev?.queues,
             };
 
             if (prev) {
@@ -806,6 +811,13 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
         const m = new Map<string, string[]>();
         for (const u of usersList) {
             const login = getSipKey(u);
+            const directQueues = normalizeToStringArray((u as any)?.queues);
+
+            if (directQueues.length) {
+                m.set(login, directQueues);
+                continue;
+            }
+
             const keys = (monitorCallcenter as any)?.[String(login)] as any[] | undefined;
 
             const names =
@@ -833,7 +845,7 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
         });
 
         const out = Array.from(set).sort((a, b) => a.localeCompare(b, "ru"));
-        if (hasEmpty) out.unshift("Без проекта");
+        if (hasEmpty) out.unshift("Без очереди");
         return out;
     }, [projectsByLogin]);
 
@@ -962,7 +974,7 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
         const visible = names.slice(0, maxVisible);
         const hidden = names.slice(maxVisible);
 
-        if (!names.length) return <span className="text-muted">Проекты не назначены</span>;
+        if (!names.length) return <span className="text-muted">Очереди не назначены</span>;
 
         return (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -1044,7 +1056,7 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
     );
 
     // ===== dynamic grouping-filter (options/value)
-    const groupFilterLabel = groupMode === "projects" ? "Проекты" : "Отделы";
+    const groupFilterLabel = groupMode === "projects" ? "Очереди" : "Отделы";
     const groupFilterOptions = groupMode === "projects" ? projectOptions : deptOptions;
     const groupFilterValue = groupMode === "projects" ? projectFilter : deptFilter;
 
@@ -1095,7 +1107,7 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
             filtered = filtered.filter((u) => {
                 const login = getSipKey(u);
                 const projs = getProjectNamesForLogin(login);
-                if (!projs.length) return set.has("Без проекта");
+                if (!projs.length) return set.has("Без очереди");
                 return projs.some((p) => set.has(p));
             });
         }
@@ -1110,7 +1122,7 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
                     ? [getDepartmentName(u)]
                     : (() => {
                         const projects = getProjectNamesForLogin(login);
-                        return projects.length ? projects : ["Без проекта"];
+                        return projects.length ? projects : ["Без очереди"];
                     })();
 
             for (const k of keys) {
@@ -1232,7 +1244,7 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
                                     placeholder={
                                         activeTab === "users"
                                             ? "Поиск сотрудника"
-                                            : "Поиск номера, названия или проекта"
+                                            : "Поиск номера, названия или очереди"
                                     }
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
@@ -1279,7 +1291,7 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
                                             style={{ width: "220px" }}
                                         >
                                             <option value="departments">По отделам</option>
-                                            <option value="projects">По проектам</option>
+                                            <option value="projects">По очередям</option>
                                         </select>
                                     </div>
 
@@ -1290,7 +1302,7 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
                                             value={groupFilterValue}
                                             options={groupFilterOptions}
                                             onChange={(vals: any) => setGroupFilterValue(vals)}
-                                            placeholder={groupMode === "projects" ? "Все проекты" : "Все отделы"}
+                                            placeholder={groupMode === "projects" ? "Все очереди" : "Все отделы"}
                                             withCheckboxes
                                             classNamePrefix={groupMode === "projects" ? "proj" : "dept"}
                                         />
@@ -1574,7 +1586,7 @@ const ColleaguesPanel: React.FC<Props> = React.memo(({ show, glagolParent, meLog
                                                                 Статус
                                                             </th>
                                                             <th style={{ width: 260 }}>Оператор</th>
-                                                            <th>Проекты</th>
+                                                            <th>Очереди</th>
                                                             <th style={{ width: 90, textAlign: "right" }}>Вызов</th>
                                                         </tr>
                                                         </thead>

@@ -7,7 +7,9 @@ import ScriptPanel from '../scriptPanel';
 import { socket } from "../../socket";
 import { getCookies, makeId } from "../../utils";
 import {
-    makeSelectFullProjectPool,
+    makeSelectAccessibleProjectPool,
+    selectAccessibleProjectNames,
+    selectOperatorAccess,
     setActiveCalls,
     setFsStatus,
     setInterCalls,
@@ -41,6 +43,7 @@ function toIsoFromServer(dt: string): string {
 const MemoCallControlPanel = React.memo(CallControlPanel);
 
 const ITSM_SPLIT_KEY = "itsm:chat_call_split:v1";
+type IncomingProgressStage = "accepted" | "connecting" | "loading_card";
 
 function is4Digits(val: any) {
     return /^\d{4}$/.test(String(val ?? "").trim());
@@ -550,6 +553,41 @@ function buildGroupByFilter(
     }
     return filter;
 }
+
+function digitsOnlyPhone(val: any): string {
+    return String(val ?? "").replace(/\D+/g, "");
+}
+
+function buildPhoneSearchValues(val: any): string[] {
+    const raw = String(val ?? "").trim();
+    const digits = digitsOnlyPhone(raw);
+    return Array.from(new Set([raw, digits].filter(Boolean)));
+}
+
+function rowMatchesPhone(row: any, phoneValues: string[]): boolean {
+    const known = new Set(
+        phoneValues.flatMap((value) => {
+            const raw = String(value ?? "").trim();
+            const digits = digitsOnlyPhone(raw);
+            return [raw, digits].filter(Boolean);
+        })
+    );
+
+    return [
+        row?.phone,
+        row?.contact_info?.phone,
+        row?.phone_number,
+        row?.msisdn,
+        row?.cid_num,
+        row?.b_line_num,
+        row?.a_line_num,
+    ].some((value) => {
+        const raw = String(value ?? "").trim();
+        if (!raw) return false;
+        const digits = digitsOnlyPhone(raw);
+        return known.has(raw) || (!!digits && known.has(digits));
+    });
+}
 function fsStatusSig(msg: any): string {
     return [
         msg?.status ?? "",
@@ -626,6 +664,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         hangUp,
     } = sip;
 
+    const sipStatus = sip?.status ?? null;
     const consultSession = sip?.consultSession ?? null;
     const consultStatus = sip?.consultStatus ?? null;
 
@@ -634,6 +673,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const [selectedCall, setSelectedCall] = useState<CallData | null>(null);
     const [showScriptPanel, setShowScriptPanel] = useState<boolean>(false);
     const [activeCall, setActiveCall] = useState<boolean>(false);
+    const [autoAnswerEnabled, setAutoAnswerEnabled] = useState(() => {
+        return localStorage.getItem("autoAnswerEnabled") === "true";
+    });
+    const [incomingProgressStage, setIncomingProgressStage] = useState<IncomingProgressStage | null>(null);
+    const [incomingProgressFrom, setIncomingProgressFrom] = useState<string>("");
     const [activeProjectName, setActiveProjectName] = useState<string>("")
     const [selectedProject, setSelectedProject] = useState<Project | null>(null);
     const [postActive, setPostActive] = useState<boolean>(false);
@@ -652,6 +696,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const [postCallData, setPostCallData] = useState<ActiveCall | null>(null);
     const [expressCall, setExpressCall] = useState<boolean>(false)
     const [selectedRowsKeys, setSelectedRowsKeys] = React.useState<string[]>([]);
+    const [queueProjectMap, setQueueProjectMap] = useState<Record<string, string>>({});
 
     const [phoneID, setPhoneID] = useState<number|null>(null)
 
@@ -672,6 +717,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const lastFsStatusSigRef = useRef<string | null>(null);
     const lastFsCallsSigRef  = useRef<string | null>(null);
     const lastOtherUsersSigRef = useRef<string | null>(null);
+    const inboundSearchSeqRef = useRef(0);
 
     const splitWrapRef = useRef<HTMLDivElement | null>(null);
     const splitDraggingRef = useRef(false);
@@ -692,6 +738,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     });
     const expressProjectRef = useRef<string>("");
     const lockSourceRowRef = useRef<any>(null);
+    const autoAnsweredIncomingRef = useRef<any>(null);
 
     const lastOutStartTokenRef = useRef<string>("");
 
@@ -920,6 +967,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const [unreadByGuid, setUnreadByGuid] = useState<Record<string, number>>({});
     const [serverFilesByGuid, setServerFilesByGuid] = useState<Record<string, string[]>>({});
     const [projectsDict, setProjectsDict] = useState<Record<string, string>>({});
+    const [projectInboundSearchMap, setProjectInboundSearchMap] = useState<Record<string, boolean>>({});
+    const [inboundSearchPending, setInboundSearchPending] = useState(false);
     const [readMap, setReadMap] = useState<ReadMap>({});
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -967,17 +1016,21 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 if (!alive) return;
                 const arr = Array.isArray(data?.projects) ? data.projects : [];
                 const dict: Record<string, string> = {};
+                const nextInboundSearchMap: Record<string, boolean> = {};
                 for (const p of arr) {
                     const key = String(p?.project_name || "").trim();
                     if (!key) continue;
                     const val = String(p?.glagol_name || p?.project_name || key);
                     dict[key] = val;
+                    nextInboundSearchMap[key] = Boolean(p?.in_search ?? p?.search);
                 }
                 setProjectsDict(dict);
+                setProjectInboundSearchMap(nextInboundSearchMap);
             })
             .catch((e) => {
                 console.warn("Не удалось загрузить список проектов", e);
                 setProjectsDict({});
+                setProjectInboundSearchMap({});
             });
 
         return () => { alive = false; };
@@ -1484,12 +1537,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         window.location.href = "https://my.glagol.ai/login_work/";
 };
 
-    useEffect(() => {
-        socket.on('logout', handleLogout);
-        return () => {
-            socket.off('logout', handleLogout);
-        };
-    }, []);
+    // useEffect(() => {
+    //     socket.on('logout', handleLogout);
+    //     return () => {
+    //         socket.off('logout', handleLogout);
+    //     };
+    // }, []);
 
     useEffect(() => {
         const now = new Date().toISOString();
@@ -1502,6 +1555,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             })
         );
     }, [startDate, endDate]);
+
     useEffect(() => {
         localStorage.setItem('showTasksDashboard', JSON.stringify(showTasksDashboard));
     }, [showTasksDashboard]);
@@ -1612,13 +1666,16 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         }
     },[showTasksDashboard])
 
-    const selectFullProjectPool3 = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
-    const projectPool2 = useSelector(selectFullProjectPool3) || [];
-    const projectPoolForCall = useMemo(() => {
-        return projectPool2
-            // .filter(project => (project.out_active && project.active))
-            .map(project => project.project_name);
-    }, [projectPool2]);
+    const operatorAccess = useSelector(selectOperatorAccess);
+    const accessibleProjectNames = useSelector(selectAccessibleProjectNames);
+    const selectAccessibleProjectPool = useMemo(() => makeSelectAccessibleProjectPool(sipLogin), [sipLogin]);
+    const accessibleProjectPool = useSelector(selectAccessibleProjectPool) || [];
+    const accessibleProjectPoolNames = useMemo(() => {
+        return accessibleProjectPool.map(project => project.project_name);
+    }, [accessibleProjectPool]);
+    const presetProjectScope = useMemo(() => {
+        return operatorAccess.loaded ? accessibleProjectNames : accessibleProjectPoolNames;
+    }, [accessibleProjectNames, accessibleProjectPoolNames, operatorAccess.loaded]);
 
     // useEffect(() => {
     //     socket.emit('get_modules', {
@@ -1647,8 +1704,33 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             Array.from(new Set(openedPhones.map(p => p.project))),
         [openedPhones]
     );
-    const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
-    const projectPool = useSelector(selectFullProjectPool) || [];
+    const projectPool = accessibleProjectPool;
+
+    useEffect(() => {
+        if (!role || !presetProjectScope.length || presets.length > 0) return;
+
+        let alive = true;
+        axios.post<Preset[]>("/api/v1/get_preset_list", {
+            glagol_parent: glagolParent,
+            worker,
+            projects: presetProjectScope,
+            role,
+        }).then((resp) => {
+            if (!alive) return;
+            const data: Preset[] = Array.isArray(resp.data) ? resp.data : [];
+            const filteredData =
+                operatorAccess.presetIds === null
+                    ? data
+                    : data.filter((preset) => (operatorAccess.presetIds ?? []).includes(Number(preset.id)));
+            setPresets(filteredData.map((p) => ({ value: p.id, label: p.preset_name, preset: p })));
+        }).catch((err) => {
+            console.error("Ошибка при предзагрузке пресетов в mainApp:", err);
+        });
+
+        return () => {
+            alive = false;
+        };
+    }, [glagolParent, operatorAccess.presetIds, presetProjectScope, presets.length, role, worker]);
 
     const projectColors = useMemo(() => {
         const palette = [
@@ -1719,6 +1801,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
     useEffect(() => {
         if (!activeCall && !postActive) {
+            inboundSearchSeqRef.current += 1;
             setActiveProjectName('');
             setSelectedCall(null);
             setOutboundCall(false);
@@ -1860,28 +1943,238 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     },[expressCall])
 
     useEffect(() => {
-        const handleFsDiaDes = (msg: any) => {
-            expressProjectRef.current = String(msg?.project_name ?? "").trim();
-            setActiveProjectName(msg.project_name);
+        if (!glagolParent) {
+            setQueueProjectMap({});
+            return;
+        }
 
-            if (activeCalls[0]?.cid_num) {
+        let cancelled = false;
+
+        axios
+            .get("/api/v1/queues", {
+                params: {
+                    glagol_parent: glagolParent,
+                },
+            })
+            .then((resp) => {
+                if (cancelled) return;
+
+                const items = Array.isArray(resp.data) ? resp.data : resp.data?.result ?? [];
+                const nextMap: Record<string, string> = {};
+
+                items.forEach((item: any) => {
+                    const queueName = String(item?.queue || "").trim();
+                    const projectName = String(item?.project || "").trim();
+
+                    if (!queueName || !projectName) return;
+                    nextMap[queueName] = projectName;
+                });
+
+                setQueueProjectMap(nextMap);
+            })
+            .catch((error) => {
+                if (!cancelled) {
+                    console.error("Не удалось загрузить соответствие очередей проектам", error);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [glagolParent]);
+
+    useEffect(() => {
+        const isInboundSearchEnabled = (projectName: string) => {
+            const key = String(projectName ?? "").trim();
+            if (!key) return false;
+
+            if (Object.prototype.hasOwnProperty.call(projectInboundSearchMap, key)) {
+                return Boolean(projectInboundSearchMap[key]);
+            }
+
+            const fallbackProject = accessibleProjectPool.find(
+                (project: any) => String(project?.project_name ?? "").trim() === key
+            );
+
+            return Boolean(fallbackProject?.in_search ?? fallbackProject?.search);
+        };
+
+        const mapPresetOptions = (items: Preset[]) => {
+            const filteredData =
+                operatorAccess.presetIds === null
+                    ? items
+                    : items.filter((preset) => (operatorAccess.presetIds ?? []).includes(Number(preset.id)));
+
+            return filteredData.map((preset) => ({
+                value: preset.id,
+                label: preset.preset_name,
+                preset,
+            }));
+        };
+
+        const tryOpenInboundCardByPhone = async (projectName: string, phone: string) => {
+            const cleanProjectName = String(projectName ?? "").trim();
+            const phoneValues = buildPhoneSearchValues(phone);
+
+            if (!cleanProjectName || !phoneValues.length) {
+                setInboundSearchPending(false);
+                return;
+            }
+            if (!isInboundSearchEnabled(cleanProjectName)) {
+                setInboundSearchPending(false);
+                return;
+            }
+
+            const seq = ++inboundSearchSeqRef.current;
+
+            try {
+                let matchedPreset = resolvePresetForProject(cleanProjectName, presets, selectedPreset);
+
+                if (!matchedPreset) {
+                    const requestProjects = Array.from(
+                        new Set([...presetProjectScope, cleanProjectName].filter(Boolean))
+                    );
+
+                    const resp = await axios.post<Preset[]>("/api/v1/get_preset_list", {
+                        glagol_parent: glagolParent,
+                        worker,
+                        projects: requestProjects.length ? requestProjects : [cleanProjectName],
+                        role,
+                    });
+
+                    if (seq !== inboundSearchSeqRef.current) return;
+
+                    const nextOptions = mapPresetOptions(Array.isArray(resp.data) ? resp.data : []);
+
+                    if (nextOptions.length > 0) {
+                        setPresets((prev) => {
+                            const merged = new Map<number, OptionType>();
+                            [...prev, ...nextOptions].forEach((option) => {
+                                merged.set(Number(option.value), option);
+                            });
+                            return Array.from(merged.values());
+                        });
+                    }
+
+                    matchedPreset = resolvePresetForProject(cleanProjectName, nextOptions, selectedPreset);
+                }
+
+                if (seq !== inboundSearchSeqRef.current) return;
+                if (!matchedPreset) {
+                    setInboundSearchPending(false);
+                    return;
+                }
+
+                const response = await axios.post<any>("/api/v1/grouped_contacts", {
+                    glagol_parent: glagolParent,
+                    group_by: matchedPreset.preset.group_by,
+                    filter_by: {
+                        project: ["IN", matchedPreset.preset.projects],
+                        phone: ["IN", phoneValues],
+                    },
+                    group_table: matchedPreset.preset.group_table,
+                    role,
+                });
+
+                if (seq !== inboundSearchSeqRef.current) return;
+
+                const allGroups = extractPhoneGroups(response.data);
+                const flatPhones = allGroups.flat();
+
+                if (!flatPhones.length) {
+                    setInboundSearchPending(false);
+                    return;
+                }
+
+                const matchedGroups = allGroups.filter((group) =>
+                    group.some((item) => rowMatchesPhone(item, phoneValues))
+                );
+                const groupsToOpen = matchedGroups.length > 0 ? matchedGroups : allGroups;
+                const opened = groupsToOpen.flat();
+
+                if (!opened.length) {
+                    setInboundSearchPending(false);
+                    return;
+                }
+
+                startModulesRanRef.current = false;
+                setSelectedPreset(matchedPreset);
+                setShowTasksDashboard(true);
+                setPhonesData(flatPhones);
+
+                const normalizedAllGroupIDs = allGroups.map((group) =>
+                    group
+                        .map((item) => Number(item?.id))
+                        .filter((id) => Number.isFinite(id))
+                );
+                const matchedGroupIDs = Array.from(
+                    new Set(
+                        opened
+                            .map((item) => Number(item?.id))
+                            .filter((id) => Number.isFinite(id))
+                    )
+                );
+
+                setGroupIDs(normalizedAllGroupIDs);
+                setOpenedGroup(matchedGroupIDs);
+                setOpenedPhones(opened);
+
+                const anchor =
+                    opened.find((item) =>
+                        String(item?.project ?? "").trim() === cleanProjectName &&
+                        rowMatchesPhone(item, phoneValues)
+                    ) ||
+                    opened.find((item) => rowMatchesPhone(item, phoneValues)) ||
+                    opened[0];
+
+                const nextPhoneId = Number(anchor?.id);
+                if (Number.isFinite(nextPhoneId)) {
+                    setPhoneID(nextPhoneId);
+                }
+                setInboundSearchPending(false);
+            } catch (err) {
+                setInboundSearchPending(false);
+                console.error("РћС€РёР±РєР° РїСЂРё inbound search РїРѕ РЅРѕРјРµСЂСѓ:", err);
+            }
+        };
+
+        const handleFsDiaDes = (msg: any) => {
+            const queueName = String(msg?.project_name ?? msg?.queue ?? "").trim();
+            const resolvedProjectName = queueProjectMap[queueName] || queueName;
+            const incomingPhone = String(activeCalls[0]?.cid_num ?? "").trim();
+            const shouldDelayStartModules = Boolean(
+                resolvedProjectName &&
+                incomingPhone &&
+                isInboundSearchEnabled(resolvedProjectName)
+            );
+
+            expressProjectRef.current = resolvedProjectName;
+            setActiveProjectName(resolvedProjectName);
+            setInboundSearchPending(shouldDelayStartModules);
+
+            if (incomingPhone) {
                 socket.emit('check_express', {
-                    phone: activeCalls[0].cid_num,
-                    project_name: msg.project_name,
+                    phone: incomingPhone,
+                    project_name: resolvedProjectName,
                     session_key: sessionKey,
                     worker,
                 });
             }
 
             socket.emit('get_fs_reasons', {
-                project_name: msg.project_name,
+                project_name: resolvedProjectName,
                 session_key: sessionKey,
                 worker,
             });
         };
 
         const handleCheckExpress = (check: any) => {
-            if (check.express && check.assigned_key) {
+            if (check?.express) {
+                if (!check?.assigned_key) {
+                    setInboundSearchPending(false);
+                    return;
+                }
+                setInboundSearchPending(false);
                 normalizeUrl()
                 setOpenedPhones?.([]);
                 setOpenedGroup?.([]);
@@ -1915,7 +2208,18 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
                 lockSourceRowRef.current = null;
                 lastOutStartTokenRef.current = "";
+                return;
             }
+
+            const projectName = expressProjectRef.current || String(activeProjectName ?? "").trim();
+            const incomingPhone = String(activeCalls[0]?.cid_num ?? "").trim();
+
+            if (projectName && incomingPhone && isInboundSearchEnabled(projectName)) {
+                void tryOpenInboundCardByPhone(projectName, incomingPhone);
+                return;
+            }
+
+            setInboundSearchPending(false);
         };
 
         const handleGetPhoneLine = (msg: any) => {
@@ -1966,7 +2270,25 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             socket.off('check_express', handleCheckExpress);
             socket.off('get_out_start', handleGetPhoneLine);
         };
-    }, [outboundCall, sessionKey, worker, activeCalls, assignedKey, activeProjectName, expressCall, emitGroupLockOn]);
+    }, [
+        accessibleProjectPool,
+        activeCalls,
+        activeProjectName,
+        assignedKey,
+        emitGroupLockOn,
+        expressCall,
+        glagolParent,
+        operatorAccess.presetIds,
+        outboundCall,
+        presetProjectScope,
+        presets,
+        projectInboundSearchMap,
+        queueProjectMap,
+        role,
+        selectedPreset,
+        sessionKey,
+        worker,
+    ]);
 
     function extractPhoneGroups(obj: any): any[][] {
         const groups: any[][] = [];
@@ -2002,11 +2324,15 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                     const resp = await axios.post<Preset[]>("/api/v1/get_preset_list", {
                         glagol_parent: glagolParent,
                         worker,
-                        projects: projectPoolForCall,
+                        projects: presetProjectScope,
                         role,
                     });
-                    const data: Preset[] = resp.data;
-                    myPresetsLocal = data.map(p => ({ value: p.id, label: p.preset_name, preset: p }));
+                    const data: Preset[] = Array.isArray(resp.data) ? resp.data : [];
+                    const filteredData =
+                        operatorAccess.presetIds === null
+                            ? data
+                            : data.filter((preset) => (operatorAccess.presetIds ?? []).includes(Number(preset.id)));
+                    myPresetsLocal = filteredData.map(p => ({ value: p.id, label: p.preset_name, preset: p }));
                     setPresets(myPresetsLocal);
                 }
 
@@ -2081,7 +2407,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         };
 
         fetchPresetsAndCheckPhone();
-    }, [selectedCall, phoneID, presets, projectPool, worker, projectPoolForCall, role]);
+    }, [glagolParent, operatorAccess.presetIds, phoneID, presetProjectScope, presets, role, selectedCall, worker]);
 
     useEffect(() => {
         const handleFsStatus = (msg: any) => {
@@ -2171,14 +2497,88 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         return found ? found.glagol_name : projectName;
     }
 
+    useEffect(() => {
+        if (!incomingProgressStage) return;
+
+        if (activeCall || postActive) {
+            setIncomingProgressStage(null);
+            setIncomingProgressFrom("");
+            return;
+        }
+
+        if (sipStatus === SessionState.Terminated) {
+            setIncomingProgressStage(null);
+            setIncomingProgressFrom("");
+            return;
+        }
+
+        if (sipStatus === SessionState.Established) {
+            if (showInterOverlay) {
+                setIncomingProgressStage(null);
+                setIncomingProgressFrom("");
+                return;
+            }
+            setIncomingProgressStage((prev) => prev === "loading_card" ? prev : "loading_card");
+            return;
+        }
+
+        if (sipStatus === SessionState.Establishing || (incoming && incoming.state !== SessionState.Initial)) {
+            setIncomingProgressStage((prev) => {
+                if (prev === "loading_card" || prev === "connecting") return prev;
+                return "connecting";
+            });
+            return;
+        }
+
+        if (!incoming && !sipStatus) {
+            setIncomingProgressStage(null);
+            setIncomingProgressFrom("");
+        }
+    }, [activeCall, incoming, incomingProgressStage, postActive, showInterOverlay, sipStatus]);
+
+    useEffect(() => {
+        if (!autoAnswerEnabled) return;
+        if (!incoming || incoming.state !== SessionState.Initial) return;
+        if (activeCall || postActive) return;
+        if (autoAnsweredIncomingRef.current === incoming) return;
+
+        autoAnsweredIncomingRef.current = incoming;
+        setIncomingProgressFrom(incoming.remoteIdentity.uri.user || "");
+        setIncomingProgressStage("accepted");
+        answerCall().catch(() => {
+            if (autoAnsweredIncomingRef.current === incoming) {
+                autoAnsweredIncomingRef.current = null;
+            }
+            setIncomingProgressStage(null);
+            setIncomingProgressFrom("");
+        });
+    }, [activeCall, answerCall, autoAnswerEnabled, incoming, postActive]);
+
+    useEffect(() => {
+        if (!incoming || incoming.state === SessionState.Terminated) {
+            autoAnsweredIncomingRef.current = null;
+        }
+    }, [incoming]);
+
     const onAccept = () => {
         if (!incoming) return;
-        answerCall().then(() => {
+        autoAnsweredIncomingRef.current = incoming;
+        setIncomingProgressFrom(incoming.remoteIdentity.uri.user || "");
+        setIncomingProgressStage("accepted");
+        answerCall().catch(() => {
+            if (autoAnsweredIncomingRef.current === incoming) {
+                autoAnsweredIncomingRef.current = null;
+            }
+            setIncomingProgressStage(null);
+            setIncomingProgressFrom("");
         });
         // clearIncoming();
     };
     const onReject = () => {
         if (!incoming) return;
+        autoAnsweredIncomingRef.current = null;
+        setIncomingProgressStage(null);
+        setIncomingProgressFrom("");
         hangUp()
         clearIncoming();
     };
@@ -2191,6 +2591,19 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         return shortGuid(g);
 
     }
+
+    const popupFrom = incoming?.remoteIdentity.uri.user || incomingProgressFrom;
+    const showIncomingInitialPopup = Boolean(
+        incoming &&
+        incoming.state === SessionState.Initial &&
+        !incomingProgressStage &&
+        !autoAnswerEnabled
+    );
+    const showIncomingProgressPopup = Boolean(
+        incomingProgressStage &&
+        !activeCall &&
+        !postActive
+    );
 
 
     const onCloseCall = React.useCallback(() => {
@@ -2210,11 +2623,17 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                     {/* Аудио для локального потока (mute/unmute) */}
                     <audio ref={localAudioRef} autoPlay muted hidden />
 
-                    {incoming && incoming.state === SessionState.Initial && (
+                    {showIncomingInitialPopup && (
                         <NotificationPopup
-                            from={incoming.remoteIdentity.uri.user}
+                            from={popupFrom}
                             onAccept={onAccept}
                             onReject={onReject}
+                        />
+                    )}
+                    {showIncomingProgressPopup && (
+                        <NotificationPopup
+                            from={popupFrom}
+                            progressStage={incomingProgressStage}
                         />
                     )}
                 </>
@@ -2257,6 +2676,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 outActivePhoneData={outActivePhoneData}
                 setOutActivePhoneData={setOutActivePhoneData}
                 startModulesRanRef={startModulesRanRef}
+                autoAnswerEnabled={autoAnswerEnabled}
+                setAutoAnswerEnabled={setAutoAnswerEnabled}
             />
 
             {managerPanel ? (
@@ -2459,6 +2880,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                             interCall={interCall}
                                             showInterCallHeader={showInterInCardHeader}
                                             onHangupInterCall={hangupInterCall}
+                                            suspendStartModules={inboundSearchPending}
 
                                         />
                                     )}
@@ -2531,7 +2953,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                         {!(openedPhones.length > 0 && activeGuid) && (
                             <div
                                 style={{
-                                    order: fullWidthCard ? 2 : 1,
+                                    order: 1,
                                     flex: fullWidthCard ? "0 0 100%" : "0 0 48%",
                                     minWidth: 0,
                                 }}
@@ -2580,6 +3002,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                         interCall={interCall}
                                         showInterCallHeader={showInterInCardHeader}
                                         onHangupInterCall={hangupInterCall}
+                                        suspendStartModules={inboundSearchPending}
 
                                     />
                                 )}
@@ -2589,7 +3012,10 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 </>
             ) : (
                 <div className="row my-3">
-                    <div className="col-12 col-md-6">
+                    <div
+                        className={fullWidthCard ? "col-12" : "col-12 col-md-6"}
+                        style={{ order: fullWidthCard ? 2 : 1 }}
+                    >
                         {selectedCall && scriptDir && scriptProject && !postActive && !activeCalls.length ? (
                             <ScriptPanel
                                 direction={scriptDir}
@@ -2617,7 +3043,10 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                         )}
                     </div>
 
-                    <div className="col-12 col-md-6">
+                    <div
+                        className={fullWidthCard ? "col-12" : "col-12 col-md-6"}
+                        style={{ order: fullWidthCard ? 1 : 2 }}
+                    >
                         {(selectedCall || activeCall || postActive) && (
                             <MemoCallControlPanel
                                 call={selectedCall}
@@ -2639,6 +3068,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                 prefix={prefix}
                                 outboundCall={outboundCall}
                                 tuskMode={showTasksDashboard}
+                                fullWidthCard={fullWidthCard}
+                                setFullWidthCard={setFullWidthCard}
                                 postCallData={postCallData}
                                 setPostCallData={setPostCallData}
                                 startModulesRanRef={startModulesRanRef}
@@ -2648,6 +3079,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                 interCall={interCall}
                                 showInterCallHeader={showInterInCardHeader}
                                 onHangupInterCall={hangupInterCall}
+                                suspendStartModules={inboundSearchPending}
 
                             />
                         )}

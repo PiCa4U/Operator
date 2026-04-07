@@ -2,25 +2,51 @@ import React, { useEffect, useRef } from 'react';
 import s from './NotificationPopup.module.css';
 import { readExternalConfig, subscribeExternalConfig, AppExternalConfig } from '../../externalConfig';
 
+type ProgressStage = 'accepted' | 'connecting' | 'loading_card';
+
 interface Props {
     from?: string;
     subtitle?: string;
     avatarUrl?: string;
-    onAccept(): void;
-    onReject(): void;
+    onAccept?(): void;
+    onReject?(): void;
+    progressStage?: ProgressStage | null;
 }
 
+const progressOrder: ProgressStage[] = ['accepted', 'connecting', 'loading_card'];
+
+const progressMeta: Record<ProgressStage, { title: string; hint: string; label: string }> = {
+    accepted: {
+        title: 'Вызов принят',
+        hint: 'Фиксируем принятие вызова и запускаем соединение.',
+        label: 'Вызов принят',
+    },
+    connecting: {
+        title: 'Соединяем с клиентом',
+        hint: 'Ожидаем установку голосового соединения.',
+        label: 'Соединяем с клиентом',
+    },
+    loading_card: {
+        title: 'Открываем карточку',
+        hint: 'Подтягиваем данные звонка, поля и модули.',
+        label: 'Открываем карточку',
+    },
+};
+
 const NotificationPopup: React.FC<Props> = ({
-                                                from = 'Неизвестный номер',
-                                                subtitle,
-                                                avatarUrl,
-                                                onAccept,
-                                                onReject,
-                                            }) => {
+    from = 'Неизвестный номер',
+    subtitle,
+    avatarUrl,
+    onAccept,
+    onReject,
+    progressStage,
+}) => {
     const acceptRef = useRef<HTMLButtonElement>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const resumeHandlerRef = useRef<(() => void) | null>(null);
     const cfgRef = useRef<AppExternalConfig>(readExternalConfig());
+    const isProgressMode = Boolean(progressStage);
+    const currentStageIndex = progressStage ? progressOrder.indexOf(progressStage) : -1;
 
     const resolveIncoming = (cfg: AppExternalConfig) =>
         cfg.tones?.incoming ||
@@ -62,6 +88,11 @@ const NotificationPopup: React.FC<Props> = ({
     };
 
     useEffect(() => {
+        if (isProgressMode) {
+            stopRingtone();
+            return;
+        }
+
         acceptRef.current?.focus();
 
         const url = resolveIncoming(cfgRef.current);
@@ -85,13 +116,23 @@ const NotificationPopup: React.FC<Props> = ({
             stopRingtone();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [isProgressMode]);
 
-    const handleAccept = () => { stopRingtone(); onAccept(); };
-    const handleReject = () => { stopRingtone(); onReject(); };
+    const handleAccept = () => {
+        if (!onAccept) return;
+        stopRingtone();
+        onAccept();
+    };
 
-    // Горячие клавиши: Enter — принять, Esc — отклонить
+    const handleReject = () => {
+        if (!onReject) return;
+        stopRingtone();
+        onReject();
+    };
+
     useEffect(() => {
+        if (isProgressMode) return;
+
         const onKey = (e: KeyboardEvent) => {
             if (e.key === 'Enter') handleAccept();
             if (e.key === 'Escape') handleReject();
@@ -99,15 +140,25 @@ const NotificationPopup: React.FC<Props> = ({
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [onAccept, onReject]);
+    }, [isProgressMode, onAccept, onReject]);
 
     return (
-        <div className={s.overlay} role="dialog" aria-modal="true" aria-labelledby="incomingTitle">
+        <div
+            className={`${s.overlay} ${isProgressMode ? s.overlayPassive : ''}`}
+            role={isProgressMode ? 'status' : 'dialog'}
+            aria-modal={isProgressMode ? undefined : 'true'}
+            aria-labelledby="incomingTitle"
+            aria-live={isProgressMode ? 'polite' : undefined}
+        >
             <div className={s.popup}>
                 <div className={s.ringGlow} aria-hidden />
                 <header className={s.header}>
-                    <span id="incomingTitle" className={s.title}>Входящий вызов</span>
-                    {subtitle && <span className={s.subtitle}>{subtitle}</span>}
+                    <span id="incomingTitle" className={s.title}>
+                        {progressStage ? progressMeta[progressStage].title : 'Входящий вызов'}
+                    </span>
+                    <span className={s.subtitle}>
+                        {progressStage ? progressMeta[progressStage].hint : subtitle}
+                    </span>
                 </header>
 
                 <div className={s.callerRow}>
@@ -121,27 +172,59 @@ const NotificationPopup: React.FC<Props> = ({
                     </div>
                     <div className={s.callerInfo}>
                         <div className={s.callerName} title={from}>{from}</div>
-                        <div className={s.callerHint}>Нажмите Enter, чтобы принять</div>
+                        <div className={s.callerHint}>
+                            {progressStage
+                                ? 'Сейчас последовательно пройдём все этапы подготовки звонка.'
+                                : 'Нажмите Enter, чтобы принять'}
+                        </div>
                     </div>
                 </div>
 
-                <div className={s.buttons}>
-                    <button
-                        ref={acceptRef}
-                        onClick={handleAccept}
-                        className={`${s.btn} ${s.accept}`}
-                    >
-                        <span className={s.btnIcon} aria-hidden>📞</span>
-                        Принять
-                    </button>
-                    <button
-                        onClick={handleReject}
-                        className={`${s.btn} ${s.reject}`}
-                    >
-                        <span className={s.btnIcon} aria-hidden>✖</span>
-                        Отклонить
-                    </button>
-                </div>
+                {progressStage ? (
+                    <div className={s.progressPanel}>
+                        {progressOrder.map((stage, index) => {
+                            const isDone = index < currentStageIndex;
+                            const isCurrent = index === currentStageIndex;
+                            return (
+                                <div
+                                    key={stage}
+                                    className={`${s.stageRow} ${isCurrent ? s.stageRowCurrent : ''}`}
+                                >
+                                    <span
+                                        className={`${s.stageDot} ${
+                                            isDone ? s.stageDotDone : isCurrent ? s.stageDotActive : ''
+                                        }`}
+                                        aria-hidden
+                                    >
+                                        {isDone ? '✓' : index + 1}
+                                    </span>
+                                    <span className={`${s.stageLabel} ${isDone ? s.stageLabelDone : ''}`}>
+                                        {progressMeta[stage].label}
+                                    </span>
+                                    {isCurrent && <span className={s.stageSpinner} aria-hidden />}
+                                </div>
+                            );
+                        })}
+                    </div>
+                ) : (
+                    <div className={s.buttons}>
+                        <button
+                            ref={acceptRef}
+                            onClick={handleAccept}
+                            className={`${s.btn} ${s.accept}`}
+                        >
+                            <span className={s.btnIcon} aria-hidden>📞</span>
+                            Принять
+                        </button>
+                        <button
+                            onClick={handleReject}
+                            className={`${s.btn} ${s.reject}`}
+                        >
+                            <span className={s.btnIcon} aria-hidden>✖</span>
+                            Отклонить
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import SearchableSelect from "../../../../../../../../../callControlPanel/components/select";
 import MultiSelect from "../../../../../../../../../callControlPanel/components/multiselect";
-import { makeSelectFullProjectPool } from "../../../../../../../../../../redux/operatorSlice";
+import { makeSelectAccessibleProjectPool } from "../../../../../../../../../../redux/operatorSlice";
 import { useSelector } from "react-redux";
 import { store } from "../../../../../../../../../../redux/store";
 
@@ -27,8 +27,9 @@ export const ProjectField: React.FC<Props> = ({ value, onChange }) => {
         glagolParent      = ''
     } = store.getState().credentials;
 
-    const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
-    const projectPool = useSelector(selectFullProjectPool) || [];
+    const selectAccessibleProjectPool = useMemo(() => makeSelectAccessibleProjectPool(sipLogin), [sipLogin]);
+    const rawProjectPool = useSelector(selectAccessibleProjectPool);
+    const projectPool = useMemo(() => rawProjectPool || [], [rawProjectPool]);
 
     const availableProjects = projectPool.map(proj => ({
         id: proj.project_name,

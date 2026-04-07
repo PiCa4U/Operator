@@ -38,6 +38,9 @@ export interface Agent {
     department?: string | null;
     postobrabotka: boolean;
     post_obrabotka: boolean;
+    queues?: string[];
+    presets?: number[];
+    flows?: number[];
     projects?: string[];
     status?: AgentPresence;
     online?: boolean;
@@ -49,6 +52,30 @@ export interface Agent {
         [k: string]: unknown;
     } | null;
     user_fields?: UserFieldsMap;
+}
+
+export interface QueueInfo {
+    queue: string;
+    label?: string | null;
+    project?: string | null;
+    strategy?: string | null;
+}
+
+export interface FlowInfo {
+    id: number;
+    glagol_parent?: string;
+    project?: string | null;
+    name: string;
+    description?: string | null;
+    priority?: number | null;
+    active?: boolean;
+}
+
+export interface PresetSummary {
+    id: number;
+    preset_name: string;
+    projects?: string[];
+    active?: boolean;
 }
 
 export interface OperatorLogEntry {
@@ -89,6 +116,8 @@ export interface CreateAgentPayload {
     postobrabotka: boolean;
     department?: string;
     login?: string;
+    preset_ids?: number[];
+    flow_ids?: number[];
     user_fields?: UserFieldsMap;
 }
 
@@ -99,6 +128,8 @@ export interface UpdateAgentPayload {
     role?: Role;
     postobrabotka?: boolean;
     department?: string;
+    preset_ids?: number[];
+    flow_ids?: number[];
     user_fields?: UserFieldsMap;
 }
 
@@ -112,7 +143,7 @@ export type OnlineFilter = "all" | "online" | "offline";
 
 export interface FiltersState {
     name: string;
-    projects: string[];
+    queues: string[];
     department: string | null;
     departments: string[];
     robot: RobotFilter;

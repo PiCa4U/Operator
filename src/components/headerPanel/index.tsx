@@ -12,7 +12,11 @@ import ModeSwitch, { Mode } from "./components/switch";
 import { OptionType, Preset } from "../taskDashboard";
 import { normalizeUrl } from "../callControlPanel";
 
-import { makeSelectFullProjectPool } from "../../redux/operatorSlice";
+import {
+    makeSelectFullProjectPool,
+    selectAccessibleProjectNames,
+    selectOperatorAccess,
+} from "../../redux/operatorSlice";
 
 import { SignalsToaster } from "../../features/signals/SignalsToaster";
 import { NotificationsPanel } from "../../features/signals/NotificationsPanel";
@@ -133,6 +137,8 @@ export interface Project {
     } | null;
     project_name: string;
     scheme: string;
+    in_search?: boolean;
+    search?: boolean;
     start_type: string | null;
 }
 
@@ -172,6 +178,8 @@ interface HeaderPanelProps {
     outActivePhoneData?: any;
     setOutActivePhoneData?: (outActivePhoneData: any) => void;
     startModulesRanRef: React.MutableRefObject<boolean>;
+    autoAnswerEnabled: boolean;
+    setAutoAnswerEnabled: (enabled: boolean) => void;
 }
 
 const HeaderPanel: React.FC<HeaderPanelProps> = ({
@@ -204,11 +212,13 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      expressCall,
                                                      groupProjects,
                                                      setManagerPanel,
-                                                     managerPanel,
-                                                     outActivePhoneData,
-                                                     setOutActivePhoneData,
-                                                     startModulesRanRef,
-                                                 }) => {
+                                                      managerPanel,
+                                                      outActivePhoneData,
+                                                      setOutActivePhoneData,
+                                                      startModulesRanRef,
+                                                      autoAnswerEnabled,
+                                                      setAutoAnswerEnabled,
+                                                  }) => {
     const dispatch = useDispatch();
 
     const { sipLogin = "", worker = "", glagolParent = "" } = useSelector((s: RootState) => s.credentials);
@@ -235,10 +245,25 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
+    const operatorAccess = useSelector(selectOperatorAccess);
+    const accessibleProjectNames = useSelector(selectAccessibleProjectNames);
 
     const projectPoolForCall = useMemo(() => {
         return projectPool.map((project: any) => project.project_name);
     }, [projectPool]);
+    const outboundFlowIds = useMemo(() => {
+        return Array.from(
+            new Set(
+                (operatorAccess.flowIds ?? [])
+                    .map((id) => Number(id))
+                    .filter((id) => Number.isFinite(id))
+            )
+        );
+    }, [operatorAccess.flowIds]);
+    const presetProjectScope = useMemo(
+        () => (operatorAccess.loaded ? accessibleProjectNames : projectPoolForCall),
+        [accessibleProjectNames, operatorAccess.loaded, projectPoolForCall]
+    );
 
     const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls);
     const activeCalls = useMemo(() => {
@@ -272,7 +297,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
             !showTasksDashboard &&
             autocallEnabled &&
             !hasActiveCall &&
-            projectPoolForCall.length > 0 &&
+            outboundFlowIds.length > 0 &&
             getRegisteredSofia(fsStatus.sofia_status) &&
             fsStatus.state === "Waiting" &&
             (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
@@ -284,12 +309,11 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 interface: "glagol",
                 sip_login: sipLogin,
                 session_key: sessionKey,
-                projects_pool: projectPoolForCall,
+                flow_ids: outboundFlowIds,
                 start_type: "auto",
             });
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [showTasksDashboard]);
+    }, [autocallEnabled, fsStatus.sofia_status, fsStatus.state, fsStatus.status, hasActiveCall, outboundFlowIds, sessionKey, showTasksDashboard, sipLogin, worker]);
 
     const toggleAutocall = () => {
         const newState = !autocallEnabled;
@@ -299,7 +323,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         if (
             newState &&
             !hasActiveCall &&
-            projectPoolForCall.length > 0 &&
+            outboundFlowIds.length > 0 &&
             getRegisteredSofia(fsStatus.sofia_status) &&
             fsStatus.state === "Waiting" &&
             (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
@@ -311,10 +335,16 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                 interface: "glagol",
                 sip_login: sipLogin,
                 session_key: sessionKey,
-                projects_pool: projectPoolForCall,
+                flow_ids: outboundFlowIds,
                 start_type: "auto",
             });
         }
+    };
+
+    const toggleAutoAnswer = () => {
+        const newState = !autoAnswerEnabled;
+        setAutoAnswerEnabled(newState);
+        localStorage.setItem("autoAnswerEnabled", String(newState));
     };
 
     useEffect(() => {
@@ -446,15 +476,19 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         const fetchPresetsAndCheckPhone = async () => {
             try {
                 let myPresets = presets;
-                if (presets.length === 0) {
+                if (presets.length === 0 && presetProjectScope.length > 0) {
                     const response = await axios.post<Preset[]>("/api/v1/get_preset_list", {
                         glagol_parent: glagolParent,
                         worker,
-                        projects: projectPoolForCall,
+                        projects: presetProjectScope,
                         role,
                     });
-                    const data: Preset[] = response.data;
-                    myPresets = data.map((p) => ({ value: p.id, label: p.preset_name, preset: p }));
+                    const data: Preset[] = Array.isArray(response.data) ? response.data : [];
+                    const filteredData =
+                        operatorAccess.presetIds === null
+                            ? data
+                            : data.filter((preset) => (operatorAccess.presetIds ?? []).includes(Number(preset.id)));
+                    myPresets = filteredData.map((p) => ({ value: p.id, label: p.preset_name, preset: p }));
                     setPresets(myPresets);
                 }
 
@@ -517,8 +551,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         };
 
         fetchPresetsAndCheckPhone();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [outActiveProjectName, outActivePhone, outActivePhoneData]);
+    }, [glagolParent, operatorAccess.presetIds, outActivePhone, outActivePhoneData, outActiveProjectName, presetProjectScope, role, sessionKey, worker]);
 
     useEffect(() => {
         const handleGetPhoneToCall = (msg: any) => {
@@ -706,7 +739,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         const interval = setInterval(() => {
             if (
                 !hasActiveCall &&
-                projectPoolForCall.length > 0 &&
+                outboundFlowIds.length > 0 &&
                 getRegisteredSofia(fsStatus.sofia_status) &&
                 fsStatus.state === "Waiting" &&
                 (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available")
@@ -718,7 +751,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                     interface: "glagol",
                     sip_login: sipLogin,
                     session_key: sessionKey,
-                    projects_pool: projectPoolForCall,
+                    flow_ids: outboundFlowIds,
                     start_type: "auto",
                     tz_offset: getTzOffsetMinutes(),
                 });
@@ -732,7 +765,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         sipLogin,
         sessionKey,
         worker,
-        projectPoolForCall,
+        outboundFlowIds,
         fsStatus.state,
         fsStatus.status,
         fsStatus.sofia_status,
@@ -1005,6 +1038,9 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
                 <button className={`btn mx-1 ml-2 ${autocallEnabled ? "btn-outline-success" : "btn-outline-primary"}`} onClick={toggleAutocall}>
                     Автообзвон: {autocallEnabled ? "Вкл" : "Выкл"}
+                </button>
+                <button className={`btn mx-1 ml-2 ${autoAnswerEnabled ? "btn-outline-success" : "btn-outline-primary"}`} onClick={toggleAutoAnswer}>
+                    Автоподнятие: {autoAnswerEnabled ? "Вкл" : "Выкл"}
                 </button>
             </>
         );

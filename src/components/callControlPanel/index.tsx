@@ -5,7 +5,7 @@ import { useSelector } from "react-redux";
 import {RootState, store} from "../../redux/store";
 import Swal from "sweetalert2";
 import EditableFields from "./components";
-import {makeSelectFullProjectPool} from "../../redux/operatorSlice";
+import {makeSelectAccessibleProjectPool, selectOperatorAccess} from "../../redux/operatorSlice";
 import SearchableSelect from "./components/select";
 import {ModuleData, MonoProjectsModuleData} from "../mainApp";
 import styles from "../taskDashboard/components/checkbox.module.css";
@@ -507,19 +507,13 @@ function isInternalExtensionTarget(callLike?: CallLike, currentSipLogin?: string
 }
 
 function parseDialplanExtensions(
-    resp: DialplanExtensionsResponse,
-    allowedProjects: string[]
+    resp: DialplanExtensionsResponse
 ): DialplanExtensionItem[] {
     const out: DialplanExtensionItem[] = [];
     const seen = new Set<string>();
-    const allowed = new Set((allowedProjects || []).map(p => String(p)));
 
     Object.entries(resp || {}).forEach(([projectKey, extensions]) => {
         if (!extensions || typeof extensions !== 'object') return;
-
-        if (allowed.size > 0 && !allowed.has(projectKey)) {
-            return;
-        }
 
         Object.entries(extensions).forEach(([extKey, meta]) => {
             if (!meta || typeof meta !== 'object') return;
@@ -599,6 +593,7 @@ interface CallControlPanelProps {
     interCall?: any;
     showInterCallHeader?: boolean;
     onHangupInterCall?: (uuid: string) => void;
+    suspendStartModules?: boolean;
 }
 
 type PhoneGroup = {
@@ -894,6 +889,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                interCall,
                                                                showInterCallHeader,
                                                                onHangupInterCall,
+                                                               suspendStartModules = false,
 }) => {
     const {
         sipLogin   = '',
@@ -902,8 +898,14 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     } = store.getState().credentials;
 
     const { sessionKey } = store.getState().operator
-    const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
-    const projectPool = useSelector(selectFullProjectPool) || [];
+    const operatorAccess = useSelector(selectOperatorAccess);
+    const selectAccessibleProjectPool = useMemo(() => makeSelectAccessibleProjectPool(sipLogin), [sipLogin]);
+    const rawAccessibleProjectPool = useSelector(selectAccessibleProjectPool);
+    const accessibleProjectPool = useMemo(
+        () => rawAccessibleProjectPool || [],
+        [rawAccessibleProjectPool]
+    );
+    const projectPool = accessibleProjectPool;
 
     const activeCalls: ActiveCall[] = useSelector((state: RootState) => state.operator.activeCalls);
     const isMainCallHeld = useMemo(() => {
@@ -1287,7 +1289,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         if (!openedPhones) return [];
         return Array.from(new Set(openedPhones.map(p => p.project)));
     }, [openedPhones]);
-    useEffect(() => setActiveProjectName?.(groupProjects[0]),[groupProjects, setActiveProjectName])
+    useEffect(() => {
+        if (groupProjects.length > 0) {
+            setActiveProjectName?.(groupProjects[0]);
+        }
+    }, [groupProjects, setActiveProjectName])
     const [selectedProjects, setSelectedProjects] = useState<string[]>(groupProjects);
 
 
@@ -1447,13 +1453,30 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         });
     };
 
-    const compact = tuskMode && fullWidthCard;
+    const compact = Boolean(fullWidthCard);
+    const resolveGridSpan = (width?: number | null) => {
+        if (!fullWidthCard) return 12;
+
+        const numericWidth = Number(width);
+        if (!Number.isFinite(numericWidth) || numericWidth <= 0) {
+            return 12;
+        }
+
+        const normalizedWidth = numericWidth <= 1 ? numericWidth * 12 : numericWidth;
+        return Math.max(1, Math.min(12, Math.round(normalizedWidth)));
+    };
     const sanitize = (v: any) =>
         typeof v === 'string' && v.includes('|_|_|') ? '' : v;
 
-    const projectPoolForCall = useMemo(() => {
-        return projectPool.filter(project => (project.out_active && project.active)).map(project => project.project_name);
-    }, [projectPool]);
+    const outboundFlowIds = useMemo(() => {
+        return Array.from(
+            new Set(
+                (operatorAccess.flowIds ?? [])
+                    .map((id) => Number(id))
+                    .filter((id) => Number.isFinite(id))
+            )
+        );
+    }, [operatorAccess.flowIds]);
 
     // Активные звонки
     // const hasActiveCall = Array.isArray(activeCalls) ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
@@ -1647,9 +1670,44 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 setCallReason(String(rawReasonId) || '');
                 setCallResult(String(rawResultId) || '');
             } else {
-                // if (!manualCallRef.current) {
-                    setValues(init);
-                // }
+                const preferredByProject = new Map<string, any>();
+                const preferredContact =
+                    (openedPhones || []).find((ph: any) => Number(ph?.id) === Number(phoneID)) ||
+                    (openedPhones || [])[0] ||
+                    null;
+
+                selectedProjects.forEach((proj) => {
+                    const cleanProj = cleanProjectName(proj);
+                    const match =
+                        (openedPhones || []).find(
+                            (ph: any) =>
+                                cleanProjectName(String(ph?.project ?? "")) === cleanProj &&
+                                Number(ph?.id) === Number(phoneID)
+                        ) ||
+                        (openedPhones || []).find(
+                            (ph: any) => cleanProjectName(String(ph?.project ?? "")) === cleanProj
+                        ) ||
+                        preferredContact;
+
+                    if (match) {
+                        preferredByProject.set(proj, match);
+                    }
+                });
+
+                setValues((prev) => {
+                    const nextValues: GroupFieldValues = { ...prev };
+
+                    Object.keys(init).forEach((proj) => {
+                        const contactInfo = preferredByProject.get(proj)?.contact_info || {};
+                        nextValues[proj] = {
+                            ...(prev[proj] || {}),
+                            ...(init[proj] || {}),
+                            ...contactInfo,
+                        };
+                    });
+
+                    return nextValues;
+                });
             }
 
             if (selectedProjects.length) {
@@ -1835,11 +1893,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
 
         const manual = Boolean(options?.manual);
+        const scopeProjects =
+            selectedProjects.length > 0 ? selectedProjects : Object.keys(monoModules || {});
 
         const projectList: string[] = mod.common_code || tuskMode
-            ? Object.entries(monoModules)
-                .filter(([_, mods]) => mods.some(m => m.filename === mod.filename))
-                .map(([project]) => project)
+            ? scopeProjects.filter((project) =>
+                (monoModules?.[project] || []).some((m) => m.filename === mod.filename)
+            )
             : activeProject
                 ? [activeProject]
                 : call && Object.keys(call.projects)[0] !== "outbound"
@@ -2264,20 +2324,65 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     }
 
     const startModules = useMemo<ModuleData[]>(() => {
-        if (monoModules) {
-            return Object.values(monoModules)
-                .flat()
-                .filter(mod =>
-                    Array.isArray(mod.start_modes) &&
-                    mod.start_modes.includes('start')
-                );
-        } else {
-            return modules.filter(mod =>
+        if (monoModules && Object.keys(monoModules).length) {
+            const projectsScope = selectedProjects.length ? selectedProjects : Object.keys(monoModules);
+            const seen = new Set<string>();
+            const out: ModuleData[] = [];
+
+            projectsScope.forEach((project) => {
+                (monoModules[project] || []).forEach((mod) => {
+                    if (!Array.isArray(mod.start_modes) || !mod.start_modes.includes('start')) return;
+
+                    const key = mod.common_code
+                        ? `common::${mod.filename}`
+                        : `${project}::${mod.filename}`;
+
+                    if (seen.has(key)) return;
+                    seen.add(key);
+                    out.push(mod);
+                });
+            });
+
+            return out.sort(moduleComparator);
+        }
+
+        return modules
+            .filter(mod =>
                 Array.isArray(mod.start_modes) &&
                 mod.start_modes.includes('start')
+            )
+            .sort(moduleComparator);
+    }, [monoModules, modules, selectedProjects]);
+
+    const startModulesPayloadReady = useMemo(() => {
+        if (!startModules.length) return false;
+        if (!openedPhones?.length || !selectedProjects.length) return true;
+
+        return selectedProjects.every((proj) => {
+            const cleanProj = cleanProjectName(proj);
+            const preferredContact =
+                (openedPhones || []).find(
+                    (ph: any) =>
+                        cleanProjectName(String(ph?.project ?? "")) === cleanProj &&
+                        Number(ph?.id) === Number(phoneID)
+                ) ||
+                (openedPhones || []).find(
+                    (ph: any) => cleanProjectName(String(ph?.project ?? "")) === cleanProj
+                );
+
+            const contactInfo = preferredContact?.contact_info || {};
+            const requiredEntries = Object.entries(contactInfo).filter(
+                ([, value]) => String(value ?? '').trim() !== ''
             );
-        }
-    }, [monoModules, modules]);
+
+            if (!requiredEntries.length) return true;
+
+            const projectValues = values[proj] || {};
+            return requiredEntries.every(
+                ([fieldId, value]) => String(projectValues[fieldId] ?? '').trim() === String(value).trim()
+            );
+        });
+    }, [startModules, openedPhones, selectedProjects, phoneID, values]);
     const hasFiles = useMemo(() => {
         const contactsHas = Array.isArray(openedPhones) && openedPhones.some(c => Array.isArray(c?.storage) && c.storage.length > 0);
         return contactsHas;
@@ -2339,7 +2444,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
 
     useEffect(() => {
+        if (suspendStartModules) return;
         if (startModulesRanRef.current) return;
+        if (!startModulesPayloadReady) return;
 
         if (startModules.length && (hasActiveCall || call)) {
             setRunningModulesCount(startModules.length);
@@ -2361,7 +2468,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         openedPhones,
         postActive,
         startModules,
+        startModulesPayloadReady,
         handleModuleRun,
+        suspendStartModules,
     ]);
 //     useEffect(() => {
 //         if (!hasActiveCall) {
@@ -2499,12 +2608,14 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         const targetSipLogin = resolveCallTargetSipLogin(interCall, sipLogin);
         const internalExtension = isInternalExtensionTarget(interCall, sipLogin);
 
-        socket.emit("transfer_data", {
-            worker,
-            session_key: sessionKey,
-            target_sip_login: targetSipLogin,
-            data: openedPhones,
-        });
+        if (!internalExtension) {
+            socket.emit("transfer_data", {
+                worker,
+                session_key: sessionKey,
+                target_sip_login: targetSipLogin,
+                data: openedPhones,
+            });
+        }
     };
 
     const handleSave = () => {
@@ -2889,17 +3000,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return Array.from(map.values());
     }, [openedPhones]);
 
-    const extensionProjects = useMemo(() => {
-        return groupProjects.length ? groupProjects : selectedProjects;
-    }, [groupProjects, selectedProjects]);
-
-    const extensionProjectsKey = useMemo(
-        () => [...extensionProjects].sort().join('|'),
-        [extensionProjects]
-    );
-
     useEffect(() => {
-        if (!glagolParent || extensionProjects.length === 0) {
+        if (!glagolParent) {
             setDialplanExtensions([]);
             return;
         }
@@ -2914,7 +3016,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             })
             .then(({ data }) => {
                 if (cancelled) return;
-                setDialplanExtensions(parseDialplanExtensions(data, extensionProjects));
+                setDialplanExtensions(parseDialplanExtensions(data));
             })
             .catch((error) => {
                 if (cancelled) return;
@@ -2925,7 +3027,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         return () => {
             cancelled = true;
         };
-    }, [glagolParent, extensionProjectsKey]);
+    }, [glagolParent]);
 
     const contactInfoVariants = useMemo(() => {
         const result: Record<string, Set<string>> = {};
@@ -3427,11 +3529,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const getTzOffsetMinutes = () => -new Date().getTimezoneOffset();
     const handleNextTask = () => {
-        if (!projectPoolForCall || projectPoolForCall.length === 0) {
+        if (!outboundFlowIds.length) {
             Swal.fire({
                 icon: 'warning',
-                title: 'Нет проектов для обзвона',
-                text: 'В пуле нет активных исходящих проектов.',
+                title: 'Нет доступных flow',
+                text: 'У оператора не настроены flow для получения следующей задачи.',
             });
             return;
         }
@@ -3444,7 +3546,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             interface: "glagol",
             sip_login: sipLogin,
             session_key: sessionKey,
-            projects_pool: projectPoolForCall,
+            flow_ids: outboundFlowIds,
             start_type: "auto",
             tz_offset: getTzOffsetMinutes(),
         });
@@ -3858,7 +3960,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             }
         });
         if (!manualCallRef.current) {
-            setValues(next);
+            setValues(prev => {
+                const merged: GroupFieldValues = { ...prev };
+                Object.keys(next).forEach((proj) => {
+                    merged[proj] = { ...(prev[proj] || {}), ...(next[proj] || {}) };
+                });
+                return merged;
+            });
         }
     }, [openedPhones, contactInfoOptions, selectedProjects]);
 
@@ -3906,22 +4014,24 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     useEffect(() => {
         if (!openedPhones?.length) return;
 
-        const nextValues: GroupFieldValues = { ...values };
+        setValues(prev => {
+            const nextValues: GroupFieldValues = { ...prev };
 
-        Object.entries(contactInfoOptions).forEach(([fieldId, opts]) => {
-            const vals = opts.map(o => o.value).filter(v => v !== '');
-            const uniq = Array.from(new Set(vals));
+            Object.entries(contactInfoOptions).forEach(([fieldId, opts]) => {
+                const vals = opts.map(o => o.value).filter(v => v !== '');
+                const uniq = Array.from(new Set(vals));
 
-            if (uniq.length === 1) {
-                const single = uniq[0];
-                selectedProjects.forEach(proj => {
-                    if (!nextValues[proj]) nextValues[proj] = {};
-                    nextValues[proj][fieldId] = single;
-                });
-            }
+                if (uniq.length === 1) {
+                    const single = uniq[0];
+                    selectedProjects.forEach(proj => {
+                        if (!nextValues[proj]) nextValues[proj] = {};
+                        nextValues[proj][fieldId] = single;
+                    });
+                }
+            });
+
+            return nextValues;
         });
-
-        setValues(nextValues);
     }, [openedPhones, contactInfoOptions, selectedProjects]);
 
 //     const availableTabs = useMemo(() => {
@@ -4367,7 +4477,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                         }}
                                                     >
                                                         {groupedFields.map(({ group, fields }: { group:any, fields:any }) => {
-                                                            const spanGroup = (group.width === 0.5 && openedPhones?.length && fullWidthCard) ? 6 : 12;
+                                                            const spanGroup = resolveGridSpan(group.width);
 
                                                             return (
                                                                 <div
@@ -4401,13 +4511,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                             '';
 
                                                                         return (
-                                                                            <div
-                                                                                key={f.id}
-                                                                                style={{
-                                                                                    gridColumn: `span ${fullWidthCard ? (f.width || 12) : 12}`,
-                                                                                    alignSelf: 'start',
-                                                                                }}
-                                                                            >
+                                                                        <div
+                                                                            key={f.id}
+                                                                            style={{
+                                                                                gridColumn: `span ${resolveGridSpan(f.width)}`,
+                                                                                alignSelf: 'start',
+                                                                            }}
+                                                                        >
                                                                                 {showDropdown ? (
                                                                                     <div style={{ display: 'flex',  flexDirection: "column"}}>
                                                                                         <div style={{display: 'flex',gap: 8, flexDirection: "row", alignItems: "center"}}>
@@ -4516,7 +4626,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
                                                                 {orphanFields.map((f: MergedField) => {
                                                                     const fieldId = f.fieldIds[proj];
-                                                                    const spanField = fullWidthCard ? (f.width || 12) : 12;
+                                                                    const spanField = resolveGridSpan(f.width);
                                                                     const current = values[proj]?.[fieldId] || '';
 
                                                                     return (
@@ -4700,14 +4810,14 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                             {/*    </button>*/}
                             {/*)}*/}
                         </div>
-                        {(tuskMode && !isChating && !checkBox) &&
+                        {(!isChating && !checkBox) &&
                             <div className="d-flex justify-end mb-3">
                                 <label style={{ cursor: 'pointer', fontWeight: 500, display: "flex", gap: 8, marginTop: 8}}>
                                     <input
                                         type="checkbox"
-                                        checked={fullWidthCard}
+                                        checked={Boolean(fullWidthCard)}
                                         className={styles.customCheckbox}
-                                        onChange={() => setFullWidthCard ? setFullWidthCard(!fullWidthCard) : console.log("nan")}
+                                        onChange={() => setFullWidthCard?.(!fullWidthCard)}
                                     />
                                     <div style={{ marginTop: 2}}>
                                         На всю ширину

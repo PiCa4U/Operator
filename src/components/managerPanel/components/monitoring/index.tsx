@@ -8,7 +8,7 @@ import React, {
 import axios from "axios";
 import { useSelector } from "react-redux";
 import { RootState, store } from "../../../../redux/store";
-import { makeSelectFullProjectPool } from "../../../../redux/operatorSlice";
+import { makeSelectAccessibleProjectPool } from "../../../../redux/operatorSlice";
 import { FiltersBar } from "./components/FiltersBar";
 import {
     ActiveDialogsTable,
@@ -49,7 +49,7 @@ type ProjectOption = { id: string; name: string };
 
 function useProjectDirectory(glagolParent: string, sipLogin: string) {
     const projectPool = useSelector(
-        useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin])
+        useMemo(() => makeSelectAccessibleProjectPool(sipLogin), [sipLogin])
     );
 
     const [projectMap, setProjectMap] = useState<Record<string, string>>({});
@@ -103,13 +103,22 @@ function useProjectDirectory(glagolParent: string, sipLogin: string) {
         };
     }, [glagolParent]);
 
-    const projectOptions: ProjectOption[] = useMemo(
+    const allowedProjectIds = useMemo(
         () =>
-            Object.entries(canonicalMap)
-                .map(([id, name]) => ({ id, name }))
-                .sort((a, b) => a.name.localeCompare(b.name)),
-        [canonicalMap]
+            new Set(
+                (projectPool || [])
+                    .map((project: any) => pickCanonicalId(project))
+                    .filter(Boolean)
+            ),
+        [projectPool]
     );
+
+    const projectOptions: ProjectOption[] = useMemo(() => {
+        return Object.entries(canonicalMap)
+            .filter(([id]) => !allowedProjectIds.size || allowedProjectIds.has(id))
+            .map(([id, name]) => ({ id, name }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }, [allowedProjectIds, canonicalMap]);
 
     return { projectMap, canonicalMap, projectOptions };
 }
@@ -238,10 +247,17 @@ export const MonitoringTab: React.FC = () => {
     const [userQuery, setUserQuery] = useState("");
 
     useEffect(() => {
-        if (!selectedProjects.length && projectOptions.length) {
-            setSelectedProjects(projectOptions.map((o) => o.id));
-        }
-    }, [projectOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+        const optionIds = projectOptions.map((o) => o.id);
+
+        setSelectedProjects((prev) => {
+            if (!optionIds.length) {
+                return prev.length ? [] : prev;
+            }
+
+            const filtered = prev.filter((id) => optionIds.includes(id));
+            return filtered.length ? filtered : optionIds;
+        });
+    }, [projectOptions]);
 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);

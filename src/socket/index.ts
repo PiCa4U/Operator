@@ -109,6 +109,7 @@ let turnIntervalId: number | undefined;
 let initialAuthTimerId: number | undefined;
 
 const afterReconnectListeners = new Set<() => void>();
+const pendingHa1Resolvers = new Set<(ha1: string | null) => void>();
 
 export function subscribeAfterReconnect(cb: () => void) {
     afterReconnectListeners.add(cb);
@@ -126,8 +127,8 @@ function notifyAfterReconnect() {
         }
     });
 }
-const HA1_REFRESH_MS = 160_000;
-const TURN_REFRESH_MS = 3_300_000;
+const HA1_REFRESH_MS = readNumberFromDataset("ha1RefreshMs", 120_000);
+const TURN_REFRESH_MS = readNumberFromDataset("turnRefreshMs", 3_300_000);
 
 function isReadyForConnect() {
     const { sessionKey } = getOp();
@@ -244,12 +245,12 @@ function stopStatusInterval() {
 }
 
 /** ---- HA1/TURN (только при включённом WebRTC) ---- */
-function requestHa1() {
+function requestHa1(): boolean {
     const { sessionKey } = getOp();
     const { sipLogin, worker } = getCreds();
-    if (!webrtcEnabled) return;
-    if (!sessionKey || !sipLogin || !worker) return;
-    if (!isConnected()) return;
+    if (!webrtcEnabled) return false;
+    if (!sessionKey || !sipLogin || !worker) return false;
+    if (!isConnected()) return false;
 
     socket.emit("fs_ha1", {
         session_key: sessionKey,
@@ -257,14 +258,15 @@ function requestHa1() {
         sip_login: sipLogin,
         worker,
     });
+    return true;
 }
 
-function requestTurn() {
+function requestTurn(): boolean {
     const { sessionKey } = getOp();
     const { sipLogin, worker } = getCreds();
-    if (!webrtcEnabled) return;
-    if (!sessionKey || !sipLogin || !worker) return;
-    if (!isConnected()) return;
+    if (!webrtcEnabled) return false;
+    if (!sessionKey || !sipLogin || !worker) return false;
+    if (!isConnected()) return false;
 
     socket.emit("fs_turn", {
         session_key: sessionKey,
@@ -277,19 +279,24 @@ function requestTurn() {
     //
     // })
     // socket.emit('login', {worker})
+    return true;
 }
 
-function scheduleInitialAuth(delayMs: number) {
+function scheduleInitialTurn(delayMs: number) {
     if (initialAuthTimerId) {
         clearTimeout(initialAuthTimerId);
         initialAuthTimerId = undefined;
     }
 
     initialAuthTimerId = window.setTimeout(() => {
-        requestHa1();
         requestTurn();
         initialAuthTimerId = undefined;
     }, Math.max(0, delayMs));
+}
+
+function requestInitialWebRtcCreds() {
+    requestHa1();
+    scheduleInitialTurn(graceDelayMs());
 }
 
 function startAuthIntervals() {
@@ -326,6 +333,13 @@ function makeTurnSignature(data: any): string {
 function onHa1(data: { ha1: string }) {
     if (!webrtcEnabled) return;
     if (data?.ha1) store.dispatch(setHa1(data.ha1));
+    const nextHa1 = data?.ha1 ? String(data.ha1) : null;
+    pendingHa1Resolvers.forEach((resolve) => {
+        try {
+            resolve(nextHa1);
+        } catch {}
+    });
+    pendingHa1Resolvers.clear();
 }
 
 function onTurn(data: any) {
@@ -343,7 +357,7 @@ export function enableWebRTC() {
     socket.on("fs_ha1", onHa1);
     socket.on("fs_turn", onTurn);
 
-    scheduleInitialAuth(graceDelayMs());
+    requestInitialWebRtcCreds();
     startAuthIntervals();
 
     ensureConnected();
@@ -361,6 +375,44 @@ export function disableWebRTC() {
         clearTimeout(initialAuthTimerId);
         initialAuthTimerId = undefined;
     }
+
+    pendingHa1Resolvers.forEach((resolve) => {
+        try {
+            resolve(null);
+        } catch {}
+    });
+    pendingHa1Resolvers.clear();
+}
+
+export function requestHa1Now(timeoutMs = 4000): Promise<string | null> {
+    if (!webrtcEnabled || !isReadyForConnect()) {
+        return Promise.resolve(null);
+    }
+
+    ensureConnected();
+
+    return new Promise((resolve) => {
+        let settled = false;
+        let timeoutId: number | undefined;
+
+        const finish = (nextHa1: string | null) => {
+            if (settled) return;
+            settled = true;
+            pendingHa1Resolvers.delete(finish);
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = undefined;
+            }
+            resolve(nextHa1);
+        };
+
+        pendingHa1Resolvers.add(finish);
+        requestHa1();
+
+        timeoutId = window.setTimeout(() => {
+            finish(null);
+        }, Math.max(0, timeoutMs));
+    });
 }
 
 /** ===== screen share events ===== */
@@ -460,7 +512,7 @@ socket.on("connect", () => {
         startStatusInterval();
 
         if (webrtcEnabled) {
-            scheduleInitialAuth(graceDelayMs());
+            requestInitialWebRtcCreds();
             startAuthIntervals();
         }
     }
@@ -499,7 +551,7 @@ store.subscribe(() => {
             if (reconnectEnabled) emitReconnectEvent();
 
             if (webrtcEnabled) {
-                scheduleInitialAuth(graceDelayMs());
+                requestInitialWebRtcCreds();
                 startAuthIntervals();
             }
         }

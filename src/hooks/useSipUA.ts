@@ -14,7 +14,7 @@ import {
 } from 'sip.js';
 import type { TurnCredentials } from '../redux/operatorSlice';
 import { ToneManager } from '../telephony/ToneManager';
-import { socket } from '../socket';
+import { socket, requestHa1Now } from '../socket';
 import { store } from '../redux/store';
 import { readExternalConfig, subscribeExternalConfig, AppExternalConfig } from '../externalConfig';
 
@@ -181,6 +181,7 @@ export function useSipUA(config: {
     const restartingRef        = useRef(false);
     const pendingRestartRef    = useRef(false);
     const latestTurnCredsRef   = useRef<TurnCredentials | null>(turnCreds ?? null);
+    const latestHa1Ref         = useRef(ha1);
 
     const pingTimerRef         = useRef<ReturnType<typeof setInterval> | null>(null);
     const regListenerRef       = useRef<((st: RegistererState)=>void) | null>(null);
@@ -254,6 +255,9 @@ export function useSipUA(config: {
 
     const aliveRef             = useRef(true);
     useEffect(() => () => { aliveRef.current = false; }, []);
+    useEffect(() => {
+        latestHa1Ref.current = ha1;
+    }, [ha1]);
 
     // ToneManager с внешним конфигом
     const tonesRef   = useRef<ToneManager | null>(null);
@@ -812,7 +816,7 @@ export function useSipUA(config: {
             const uaOptions: UserAgentOptions = {
                 uri,
                 authorizationUsername: userId,
-                authorizationHa1: ha1,
+                authorizationHa1: latestHa1Ref.current,
                 transportOptions: { server: wsServer, keepAliveInterval: 20000 },
                 sessionDescriptionHandlerFactoryOptions: {
                     constraints: { audio: true, video: false },
@@ -914,6 +918,11 @@ export function useSipUA(config: {
         restartingRef.current = true;
         try {
             await clearUA('restart');
+            await requestHa1Now(5000);
+            const refreshedHa1 = store.getState().operator.ha1;
+            if (refreshedHa1) {
+                latestHa1Ref.current = refreshedHa1;
+            }
             await initUA(creds);
         } finally {
             restartingRef.current = false;

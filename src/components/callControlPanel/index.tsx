@@ -248,7 +248,7 @@ function processAlerts(swalRef: React.MutableRefObject<any>) {
         text: next.text || '',
         icon: mapIcon(next.type),
         allowOutsideClick: false,
-        confirmButtonText: 'РћРє'
+        confirmButtonText: 'Ок'
     }).then(() => {
         isShowingAlertRef.current = false;
 
@@ -3391,7 +3391,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     icon: 'error',
                     title: 'Ошибка при запуске модуля',
                     text: msg.error,
-                    confirmButtonText: 'РћРє'
+                    confirmButtonText: 'Ок'
                 });
 
                 setRunningModulesCount(0);

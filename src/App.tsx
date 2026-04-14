@@ -13,6 +13,7 @@ import Swal from "sweetalert2";
 import { webrtcOwner } from "./webrtcOwner";
 import { OperatorScreenSharePanel } from "./screenShare/OperatorScreenSharePanel";
 import {
+    selectOperatorAccess,
     selectOperatorProfile,
     setOperatorAccess,
     setOperatorProfile,
@@ -591,13 +592,30 @@ export default function App() {
         store.getState().credentials;
 
     const { ha1, turnCreds } = useSelector((s: RootState) => s.operator);
+    const operatorAccess = useSelector(selectOperatorAccess);
     const operatorProfile = useSelector(selectOperatorProfile);
-    const legacyProjectPool = useSelector(
-        (s: RootState) => s.operator.monitorData.monitorCallcenter[sipLogin] || []
+    const allProjectsMap = useSelector((s: RootState) => s.operator.monitorData.allProjects);
+    const allProjectNamesSig = useMemo(
+        () =>
+            Array.from(
+                new Set(
+                    [
+                        ...Object.keys(allProjectsMap || {}),
+                        ...Object.values(allProjectsMap || {}).map((project: any) =>
+                            String(project?.project_name ?? "").trim()
+                        ),
+                    ]
+                        .map((value) => String(value).trim())
+                        .filter(Boolean)
+                )
+            )
+                .sort()
+                .join("\u001f"),
+        [allProjectsMap]
     );
-    const legacyProjectPoolForAccess = useMemo(
-        () => Array.from(new Set(normalizeStringArray(legacyProjectPool))),
-        [legacyProjectPool]
+    const allProjectNames = useMemo(
+        () => (allProjectNamesSig ? allProjectNamesSig.split("\u001f").filter(Boolean) : []),
+        [allProjectNamesSig]
     );
 
     // screenShare slice (ты сказал что добавил)
@@ -637,11 +655,18 @@ export default function App() {
                 const matchOperator = agents.find((oper: any) => oper.login === sipLogin) ?? null;
 
                 store.dispatch(setOperatorProfile(matchOperator));
+                const fallbackProjects = Array.from(
+                    new Set(
+                        normalizeStringArray(
+                            store.getState().operator.monitorData.monitorCallcenter[sipLogin] || []
+                        )
+                    )
+                );
 
                 const bootstrapProjects = Array.from(
                     new Set(
                         normalizeStringArray(
-                            matchOperator?.projects ?? matchOperator?.projects_names ?? legacyProjectPoolForAccess
+                            matchOperator?.projects ?? matchOperator?.projects_names ?? fallbackProjects
                         )
                     )
                 );
@@ -654,33 +679,6 @@ export default function App() {
                 const queues = Array.from(
                     new Set(normalizeStringArray(matchOperator?.queues ?? matchOperator?.projects))
                 );
-
-                let allowedProjects = presetIds === null ? bootstrapProjects : [];
-
-                if ((presetIds?.length ?? 0) > 0 && bootstrapProjects.length) {
-                    try {
-                        const presetRole = matchOperator?.type === "manager" ? "manager" : "operator";
-                        const presetsResp = await axios.post<any[]>("/api/v1/get_preset_list", {
-                            glagol_parent: glagolParent,
-                            worker,
-                            projects: bootstrapProjects,
-                            role: presetRole,
-                        });
-                        const presetList = Array.isArray(presetsResp.data) ? presetsResp.data : [];
-                        const resolvedProjects = Array.from(
-                            new Set(
-                                presetList
-                                    .filter((preset) => (presetIds ?? []).includes(Number(preset?.id)))
-                                    .flatMap((preset) => normalizeStringArray(preset?.projects))
-                            )
-                        );
-
-                        allowedProjects = resolvedProjects;
-                    } catch (presetErr) {
-                        console.error("Ошибка при построении project scope оператора:", presetErr);
-                    }
-                }
-
                 store.dispatch(
                     setOperatorAccess({
                         loaded: true,
@@ -688,12 +686,18 @@ export default function App() {
                         flowIds,
                         queues,
                         bootstrapProjects,
-                        allowedProjects,
+                        allowedProjects: presetIds === null ? bootstrapProjects : [],
                     })
                 );
             } catch (err) {
                 console.error("Ошибка загрузки агентов:", err);
-                const fallbackProjects = legacyProjectPoolForAccess;
+                const fallbackProjects = Array.from(
+                    new Set(
+                        normalizeStringArray(
+                            store.getState().operator.monitorData.monitorCallcenter[sipLogin] || []
+                        )
+                    )
+                );
                 store.dispatch(setOperatorProfile(null));
                 store.dispatch(
                     setOperatorAccess({
@@ -708,7 +712,95 @@ export default function App() {
             }
         };
         fetchAgents();
-    }, [glagolParent, legacyProjectPoolForAccess, sipLogin, worker]);
+    }, [glagolParent, sipLogin]);
+
+    useEffect(() => {
+        if (!operatorAccess.loaded || operatorAccess.presetIds === null) {
+            return;
+        }
+
+        const assignedPresetIds = Array.from(
+            new Set(
+                normalizeNumberArray(operatorAccess.presetIds)
+                    .map((id) => Number(id))
+                    .filter((id) => Number.isFinite(id))
+            )
+        );
+
+        if (assignedPresetIds.length === 0) {
+            const currentSig = [...store.getState().operator.operatorAccess.allowedProjects]
+                .sort()
+                .join("\u001f");
+            if (currentSig) {
+                store.dispatch(
+                    setOperatorAccess({
+                        ...store.getState().operator.operatorAccess,
+                        allowedProjects: [],
+                    })
+                );
+            }
+            return;
+        }
+
+        const scopeProjects = allProjectNames.length
+            ? allProjectNames
+            : operatorAccess.bootstrapProjects;
+
+        if (!scopeProjects.length) {
+            return;
+        }
+
+        let cancelled = false;
+
+        (async () => {
+            try {
+                const presetRole = operatorProfile?.type === "manager" ? "manager" : "operator";
+                const presetsResp = await axios.post<any[]>("/api/v1/get_preset_list", {
+                    glagol_parent: glagolParent,
+                    worker,
+                    projects: scopeProjects,
+                    role: presetRole,
+                });
+
+                if (cancelled) return;
+
+                const presetList = Array.isArray(presetsResp.data) ? presetsResp.data : [];
+                const resolvedProjects = Array.from(
+                    new Set(
+                        presetList
+                            .filter((preset) => assignedPresetIds.includes(Number(preset?.id)))
+                            .flatMap((preset) => normalizeStringArray(preset?.projects))
+                    )
+                );
+                const currentAccess = store.getState().operator.operatorAccess;
+                const currentSig = [...currentAccess.allowedProjects].sort().join("\u001f");
+                const nextSig = [...resolvedProjects].sort().join("\u001f");
+
+                if (currentSig !== nextSig) {
+                    store.dispatch(
+                        setOperatorAccess({
+                            ...currentAccess,
+                            allowedProjects: resolvedProjects,
+                        })
+                    );
+                }
+            } catch (presetErr) {
+                console.error("Failed to resolve operator preset project scope:", presetErr);
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        allProjectNames,
+        glagolParent,
+        operatorAccess.bootstrapProjects,
+        operatorAccess.loaded,
+        operatorAccess.presetIds,
+        operatorProfile?.type,
+        worker,
+    ]);
 
     const name = operatorProfile?.name ?? "—";
     const glagol = operatorProfile?.glagol_service ?? "—";

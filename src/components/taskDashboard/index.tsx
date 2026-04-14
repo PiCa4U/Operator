@@ -1244,10 +1244,33 @@ const PresetSelectorTable: React.FC<Props> = ({
     const defaultStatusToState = useRef<boolean>(false)
 
     const operatorAccess = useSelector(selectOperatorAccess);
+    const allProjectsMap = useSelector((state: RootState) => state.operator.monitorData.allProjects);
     const projectPool = useSelector(useMemo(() => makeSelectAccessibleProjectPool(sipLogin), [sipLogin]));
     const fullProjectNames = useMemo(
         () => Array.from(new Set(projectPool.map((p) => String(p?.project_name ?? "").trim()).filter(Boolean))),
         [projectPool]
+    );
+    const allProjectNamesSig = useMemo(
+        () =>
+            Array.from(
+                new Set(
+                    [
+                        ...Object.keys(allProjectsMap || {}),
+                        ...Object.values(allProjectsMap || {}).map((project: any) =>
+                            String(project?.project_name ?? "").trim()
+                        ),
+                    ]
+                        .map((value) => String(value).trim())
+                        .filter(Boolean)
+                )
+            )
+                .sort()
+                .join("\u001f"),
+        [allProjectsMap]
+    );
+    const allProjectNames = useMemo(
+        () => (allProjectNamesSig ? allProjectNamesSig.split("\u001f").filter(Boolean) : []),
+        [allProjectNamesSig]
     );
     const requestedProjectNames = useMemo(() => {
         const source =
@@ -1423,11 +1446,35 @@ const PresetSelectorTable: React.FC<Props> = ({
             return;
         }
 
-        if (stablePresetRequestProjects.length === 0) {
+        const assignedPresetIds =
+            operatorAccess.presetIds === null
+                ? null
+                : Array.from(
+                    new Set(
+                        (operatorAccess.presetIds ?? [])
+                            .map((id) => Number(id))
+                            .filter((id) => Number.isFinite(id))
+                    )
+                );
+
+        if (assignedPresetIds !== null && assignedPresetIds.length === 0) {
             setPresets([]);
             setPresetsLoaded(true);
             setSelectedPreset(null);
             localStorage.removeItem('tasksSelectedPreset');
+            return;
+        }
+
+        if (assignedPresetIds === null && stablePresetRequestProjects.length === 0) {
+            setPresets([]);
+            setPresetsLoaded(true);
+            setSelectedPreset(null);
+            localStorage.removeItem('tasksSelectedPreset');
+            return;
+        }
+
+        if (assignedPresetIds !== null && allProjectNames.length === 0) {
+            setPresetsLoaded(false);
             return;
         }
 
@@ -1438,15 +1485,15 @@ const PresetSelectorTable: React.FC<Props> = ({
             const response = await axios.post<Preset[]>('/api/v1/get_preset_list', {
                 glagol_parent: glagolParent,
                 worker,
-                projects: stablePresetRequestProjects,
+                projects: assignedPresetIds === null ? stablePresetRequestProjects : allProjectNames,
                 role
             });
             if (cancelled) return;
             const data: Preset[] = Array.isArray(response.data) ? response.data : [];
             const filteredData =
-                operatorAccess.presetIds === null
+                assignedPresetIds === null
                     ? data
-                    : data.filter((preset) => (operatorAccess.presetIds ?? []).includes(Number(preset.id)));
+                    : data.filter((preset) => assignedPresetIds.includes(Number(preset.id)));
             const presetOptions = filteredData.map(p => ({value: p.id, label: p.preset_name, preset: p}));
             setPresets(presetOptions);
 
@@ -1480,7 +1527,16 @@ const PresetSelectorTable: React.FC<Props> = ({
         return () => {
             cancelled = true;
         };
-    }, [glagolParent, operatorAccess.loaded, operatorAccess.presetIds, role, setSelectedPreset, stablePresetRequestProjects, worker]);
+    }, [
+        allProjectNames,
+        glagolParent,
+        operatorAccess.loaded,
+        operatorAccess.presetIds,
+        role,
+        setSelectedPreset,
+        stablePresetRequestProjects,
+        worker
+    ]);
 
     const finishChain = () => {
         Swal.fire("Готово", "Действия выполнены", "success");

@@ -147,6 +147,7 @@ interface HeaderPanelProps {
     showScriptPanel: boolean;
     selectedProject: Project | null;
     setSelectedProject: (selectedProject: Project) => void;
+    postActive: boolean;
     setPostActive: (postActive: boolean) => void;
     setOutboundCall: (outBoundCall: boolean) => void;
     setActiveProjectName: (activeProjectName: string) => void;
@@ -186,6 +187,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
                                                      showTasksDashboard,
                                                      setShowTasksDashboard,
                                                      setIsLoading,
+                                                     postActive,
                                                      outActivePhone,
                                                      assignedKey,
                                                      setAssignedKey,
@@ -239,9 +241,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     const fsStatus = useSelector((state: RootState) => state.operator.fsStatus, isEqual);
 
-    const post =
-        (fsStatus.status === "Available (On Demand)" || fsStatus.status === "Available") &&
-        fsStatus.state === "Idle";
+    const post = postActive;
 
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
     const projectPool = useSelector(selectFullProjectPool) || [];
@@ -277,8 +277,6 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const [handleOutboundCall, setHandleOutboundCall] = useState<boolean>(false);
     const [outPreparation, setOutPreparation] = useState(false);
     const [hasActiveCall, setHasActiveCall] = useState<boolean>(false);
-    const [postCallData, setPostCallData] = useState<any>({});
-
     const [presets, setPresets] = useState<OptionType[]>([]);
     const [callTimer, setCallTimer] = useState<string>("00:00");
 
@@ -354,52 +352,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
 
     useEffect(() => {
         setHandleOutboundCall(false);
-
-        const first = activeCalls[0];
-        const hasAppField = first !== undefined && "application" in (first as any);
-        const hasApp = Boolean((first as any)?.application);
-
-        if (hasAppField && hasApp) setPostCallData(first);
-
-        if (!hasActiveCall && !hasAppField && postCallData?.application) {
-            socket.emit("get_fs_report", {
-                worker,
-                session_key: sessionKey,
-                sip_login: sipLogin,
-                level: 0,
-            });
-
-            if (fsStatus.status === "On Break") {
-                socket.emit("change_status_fs", {
-                    sip_login: sipLogin,
-                    worker,
-                    session_key: sessionKey,
-                    action: "available",
-                    page: "online",
-                });
-            }
-
-            socket.emit("fs_post_started", {
-                session_key: sessionKey,
-                sip_login: sipLogin,
-                worker,
-                reason: "postobrabotka",
-            });
-
-            setIsLoading(true);
-            // socket.emit("outbound_call_update", {
-            //     worker,
-            //     session_key: sessionKey,
-            //     ...(assignedKey ? { assigned_key: assignedKey } : {}),
-            //     log_status: "finished",
-            //     phone_status: "finished",
-            //     special_key: specialKey,
-            //     project_name: outActiveProjectName,
-            // });
-            setPostCallData({});
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeCalls, postCallData, hasActiveCall]);
+    }, [activeCalls]);
 
     const getRegisteredSofia = (status: string) => (status || "").includes("Registered");
 

@@ -248,7 +248,7 @@ function processAlerts(swalRef: React.MutableRefObject<any>) {
         text: next.text || '',
         icon: mapIcon(next.type),
         allowOutsideClick: false,
-        confirmButtonText: 'Ок'
+        confirmButtonText: 'РћРє'
     }).then(() => {
         isShowingAlertRef.current = false;
 
@@ -289,6 +289,12 @@ interface PhoneCombo {
     phone: string;
     values: string[];
     projects: string[];
+}
+interface ContactInfoOptionItem {
+    phone: string;
+    project: string;
+    value: string;
+    contactKey: string;
 }
 export interface PhoneOption {
     id: string;
@@ -566,6 +572,7 @@ interface CallControlPanelProps {
     setModules: (modules: ModuleData[]) => void
     prefix: string
     outboundCall: boolean
+    setOutboundCall?: (outboundCall: boolean) => void
     tuskMode:boolean
     setTuskMode?: (tuskMode:boolean) => void
     fullWidthCard?: boolean
@@ -588,6 +595,7 @@ interface CallControlPanelProps {
     setPhoneID?: (phoneID: number | null) => void
     setSelectedCall: (call: CallData | null) => void
     isChating?: boolean
+    setActiveGuid?: (guid: string) => void
     isClient?: boolean
     checkBox?: string | null
     interCall?: any;
@@ -622,6 +630,13 @@ function getContactGuid(c: any): string | null {
         (c?.b_uuid && String(c.b_uuid)) ||
         (c?.uuid && String(c.uuid)) ||
         null
+    );
+}
+function getContactSelectionKey(c: any): string {
+    return String(
+        c?.guid ??
+        c?.id ??
+        `${String(c?.project ?? "")}:${String(c?.phone ?? "")}`
     );
 }
 function normalizeStorage(storage: any): string[] {
@@ -862,6 +877,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                setModules,
                                                                prefix,
                                                                outboundCall,
+                                                               setOutboundCall,
                                                                tuskMode,
                                                                setTuskMode,
                                                                fullWidthCard,
@@ -884,6 +900,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                setPhoneID,
                                                                setSelectedCall,
                                                                isChating,
+                                                               setActiveGuid,
                                                                isClient,
                                                                checkBox= null,
                                                                interCall,
@@ -986,7 +1003,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         const sample = openedPhones?.[0];
         if (!sample || !Array.isArray(keys) || !keys.length) return undefined;
 
-        return keys.map((k) => String((sample as any)[k] ?? (sample as any)?.contact_info?.[k] ?? "").trim());
+        const values = keys
+            .map((k) => String((sample as any)[k] ?? (sample as any)?.contact_info?.[k] ?? "").trim())
+            .filter(Boolean);
+
+        return values.length === keys.length ? values : undefined;
     }, [openedPhones, selectedPreset?.preset?.group_by]);
 
     const groupByPayload = useMemo(() => {
@@ -999,14 +1020,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     );
 
 
-    const POST_LIMIT = worker.includes('fs@akc24.ru') ? 12000 : 1200;
+    const POST_LIMIT = worker.includes('fs@akc24.ru') ? 12000 : 1800;
 
     const postSecondsRef = useRef<number>(POST_LIMIT);
 
     const debounceOnchangeTimersRef = useRef<Record<string, any>>({});
     const valuesRef = useRef(values);
     useEffect(() => { valuesRef.current = values; }, [values]);
-
     const baseFieldValuesRef = useRef(baseFieldValues);
     useEffect(() => { baseFieldValuesRef.current = baseFieldValues; }, [baseFieldValues]);
 
@@ -1205,10 +1225,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     function setCallResultByAny(v: any) {
         const str = v == null ? '' : String(v);
         if (str === '') { setCallResult(''); return; }
-        // 1) по id
+        // 1) РїРѕ id
         const byId = callResults.find(r => String(r.id) === str);
         if (byId) { setCallResult(String(byId.id)); return; }
-        // 2) по name
+        // 2) РїРѕ name
         const byName = callResults.find(r => String(r.name) === str);
         if (byName) { setCallResult(String(byName.id)); return; }
         // иначе сброс
@@ -1265,6 +1285,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     }, [guidsFromOpened]);
 
     const [selectedPhoneByField, setSelectedPhoneByField] = useState<Record<string,string>>({});
+    const selectedPhoneByFieldRef = useRef(selectedPhoneByField);
+    useEffect(() => { selectedPhoneByFieldRef.current = selectedPhoneByField; }, [selectedPhoneByField]);
+    const [selectedContactKey, setSelectedContactKey] = useState('');
 
     const [runningModulesCount, setRunningModulesCount] = useState(0);
 
@@ -1486,7 +1509,6 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const project = call?.project_name || '';
     const hideReportFields = forbiddenProjects.includes(project);
 
-    const prevCallRef = useRef<ActiveCall | null>(null);
 
     useEffect(() => {
         if (openedPhones && openedPhones.length) {
@@ -1568,7 +1590,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
     }, [call, hasActiveCall, postActive, sessionKey, worker]);
 
-// ────────────────────────────────────────────────────────────────────────────────
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     const handleProjectFields = (data: {
         project_fields: string;
         as_is_dict: Record<string, FieldDefinition[]>;
@@ -2479,25 +2501,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 //     }, [hasActiveCall]);
 
     useEffect(() => {
-        const prevCall = prevCallRef.current;
-        const thisCall = hasActiveCall ? activeCalls[0] : null;
-        if (prevCall && !postActive && !activeCalls[0]?.application ) {
-            socket.emit('fs_post_started', {
-                session_key: sessionKey,
-                sip_login: sipLogin,
-                worker
-            })
-            setIsParams(false)
-            setPostActive(true);
-            postSecondsRef.current = POST_LIMIT
-        }
         if (hasActiveCall) {
             setIsParams(true)
-            setPostActive(false);
             postSecondsRef.current = POST_LIMIT;
         }
-        prevCallRef.current = thisCall;
-    }, [hasActiveCall, activeCalls]);
+    }, [hasActiveCall]);
 
     const handleAutoReturn = () => {
         Swal.fire({
@@ -2921,21 +2929,13 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const callFromCard = async (project_name: string, phone: string, phoneId?: number) => {
         manualCallRef.current = true;
         startModulesRanRef.current = true;
+        setOutboundCall?.(true);
 
         if (phoneId && setPhoneID) {
             setPhoneID(phoneId);
         }
 
         try {
-            socket.emit("change_state_fs", {
-                sip_login: sipLogin,
-                worker,
-                session_key: sessionKey,
-                state: "idle",
-                reason: "start_outbound_call",
-                page: "online",
-            });
-
             await axios.post("/api/v1/calls/call", {
                 glagol_parent: glagolParent,
                 project_name,
@@ -2950,6 +2950,9 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 showConfirmButton: false,
             });
         } catch (error: any) {
+            setOutboundCall?.(false);
+            startModulesRanRef.current = false;
+            manualCallRef.current = false;
             console.error("Ошибка при вызове:", error);
 
             await Swal.fire({
@@ -3388,7 +3391,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     icon: 'error',
                     title: 'Ошибка при запуске модуля',
                     text: msg.error,
-                    confirmButtonText: 'Ок'
+                    confirmButtonText: 'РћРє'
                 });
 
                 setRunningModulesCount(0);
@@ -3741,10 +3744,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         </button>
                     </div>
 
-                    {/* Интеграции (общие) */}
+                    {/* �?нтеграции (общие) */}
                     {(manualCommon.length > 0 || manualModules.length > 0) && (
                         <>
-                            <div style={sectionTitle}>Интеграции</div>
+                            <div style={sectionTitle}>�?нтеграции</div>
                             <div style={grid}>
                                 {(tuskMode ? manualCommon : manualModules).map((mod) => (
                                     <button
@@ -3763,7 +3766,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         </>
                     )}
 
-                    {/* Интеграции по проектам (только в tuskMode) */}
+                    {/* �?нтеграции по проектам (только в tuskMode) */}
                     {tuskMode &&
                         Object.entries(manualByProject).map(([proj, mods]) =>
                                 mods.length ? (
@@ -3927,64 +3930,177 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         )
     }
     const contactInfoOptions = useMemo(() => {
-        const result: Record<string, Array<{ phone: string; project: string; value: string }>> = {};
+        const result: Record<string, ContactInfoOptionItem[]> = {};
         (openedPhones || []).forEach(ph => {
+            const contactKey = getContactSelectionKey(ph);
             Object.entries(ph.contact_info || {}).forEach(([fieldId, value]) => {
                 if (!result[fieldId]) result[fieldId] = [];
                 result[fieldId].push({
                     phone: ph.phone,
                     project: ph.project,
                     value: String(value),
+                    contactKey,
                 });
             });
         });
         return result;
     }, [openedPhones]);
 
-    useEffect(() => {
-        // setValues({});
-
-        if (!openedPhones?.length) return;
-
-        const next: GroupFieldValues = {};
-        selectedProjects.forEach(proj => {
-            next[proj] = {};
+    const contactsByKey = useMemo(() => {
+        const map = new Map<string, any>();
+        (openedPhones || []).forEach((ph) => {
+            map.set(getContactSelectionKey(ph), ph);
         });
+        return map;
+    }, [openedPhones]);
 
-        Object.entries(contactInfoOptions).forEach(([fieldId, opts]) => {
-            const uniq = Array.from(new Set(opts.map(o => o.value).filter(v => v !== '')));
-            if (uniq.length === 1) {
-                selectedProjects.forEach(proj => {
-                    next[proj][fieldId] = uniq[0];
-                });
-            }
-        });
-        if (!manualCallRef.current) {
-            setValues(prev => {
-                const merged: GroupFieldValues = { ...prev };
-                Object.keys(next).forEach((proj) => {
-                    merged[proj] = { ...(prev[proj] || {}), ...(next[proj] || {}) };
-                });
-                return merged;
-            });
+    const preferredContactKey = useMemo(() => {
+        const preferredContact =
+            (openedPhones || []).find((ph: any) => Number(ph?.id) === Number(phoneID)) ||
+            (openedPhones || [])[0] ||
+            null;
+
+        return preferredContact ? getContactSelectionKey(preferredContact) : '';
+    }, [openedPhones, phoneID]);
+
+    const contactSelectionContextKey = useMemo(() => {
+        const ids = (openedPhones || [])
+            .map((ph: any) => Number(ph?.id))
+            .filter((id) => Number.isFinite(id))
+            .sort((a, b) => a - b)
+            .join(',');
+
+        return `${String(phoneID ?? '')}|${ids}`;
+    }, [openedPhones, phoneID]);
+
+    const contactFieldIds = useMemo(
+        () => Object.keys(contactInfoOptions),
+        [contactInfoOptions]
+    );
+
+    const syncSelectedContactInfo = useCallback((contactKey: string) => {
+        const selectedContact = contactsByKey.get(contactKey);
+        if (!selectedContact || !contactFieldIds.length) return;
+
+        const selectedGuid = getContactGuid(selectedContact);
+        if (selectedGuid) {
+            setActiveGuid?.(selectedGuid);
         }
-    }, [openedPhones, contactInfoOptions, selectedProjects]);
+
+        const projectsScope = Array.from(
+            new Set([...(selectedProjects || []), ...(groupProjects || [])].filter(Boolean))
+        );
+        if (!projectsScope.length) return;
+
+        const selectedContactInfo = selectedContact?.contact_info || {};
+
+        setValues((cur) => {
+            let changed = false;
+            const nextValues: GroupFieldValues = { ...cur };
+
+            projectsScope.forEach((proj) => {
+                const prevProjectValues = cur[proj] || {};
+                let nextProjectValues = prevProjectValues;
+
+                contactFieldIds.forEach((fieldId) => {
+                    const nextValue = String(selectedContactInfo[fieldId] ?? '');
+                    const currentValue = String(prevProjectValues[fieldId] ?? '');
+                    if (currentValue === nextValue) return;
+
+                    if (nextProjectValues === prevProjectValues) {
+                        nextProjectValues = { ...prevProjectValues };
+                    }
+                    nextProjectValues[fieldId] = nextValue;
+                    changed = true;
+                });
+
+                if (nextProjectValues !== prevProjectValues) {
+                    nextValues[proj] = nextProjectValues;
+                }
+            });
+
+            return changed ? nextValues : cur;
+        });
+    }, [contactsByKey, contactFieldIds, selectedProjects, groupProjects, setActiveGuid]);
+
+    const lastContactSelectionContextRef = useRef('');
 
     useEffect(() => {
-        if (!openedPhones?.length) return;
+        if (!openedPhones?.length) {
+            setSelectedContactKey((prev) => (prev ? '' : prev));
+            if (Object.keys(selectedPhoneByFieldRef.current).length) setSelectedPhoneByField({});
+            lastContactSelectionContextRef.current = '';
+            return;
+        }
+
+        setSelectedContactKey((prev) => {
+            const shouldResetToPreferred =
+                lastContactSelectionContextRef.current !== contactSelectionContextKey;
+
+            lastContactSelectionContextRef.current = contactSelectionContextKey;
+
+            if (shouldResetToPreferred && preferredContactKey) {
+                return preferredContactKey;
+            }
+            if (prev && contactsByKey.has(prev)) {
+                return prev;
+            }
+            return preferredContactKey;
+        });
+    }, [openedPhones, preferredContactKey, contactsByKey, contactSelectionContextKey]);
+
+    useEffect(() => {
+        if (!openedPhones?.length || !selectedContactKey) return;
+
+        const nextSelected: Record<string, string> = {};
+        mergedFieldsAll.forEach((f) => {
+            const { showDropdown, combos } = getFieldPhoneOptions(f, contactInfoOptions);
+            if (!showDropdown || !combos.length) return;
+
+            const chosenKey = combos.some((combo) => combo.id === selectedContactKey)
+                ? selectedContactKey
+                : '';
+
+            f.projects.forEach((proj) => {
+                const fieldId = f.fieldIds[proj];
+                if (!fieldId) return;
+
+                const uiKey = f.projects.length > 1 ? f.id : fieldId;
+                nextSelected[uiKey] = chosenKey;
+            });
+        });
+
+        setSelectedPhoneByField((prev) => {
+            const prevKeys = Object.keys(prev);
+            const nextKeys = Object.keys(nextSelected);
+            const sameShape =
+                prevKeys.length === nextKeys.length &&
+                nextKeys.every((key) => prev[key] === nextSelected[key]);
+
+            return sameShape ? prev : nextSelected;
+        });
+
+        syncSelectedContactInfo(selectedContactKey);
+    }, [openedPhones, selectedContactKey, mergedFieldsAll, contactInfoOptions, syncSelectedContactInfo]);
+
+
+    useEffect(() => {
+        if (!openedPhones?.length || selectedContactKey) return;
 
         const nextValues: GroupFieldValues = {};
-        selectedProjects.forEach(proj => { nextValues[proj] = { ...(values[proj] || {}) }; });
+        selectedProjects.forEach(proj => { nextValues[proj] = { ...(valuesRef.current?.[proj] || {}) }; });
 
         const nextSelected: Record<string, string> = {};
 
         mergedFieldsAll.forEach(f => {
             const { showDropdown, distinctValueSets, combos } =
                 getFieldPhoneOptions(f, contactInfoOptions);
+            const isVisibleInUi = mergedFields.some(u => u.id === f.id);
 
             f.projects.forEach(proj => {
                 if (!nextValues[proj]) return;
                 const fieldId = f.fieldIds[proj];
+                if (!fieldId) return;
 
                 if (!showDropdown) {
                     if (!nextValues[proj][fieldId] && distinctValueSets[0]) {
@@ -4009,6 +4125,57 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             return merged;
         });
         setSelectedPhoneByField(nextSelected);
+    }, [contactInfoOptions, selectedProjects, openedPhones, mergedFieldsAll, mergedFields, selectedContactKey]);
+
+    useEffect(() => {
+        if (!openedPhones?.length) return;
+
+        const dropdownValues: GroupFieldValues = {};
+        const dropdownSelected: Record<string, string> = {};
+        let hasDropdowns = false;
+
+        mergedFieldsAll.forEach((f) => {
+            const { showDropdown, combos } = getFieldPhoneOptions(f, contactInfoOptions);
+            if (!showDropdown || !combos.length) return;
+
+            hasDropdowns = true;
+            const isVisibleInUi = mergedFields.some((u) => u.id === f.id);
+
+            f.projects.forEach((proj) => {
+                if (!selectedProjects.includes(proj)) return;
+
+                const fieldId = f.fieldIds[proj];
+                if (!fieldId) return;
+
+                if (!dropdownValues[proj]) {
+                    dropdownValues[proj] = {};
+                }
+
+                const uiKey = f.projects.length > 1 ? f.id : fieldId;
+                const persistedSelection = selectedPhoneByFieldRef.current?.[uiKey];
+                const chosenCombo = persistedSelection
+                    ? combos.find((c) => c.id === persistedSelection)
+                    : combos[0];
+
+                dropdownValues[proj][fieldId] = chosenCombo ? chosenCombo.values.join(", ") : "";
+
+                if (isVisibleInUi) {
+                    dropdownSelected[uiKey] = chosenCombo?.id || "";
+                }
+            });
+        });
+
+        if (!hasDropdowns) return;
+
+        setValues((cur) => {
+            const merged: GroupFieldValues = { ...cur };
+            Object.entries(dropdownValues).forEach(([proj, fields]) => {
+                merged[proj] = { ...(cur[proj] || {}), ...fields };
+            });
+            return merged;
+        });
+
+        setSelectedPhoneByField(dropdownSelected);
     }, [contactInfoOptions, selectedProjects, openedPhones, mergedFieldsAll, mergedFields]);
 
     useEffect(() => {
@@ -4119,7 +4286,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     function getFieldPhoneOptions(
         f: MergedField,
-        contactInfoOptions: Record<string, Array<{phone:string,project:string,value:string}>>
+        contactInfoOptions: Record<string, ContactInfoOptionItem[]>
     ): {
         showDropdown: boolean;
         distinctValueSets: string[];
@@ -4128,25 +4295,25 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         const items = f.projects.flatMap(proj => {
             const id = f.fieldIds[proj];
             return (contactInfoOptions[id] || [])
-                .map(o => ({ phone: o.phone, project: o.project, value: o.value }))
+                .map(o => ({ phone: o.phone, project: o.project, value: o.value, contactKey: o.contactKey }))
                 .filter(x => x.value);
         });
 
-        const byPhone: Record<string, { values: string[]; projects: string[] }> = {};
-        items.forEach(({ phone, project, value }) => {
-            if (!byPhone[phone]) {
-                byPhone[phone] = { values: [], projects: [] };
+        const byContact: Record<string, { phone: string; values: string[]; projects: string[] }> = {};
+        items.forEach(({ phone, project, value, contactKey }) => {
+            if (!byContact[contactKey]) {
+                byContact[contactKey] = { phone, values: [], projects: [] };
             }
-            byPhone[phone].values.push(value);
-            byPhone[phone].projects.push(project);
+            byContact[contactKey].values.push(value);
+            byContact[contactKey].projects.push(project);
         });
 
-        const combos: PhoneCombo[] = Object.entries(byPhone).map(
-            ([phone, { values, projects }]) => {
+        const combos: PhoneCombo[] = Object.entries(byContact).map(
+            ([contactKey, { phone, values, projects }]) => {
                 const uniqVals = Array.from(new Set(values));
                 const uniqProjs = Array.from(new Set(projects));
                 return {
-                    id: `${phone}|${uniqVals.join(',')}`,
+                    id: contactKey,
                     phone,
                     values: uniqVals,
                     projects: uniqProjs
@@ -4370,22 +4537,17 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                                 marginBottom: 10
                                                                             }}
                                                                         >
-                                                                            ℹ️
+                                                                            {String.fromCodePoint(0x2139, 0xfe0f)}
                                                                         </abbr>
                                                                     </div>
                                                                     <PhoneProjectSelect
-                                                                        value={selectedPhoneByField[f.id] || ''}
+                                                                        value={combos.some(c => c.id === selectedContactKey) ? selectedContactKey : ''}
                                                                         onChange={val => {
-                                                                            setSelectedPhoneByField(cur => ({ ...cur, [f.id]: val }));
-                                                                            const [, joinedValues] = val.split('|');
-                                                                            setValues(cur => {
-                                                                                const next = { ...cur };
-                                                                                f.projects.forEach(proj => {
-                                                                                    const fid = f.fieldIds[proj];
-                                                                                    next[proj] = { ...next[proj], [fid]: joinedValues };
-                                                                                });
-                                                                                return next;
-                                                                            });
+                                                                            if (!val) return;
+                                                                            const chosenCombo = combos.find(c => c.id === val);
+                                                                            const joinedValues = chosenCombo ? chosenCombo.values.join(', ') : '';
+                                                                            setSelectedContactKey(val);
+                                                                            syncSelectedContactInfo(val);
                                                                             f.projects.forEach(proj => {
                                                                                 const fid = f.fieldIds[proj];
                                                                                 triggerOnchangeModulesForField(proj, fid, f, joinedValues);
@@ -4534,18 +4696,17 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                                                                                         marginBottom: 10
                                                                                                     }}
                                                                                                 >
-                                                                                                    ℹ️
+                                                                                                    {String.fromCodePoint(0x2139, 0xfe0f)}
                                                                                                 </abbr>
                                                                                             </div>
-                                                                                            <PhoneProjectSelect
-                                                                                                value={selectedPhoneByField[fieldId] || ''}
-                                                                                                onChange={val => {
-                                                                                                    setSelectedPhoneByField(cur => ({ ...cur, [fieldId]: val }));
-                                                                                                    const [phone, joinedValues] = val.split('|');
-                                                                                                    setValues(cur => ({
-                                                                                                        ...cur,
-                                                                                                        [proj]: { ...cur[proj], [fieldId]: joinedValues }
-                                                                                                    }));
+                                                                                             <PhoneProjectSelect
+                                                                                                 value={combos.some(c => c.id === selectedContactKey) ? selectedContactKey : ''}
+                                                                                                 onChange={val => {
+                                                                                                     if (!val) return;
+                                                                                                     const chosenCombo = combos.find(c => c.id === val);
+                                                                                                     const joinedValues = chosenCombo ? chosenCombo.values.join(', ') : '';
+                                                                                                     setSelectedContactKey(val);
+                                                                                                     syncSelectedContactInfo(val);
                                                                                                     // ← onchange-триггеры
                                                                                                     triggerOnchangeModulesForField(proj, fieldId, f, joinedValues);
                                                                                                 }}

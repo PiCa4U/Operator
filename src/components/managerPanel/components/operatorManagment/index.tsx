@@ -726,19 +726,23 @@ export const OperatorsTab: React.FC = () => {
 
     }, [activeScreenOperator, handleScreenShareStop, sessionKey, worker, sipLogin]);
 
-    useEffect(() => {
+useEffect(() => {
         let mounted = true;
         (async () => {
-            try {
-                const [projectsResp, queues, flows] = await Promise.all([
-                    axios.get("/api/v1/projects", { params: { glagol_parent } }),
-                    getQueues(),
-                    getFlows(),
-                ]);
+            const [projectsResult, queuesResult, flowsResult] = await Promise.allSettled([
+                axios.get("/api/v1/projects", { params: { glagol_parent } }),
+                getQueues(),
+                getFlows(),
+            ]);
 
-                const arr = Array.isArray(projectsResp.data?.projects) ? projectsResp.data.projects : [];
-                const nextProjMap: Record<string, string> = {};
-                const projectCodes: string[] = [];
+            const nextProjMap: Record<string, string> = {};
+            const projectCodes: string[] = [];
+
+            if (projectsResult.status === "fulfilled") {
+                const arr = Array.isArray(projectsResult.value.data?.projects)
+                    ? projectsResult.value.data.projects
+                    : [];
+
                 for (const project of arr) {
                     const key = String(project?.project_name || "").trim();
                     if (!key) continue;
@@ -746,8 +750,19 @@ export const OperatorsTab: React.FC = () => {
                     projectCodes.push(key);
                 }
 
+                if (mounted) {
+                    setProjMap(nextProjMap);
+                }
+            } else {
+                console.error("Не удалось загрузить список проектов", projectsResult.reason);
+                if (mounted) {
+                    setProjMap({});
+                }
+            }
+
+            if (queuesResult.status === "fulfilled") {
                 const nextQueueMap: Record<string, string> = {};
-                const nextQueueOptions = queues
+                const nextQueueOptions = queuesResult.value
                     .map((queue) => {
                         const label = formatQueueLabel(queue);
                         nextQueueMap[queue.queue] = label;
@@ -755,7 +770,20 @@ export const OperatorsTab: React.FC = () => {
                     })
                     .sort((a, b) => a.label.localeCompare(b.label, "ru"));
 
-                const nextFlowOptions = flows
+                if (mounted) {
+                    setQueueMap(nextQueueMap);
+                    setQueueOptions(nextQueueOptions);
+                }
+            } else {
+                console.error("Не удалось загрузить список очередей", queuesResult.reason);
+                if (mounted) {
+                    setQueueMap({});
+                    setQueueOptions([]);
+                }
+            }
+
+            if (flowsResult.status === "fulfilled") {
+                const nextFlowOptions = flowsResult.value
                     .filter((flow) => flow.active !== false)
                     .map((flow) => ({
                         value: String(flow.id),
@@ -763,6 +791,17 @@ export const OperatorsTab: React.FC = () => {
                     }))
                     .sort((a, b) => a.label.localeCompare(b.label, "ru"));
 
+                if (mounted) {
+                    setFlowOptions(nextFlowOptions);
+                }
+            } else {
+                console.error("Не удалось загрузить список flow", flowsResult.reason);
+                if (mounted) {
+                    setFlowOptions([]);
+                }
+            }
+
+            try {
                 const presets = projectCodes.length ? await getPresets(projectCodes) : [];
                 const nextPresetOptions = presets
                     .filter((preset) => preset.active !== false)
@@ -772,16 +811,14 @@ export const OperatorsTab: React.FC = () => {
                     }))
                     .sort((a, b) => a.label.localeCompare(b.label, "ru"));
 
-                if (!mounted) return;
-
-                setProjMap(nextProjMap);
-                setQueueMap(nextQueueMap);
-                setQueueOptions(nextQueueOptions);
-                setFlowOptions(nextFlowOptions);
-                setPresetOptions(nextPresetOptions);
+                if (mounted) {
+                    setPresetOptions(nextPresetOptions);
+                }
             } catch (err) {
-                console.error("Не удалось загрузить справочники операторов", err);
-                console.error("Не удалось загрузить список проектов", err);
+                console.error("Не удалось загрузить список пресетов", err);
+                if (mounted) {
+                    setPresetOptions([]);
+                }
             }
         })();
         return () => {

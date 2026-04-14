@@ -9,6 +9,7 @@ import { queryClient } from "./queryClient";
 import axios from "axios";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import ItsmGuidRoute from "./features/itsm/ItsmGuidRoute";
+import Swal from "sweetalert2";
 import { webrtcOwner } from "./webrtcOwner";
 import { OperatorScreenSharePanel } from "./screenShare/OperatorScreenSharePanel";
 import {
@@ -20,6 +21,7 @@ import {
 type ScreenShareStatus = "idle" | "requesting" | "sharing" | "denied" | "error";
 
 type PhoneMode = "softphone" | "webrtc";
+type BrowserNotificationPermissionState = NotificationPermission | "unsupported";
 
 function normalizeStringArray(raw: unknown): string[] {
     if (!raw) return [];
@@ -272,6 +274,65 @@ const ScreenSharePermissionBanner: React.FC<{
     );
 };
 
+const BrowserNotificationBanner: React.FC<{
+    show: boolean;
+    permission: BrowserNotificationPermissionState;
+    onRequest: () => void;
+    onCheck: () => void;
+    onHelp: () => void;
+}> = ({ show, permission, onRequest, onCheck, onHelp }) => {
+    const [hidden, setHidden] = React.useState(false);
+
+    React.useEffect(() => {
+        setHidden(false);
+    }, [permission, show]);
+
+    if (!show || hidden) return null;
+
+    return (
+        <div
+            style={{
+                background: "#fff8e1",
+                borderBottom: "1px solid #ffe08a",
+                padding: "8px 16px",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+            }}
+        >
+            <div style={{ fontSize: 18, lineHeight: 1, marginRight: 4 }}>🔔</div>
+            <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700 }}>Браузерные уведомления</div>
+                <div style={{ fontSize: 13 }}>
+                    {permission === "default"
+                        ? "Разрешите уведомления, чтобы звонковая вкладка возвращалась при входящих вызовах. "
+                        : "Уведомления браузера заблокированы. Включите их в настройках сайта, чтобы не пропускать входящие вызовы. "}
+                    <span style={{ color: "#6c757d" }}>
+                        {permission === "default"
+                            ? "Нажмите «Разрешить уведомления» и подтвердите доступ в браузере."
+                            : "Если браузер уже показал запрет, откройте разрешения сайта и включите пункт «Уведомления», затем нажмите «Проверить»."}
+                    </span>
+                </div>
+            </div>
+            {permission === "default" ? (
+                <button className="btn btn-sm btn-outline-secondary" onClick={onRequest}>
+                    Разрешить уведомления
+                </button>
+            ) : (
+                <button className="btn btn-sm btn-outline-secondary" onClick={onCheck}>
+                    Проверить
+                </button>
+            )}
+            <button className="btn btn-sm btn-link" onClick={onHelp}>
+                Как включить
+            </button>
+            <button className="btn btn-sm btn-link" onClick={() => setHidden(true)}>
+                Скрыть
+            </button>
+        </div>
+    );
+};
+
 /* ===================== RootHome ===================== */
 type RootHomeProps = {
     isOwner: boolean;
@@ -305,6 +366,10 @@ type RootHomeProps = {
     screenStatus: ScreenShareStatus;
     screenGrantedOnce: boolean;
     onCheckScreenShare: () => void;
+    browserNotificationPermission: BrowserNotificationPermissionState;
+    onRequestBrowserNotificationPermission: () => void;
+    onCheckBrowserNotificationPermission: () => void;
+    onShowBrowserNotificationHelp: () => void;
 };
 
 const RootHome: React.FC<RootHomeProps> = ({
@@ -332,6 +397,10 @@ const RootHome: React.FC<RootHomeProps> = ({
                                                screenStatus,
                                                screenGrantedOnce,
                                                onCheckScreenShare,
+                                               browserNotificationPermission,
+                                               onRequestBrowserNotificationPermission,
+                                               onCheckBrowserNotificationPermission,
+                                               onShowBrowserNotificationHelp,
                                            }) => {
 
     const ModeSwitch = (
@@ -361,6 +430,17 @@ const RootHome: React.FC<RootHomeProps> = ({
             turnCreds={turnCreds || null}
         >
             <OwnerBusyBridge />
+            <BrowserNotificationBanner
+                show={
+                    isOwner &&
+                    browserNotificationPermission !== "granted" &&
+                    browserNotificationPermission !== "unsupported"
+                }
+                permission={browserNotificationPermission}
+                onRequest={onRequestBrowserNotificationPermission}
+                onCheck={onCheckBrowserNotificationPermission}
+                onHelp={onShowBrowserNotificationHelp}
+            />
 
             {/* Баннер микрофона — только владельцу в режиме webrtc */}
             <MicPermissionBanner
@@ -638,6 +718,13 @@ export default function App() {
 
     const [infoOpen, setInfoOpen] = useState(false);
     const infoRef = useRef<HTMLDivElement | null>(null);
+    const [browserNotificationPermission, setBrowserNotificationPermission] =
+        useState<BrowserNotificationPermissionState>(() => {
+            if (typeof Notification === "undefined") return "unsupported";
+            return Notification.permission;
+        });
+    const notificationPermissionRequestRef = useRef(false);
+    const lastNotificationPermissionAttemptAtRef = useRef(0);
 
     useEffect(() => {
         const onDocClick = (e: MouseEvent) => {
@@ -678,6 +765,86 @@ export default function App() {
         window.dispatchEvent(new CustomEvent("screen_share:check_permission"));
     }, []);
 
+    const syncBrowserNotificationPermission = React.useCallback(() => {
+        if (typeof Notification === "undefined") {
+            setBrowserNotificationPermission("unsupported");
+            return;
+        }
+        setBrowserNotificationPermission(Notification.permission);
+    }, []);
+
+    const requestBrowserNotificationPermission = React.useCallback(() => {
+        if (typeof Notification === "undefined") return;
+        if (Notification.permission !== "default") {
+            syncBrowserNotificationPermission();
+            return;
+        }
+        if (notificationPermissionRequestRef.current) return;
+
+        const now = Date.now();
+        if (now - lastNotificationPermissionAttemptAtRef.current < 1200) return;
+        lastNotificationPermissionAttemptAtRef.current = now;
+
+        notificationPermissionRequestRef.current = true;
+
+        void Notification.requestPermission()
+            .catch(() => {})
+            .finally(() => {
+                notificationPermissionRequestRef.current = false;
+                syncBrowserNotificationPermission();
+            });
+    }, [syncBrowserNotificationPermission]);
+
+    useEffect(() => {
+        if (browserNotificationPermission !== "default") return;
+
+        const requestPermission = () => {
+            requestBrowserNotificationPermission();
+        };
+
+        window.addEventListener("pointerdown", requestPermission, true);
+        window.addEventListener("click", requestPermission, true);
+        window.addEventListener("keydown", requestPermission, true);
+
+        return () => {
+            window.removeEventListener("pointerdown", requestPermission, true);
+            window.removeEventListener("click", requestPermission, true);
+            window.removeEventListener("keydown", requestPermission, true);
+        };
+    }, [browserNotificationPermission, requestBrowserNotificationPermission]);
+
+    useEffect(() => {
+        const syncPermission = () => {
+            syncBrowserNotificationPermission();
+        };
+
+        window.addEventListener("focus", syncPermission);
+        document.addEventListener("visibilitychange", syncPermission);
+
+        return () => {
+            window.removeEventListener("focus", syncPermission);
+            document.removeEventListener("visibilitychange", syncPermission);
+        };
+    }, [syncBrowserNotificationPermission]);
+
+    const showBrowserNotificationHelp = React.useCallback(() => {
+        void Swal.fire({
+            icon: "info",
+            title: "Как включить уведомления",
+            html: `
+                <div style="text-align:left">
+                    <p style="margin-bottom:8px">Чтобы не пропускать входящие вызовы:</p>
+                    <ol style="padding-left:18px; margin-bottom:0">
+                        <li>Нажмите значок замка или настроек рядом с адресом сайта.</li>
+                        <li>Для пункта "Уведомления" выберите "Разрешить".</li>
+                        <li>Обновите страницу и вернитесь в звонковую вкладку.</li>
+                    </ol>
+                </div>
+            `,
+            confirmButtonText: "Понятно",
+        });
+    }, []);
+
     return (
         <QueryClientProvider client={queryClient}>
             <BrowserRouter>
@@ -711,6 +878,10 @@ export default function App() {
                                 screenStatus={screenStatus || "idle"}
                                 screenGrantedOnce={screenGrantedOnce}
                                 onCheckScreenShare={onCheckScreenShare}
+                                browserNotificationPermission={browserNotificationPermission}
+                                onRequestBrowserNotificationPermission={requestBrowserNotificationPermission}
+                                onCheckBrowserNotificationPermission={syncBrowserNotificationPermission}
+                                onShowBrowserNotificationHelp={showBrowserNotificationHelp}
                             />
                         }
                     />

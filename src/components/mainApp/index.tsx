@@ -20,7 +20,6 @@ import TasksDashboard, {ApiRow, ColumnCfgWithSearch, OptionType, Preset} from ".
 import stylesButton from '../callControlPanel/index.module.css';
 import axios from "axios";
 import {ManagerPanel} from "../managerPanel";
-import Swal from "sweetalert2";
 import { useSip } from '../../context/SipContext';
 import NotificationPopup from '../notifications';
 import {SessionState} from "sip.js";
@@ -44,6 +43,46 @@ const MemoCallControlPanel = React.memo(CallControlPanel);
 
 const ITSM_SPLIT_KEY = "itsm:chat_call_split:v1";
 type IncomingProgressStage = "accepted" | "connecting" | "loading_card";
+type CallTabVisualState = "idle" | "incoming" | "active";
+
+function incomingSessionId(session: any): string {
+    return String(session?.id ?? session?.request?.callId ?? "");
+}
+
+function isPageHidden(): boolean {
+    if (typeof document === "undefined") return false;
+    if (document.visibilityState !== "visible") return true;
+    if (typeof document.hasFocus === "function") return !document.hasFocus();
+    return false;
+}
+
+function buildCallTabFaviconHref(state: CallTabVisualState, blinkOn = true): string {
+    const isBlinkVisible = state !== "incoming" || blinkOn;
+    const fill =
+        state === "active"
+            ? "#22c55e"
+            : state === "incoming"
+                ? isBlinkVisible
+                    ? "#ef4444"
+                    : "#ffffff"
+                : "#ffffff";
+    const stroke =
+        state === "active"
+            ? "#15803d"
+            : state === "incoming"
+                ? isBlinkVisible
+                    ? "#b91c1c"
+                    : "#94a3b8"
+                : "#94a3b8";
+
+    const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+            <circle cx="32" cy="32" r="20" fill="${fill}" stroke="${stroke}" stroke-width="8" />
+        </svg>
+    `.trim();
+
+    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
 
 function is4Digits(val: any) {
     return /^\d{4}$/.test(String(val ?? "").trim());
@@ -678,9 +717,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     });
     const [incomingProgressStage, setIncomingProgressStage] = useState<IncomingProgressStage | null>(null);
     const [incomingProgressFrom, setIncomingProgressFrom] = useState<string>("");
+    const [incomingProgressToneMode, setIncomingProgressToneMode] = useState<"none" | "once">("none");
     const [activeProjectName, setActiveProjectName] = useState<string>("")
     const [selectedProject, setSelectedProject] = useState<Project | null>(null);
     const [postActive, setPostActive] = useState<boolean>(false);
+    const [postTransitionPending, setPostTransitionPending] = useState<boolean>(false);
     const [currentPage, setCurrentPage] = useState(1);
     const [outboundCall, setOutboundCall] = useState<boolean>(false)
     const [outActivePhone, setOutActivePhone] = useState<string | null>(null);
@@ -739,6 +780,13 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const expressProjectRef = useRef<string>("");
     const lockSourceRowRef = useRef<any>(null);
     const autoAnsweredIncomingRef = useRef<any>(null);
+    const incomingBrowserNotificationRef = useRef<Notification | null>(null);
+    const incomingBrowserNotificationKeyRef = useRef<string>("");
+    const managedFaviconLinkRef = useRef<HTMLLinkElement | null>(null);
+    const initialFaviconHrefRef = useRef<string | null>(null);
+    const initialFaviconTypeRef = useRef<string | null>(null);
+    const initialFaviconRelRef = useRef<string | null>(null);
+    const createdFaviconLinkRef = useRef(false);
 
     const lastOutStartTokenRef = useRef<string>("");
 
@@ -758,6 +806,10 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const activeCalls: any[] = useMemo(() => {
         return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
     }, [rawActiveCalls]);
+    const activeCallsRef = useRef<any[]>(activeCalls);
+    useEffect(() => {
+        activeCallsRef.current = activeCalls;
+    }, [activeCalls]);
 
     const rawInterCalls = useSelector((state: RootState) => (state.operator as any).interCalls);
     const interCalls: any[] = useMemo(() => {
@@ -788,7 +840,21 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const hasLiveConsult =
         !!consultSession && String(consultStatus ?? "") !== "Terminated";
 
-    const hasExternalActive = activeCalls.length > 0 || activeCall || postActive;
+    const effectivePostActive = postActive || postTransitionPending;
+    const setUnifiedPostActive = React.useCallback((next: boolean) => {
+        setPostActive(next);
+        if (!next) {
+            setPostTransitionPending(false);
+        }
+    }, []);
+    const beginUnifiedPostTransition = React.useCallback(() => {
+        setPostTransitionPending(true);
+    }, []);
+    const confirmUnifiedPostActive = React.useCallback(() => {
+        setPostActive(true);
+        setPostTransitionPending(false);
+    }, []);
+    const hasExternalActive = activeCalls.length > 0 || activeCall || effectivePostActive;
     const showInterOverlay = !!interCall && !hasExternalActive;
     const showInterInCardHeader = !!interCall && hasExternalActive;
 
@@ -1338,11 +1404,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                     const { data } = await chatApi.get(`/api/v1/contacts/${encodeURIComponent(guid)}`);
                     const contacts = Array.isArray(data?.data) ? data.data : [];
                     const rows = contacts.map((c: any, i: number) => ({
+                        ...c,
                         id: c.id ?? -(i + 1),
                         phone: c?.phone ?? c?.contact_info?.phone ?? "",
                         project: c?.project ?? c?.contact_info?.project ?? "",
                         contact_info: c?.contact_info ?? {},
-                        guid: String(guid),
+                        guid: String(c?.guid ?? c?.contact_info?.guid ?? guid),
                         storage: Array.isArray(c?.storage) ? c.storage : [],
                     }));
                     setOpenedPhones(rows);
@@ -1360,9 +1427,9 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         if (!isOwner || !enabled) {
             dispatch(setActiveCalls([]));
             dispatch(setInterCalls([]));
-            setPostActive(false);
+            setUnifiedPostActive(false);
         }
-    }, [isOwner, enabled, dispatch]);
+    }, [isOwner, enabled, dispatch, setUnifiedPostActive]);
 
     useEffect(() => {
         if (!connected || !messages.length) return;
@@ -1537,12 +1604,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         window.location.href = "https://my.glagol.ai/login_work/";
 };
 
-    // useEffect(() => {
-    //     socket.on('logout', handleLogout);
-    //     return () => {
-    //         socket.off('logout', handleLogout);
-    //     };
-    // }, []);
+    useEffect(() => {
+        socket.on('logout', handleLogout);
+        return () => {
+            socket.off('logout', handleLogout);
+        };
+    }, []);
 
     useEffect(() => {
         const now = new Date().toISOString();
@@ -1638,7 +1705,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             .trim();
     }
     useEffect(() => {
-        if (activeCalls.length || postActive) return
+        if (activeCalls.length || effectivePostActive) return
         if (selectedCall) {
         }
         if (selectedCall && Object.values(selectedCall.projects)[0].call_result === null) {
@@ -1658,7 +1725,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             setScriptDir(scriptDirection)
             setScriptProject(cleanProjectName(scriptProj))
         }
-    },[activeCalls.length, postActive, selectedCall, sessionKey, worker])
+    },[activeCalls.length, effectivePostActive, selectedCall, sessionKey, worker])
 
     useEffect(()=> {
         if (showTasksDashboard && !momoProjectRepo.current) {
@@ -1698,7 +1765,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         //     setOpenedPhones([])
         //     setGroupIDs([])
         // }
-    },[showTasksDashboard, postActive, activeCalls.length, selectedCall])
+    },[showTasksDashboard, effectivePostActive, activeCalls.length, selectedCall])
 
     const groupProjects = useMemo(() =>
             Array.from(new Set(openedPhones.map(p => p.project))),
@@ -1793,14 +1860,14 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     }, [fullWidthCard]);
 
     useEffect(()=> {
-        if (!activeCall && !postActive && (modules.length || Object.keys(monoModules).length) && !openedPhones.length && !selectedCall) {
+        if (!activeCall && !effectivePostActive && (modules.length || Object.keys(monoModules).length) && !openedPhones.length && !selectedCall) {
             setModules([])
             setMonoModules({})
         }
-    },[activeCall, modules.length, monoModules, openedPhones.length, postActive, selectedCall])
+    },[activeCall, effectivePostActive, modules.length, monoModules, openedPhones.length, selectedCall])
 
     useEffect(() => {
-        if (!activeCall && !postActive) {
+        if (!activeCall && !effectivePostActive) {
             inboundSearchSeqRef.current += 1;
             setActiveProjectName('');
             setSelectedCall(null);
@@ -1817,13 +1884,20 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             // setGroupIDs([])
             setExpressCall(false)
         }
-    }, [activeCall, postActive]);
+    }, [activeCall, effectivePostActive]);
 
     useEffect(() => {
         if(openedPhones.length === 0) {
             momoProjectRepo.current = false
         }
     },[openedPhones])
+
+    useEffect(() => {
+        if (postActive && postTransitionPending) {
+            setPostTransitionPending(false);
+        }
+    }, [postActive, postTransitionPending]);
+
     useEffect(()=> {
         if (!activeCall && postActive && sessionKey) {
             socket.emit('get_fs_report', {
@@ -1849,8 +1923,6 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             setActiveCall(true);
         } else if (!activeCalls.length && activeCall) {
             setActiveCall(false);
-            if (!isOwner || !enabled) return;
-            setPostActive(true);
         }
     }, [activeCall, activeCalls]);
 
@@ -2134,7 +2206,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 setInboundSearchPending(false);
             } catch (err) {
                 setInboundSearchPending(false);
-                console.error("РћС€РёР±РєР° РїСЂРё inbound search РїРѕ РЅРѕРјРµСЂСѓ:", err);
+                console.error("Ошибка при inbound search по номеру:", err);
             }
         };
 
@@ -2416,9 +2488,13 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             if (!isOwner || !enabled) return;
 
             if (msg.status === "Available (On Demand)" && msg.state === "Idle") {
-                setPostActive(true);
-            } else if (msg.status === "Available (On Demand)" && msg.state !== "Idle") {
-                setPostActive(false);
+                confirmUnifiedPostActive();
+            } else if (
+                msg.status === "Available (On Demand)" &&
+                msg.state !== "Idle" &&
+                !postTransitionPending
+            ) {
+                setUnifiedPostActive(false);
             }
         };
 
@@ -2435,10 +2511,24 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             });
 
             const { interCalls, activeCalls } = splitFsCalls(filteredArray);
-
             const sig = fsCallsSig(activeCalls) + "||" + fsCallsSig(interCalls);
             if (sig === lastFsCallsSigRef.current) return;
             lastFsCallsSigRef.current = sig;
+            const hadActiveCalls = activeCallsRef.current.length > 0;
+            const hasNextActiveCalls = activeCalls.length > 0;
+
+            if (!hasNextActiveCalls && hadActiveCalls) {
+                beginUnifiedPostTransition();
+                setIsLoading(true);
+                socket.emit("fs_post_started", {
+                    session_key: sessionKey,
+                    sip_login: sipLogin,
+                    worker,
+                    reason: "postobrabotka",
+                });
+            } else if (hasNextActiveCalls) {
+                setPostTransitionPending(false);
+            }
 
             dispatch(setInterCalls(interCalls));
             dispatch(setActiveCalls(activeCalls));
@@ -2469,7 +2559,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             socket.off("fs_status", handleFsStatus);
             socket.off("fs_calls", handleFsCalls);
         };
-    }, [dispatch, isOwner, enabled, sipLogin, hasLiveConsult]);
+    }, [beginUnifiedPostTransition, confirmUnifiedPostActive, dispatch, enabled, hasLiveConsult, isOwner, postTransitionPending, sessionKey, setUnifiedPostActive, sipLogin, worker]);
     useEffect(() => {
         if (!(activeCalls[0] && Object.keys(activeCalls[0]).length > 0)) return
         const first = activeCalls[0]
@@ -2497,18 +2587,227 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         return found ? found.glagol_name : projectName;
     }
 
+    const closeIncomingBrowserNotification = React.useCallback((resetKey = false) => {
+        const current = incomingBrowserNotificationRef.current;
+        if (current) {
+            current.onclose = null;
+            current.onclick = null;
+            current.close();
+            incomingBrowserNotificationRef.current = null;
+        }
+        if (resetKey) {
+            incomingBrowserNotificationKeyRef.current = "";
+        }
+    }, []);
+
+    useEffect(() => {
+        const hideNotificationOnFocus = () => {
+            if (isPageHidden()) return;
+            closeIncomingBrowserNotification(false);
+        };
+
+        window.addEventListener("focus", hideNotificationOnFocus);
+        document.addEventListener("visibilitychange", hideNotificationOnFocus);
+
+        return () => {
+            window.removeEventListener("focus", hideNotificationOnFocus);
+            document.removeEventListener("visibilitychange", hideNotificationOnFocus);
+        };
+    }, [closeIncomingBrowserNotification]);
+
+    useEffect(() => {
+        const shouldClose =
+            !isOwner ||
+            !enabled ||
+            outboundCall ||
+            activeCall ||
+            effectivePostActive ||
+            !incoming ||
+            incoming.state === SessionState.Terminated;
+
+        if (shouldClose) {
+            closeIncomingBrowserNotification(true);
+            return;
+        }
+
+        if (typeof Notification === "undefined") return;
+        if (Notification.permission !== "granted") return;
+        if (!isPageHidden()) return;
+
+        const incomingPhone = String(incoming?.remoteIdentity?.uri?.user ?? "").trim();
+        const notificationKey = incomingSessionId(incoming) || incomingPhone;
+        if (!notificationKey) return;
+        if (incomingBrowserNotificationKeyRef.current === notificationKey) return;
+
+        closeIncomingBrowserNotification(false);
+
+        const title = autoAnswerEnabled ? "Автоподнятие вызова" : "Входящий вызов";
+        const body = incomingPhone
+            ? `Номер ${incomingPhone}. Нажмите, чтобы открыть звонковую вкладку.`
+            : "Нажмите, чтобы открыть звонковую вкладку.";
+
+        const notification = new Notification(title, {
+            body,
+            tag: `incoming-call:${notificationKey}`,
+            requireInteraction: true,
+        });
+
+        notification.onclick = () => {
+            try { window.focus(); } catch {}
+            try { window.parent?.focus?.(); } catch {}
+            window.setTimeout(() => {
+                closeIncomingBrowserNotification(false);
+            }, 50);
+        };
+
+        notification.onclose = () => {
+            if (incomingBrowserNotificationRef.current === notification) {
+                incomingBrowserNotificationRef.current = null;
+            }
+        };
+
+        incomingBrowserNotificationRef.current = notification;
+        incomingBrowserNotificationKeyRef.current = notificationKey;
+    }, [
+        activeCall,
+        autoAnswerEnabled,
+        closeIncomingBrowserNotification,
+        enabled,
+        incoming,
+        isOwner,
+        outboundCall,
+        effectivePostActive,
+    ]);
+
+    useEffect(() => {
+        return () => {
+            closeIncomingBrowserNotification(true);
+        };
+    }, [closeIncomingBrowserNotification]);
+
+    const hasActiveInterCall = useMemo(
+        () => String(interCall?.callstate ?? "").toUpperCase() === "ACTIVE",
+        [interCall]
+    );
+    const hasIncomingInterCall = useMemo(
+        () => String(interCall?.callstate ?? "").toUpperCase() === "EARLY",
+        [interCall]
+    );
+    const callTabVisualState = useMemo<CallTabVisualState>(() => {
+        const hasLiveCall = activeCall || activeCalls.length > 0 || hasActiveInterCall;
+        const hasIncomingCall =
+            !outboundCall &&
+            (((incoming && incoming.state !== SessionState.Terminated) ? true : false) || hasIncomingInterCall);
+
+        if (hasIncomingCall && !hasLiveCall) return "incoming";
+        if (hasLiveCall) return "active";
+        return "idle";
+    }, [activeCall, activeCalls.length, hasActiveInterCall, hasIncomingInterCall, incoming, outboundCall]);
+
+    const ensureManagedFaviconLink = React.useCallback(() => {
+        if (typeof document === "undefined") return null;
+        if (managedFaviconLinkRef.current && document.head.contains(managedFaviconLinkRef.current)) {
+            return managedFaviconLinkRef.current;
+        }
+
+        const existing = document.querySelector(
+            "link[rel='icon'], link[rel='shortcut icon'], link[rel*='icon']"
+        ) as HTMLLinkElement | null;
+
+        if (existing) {
+            managedFaviconLinkRef.current = existing;
+            if (initialFaviconHrefRef.current === null) {
+                initialFaviconHrefRef.current = existing.getAttribute("href");
+                initialFaviconTypeRef.current = existing.getAttribute("type");
+                initialFaviconRelRef.current = existing.getAttribute("rel");
+            }
+            return existing;
+        }
+
+        const created = document.createElement("link");
+        created.setAttribute("rel", "icon");
+        created.setAttribute("type", "image/svg+xml");
+        document.head.appendChild(created);
+        managedFaviconLinkRef.current = created;
+        createdFaviconLinkRef.current = true;
+        return created;
+    }, []);
+
+    const applyCallTabFavicon = React.useCallback((state: CallTabVisualState, blinkOn = true) => {
+        const link = ensureManagedFaviconLink();
+        if (!link) return;
+
+        link.setAttribute("rel", initialFaviconRelRef.current || "icon");
+        link.setAttribute("type", "image/svg+xml");
+        link.setAttribute("href", buildCallTabFaviconHref(state, blinkOn));
+    }, [ensureManagedFaviconLink]);
+
+    const restoreCallTabFavicon = React.useCallback(() => {
+        if (typeof document === "undefined") return;
+        const link = managedFaviconLinkRef.current;
+        if (!link) return;
+
+        if (createdFaviconLinkRef.current && !initialFaviconHrefRef.current) {
+            link.remove();
+            managedFaviconLinkRef.current = null;
+            createdFaviconLinkRef.current = false;
+            return;
+        }
+
+        if (initialFaviconRelRef.current) link.setAttribute("rel", initialFaviconRelRef.current);
+        else link.setAttribute("rel", "icon");
+
+        if (initialFaviconTypeRef.current) link.setAttribute("type", initialFaviconTypeRef.current);
+        else link.removeAttribute("type");
+
+        if (initialFaviconHrefRef.current) link.setAttribute("href", initialFaviconHrefRef.current);
+        else link.removeAttribute("href");
+    }, []);
+
+    useEffect(() => {
+        if (!isOwner) {
+            restoreCallTabFavicon();
+            return;
+        }
+
+        if (callTabVisualState !== "incoming") {
+            applyCallTabFavicon(callTabVisualState, true);
+            return;
+        }
+
+        let blinkOn = true;
+        applyCallTabFavicon("incoming", blinkOn);
+
+        const timer = window.setInterval(() => {
+            blinkOn = !blinkOn;
+            applyCallTabFavicon("incoming", blinkOn);
+        }, 700);
+
+        return () => {
+            window.clearInterval(timer);
+        };
+    }, [applyCallTabFavicon, callTabVisualState, isOwner, restoreCallTabFavicon]);
+
+    useEffect(() => {
+        return () => {
+            restoreCallTabFavicon();
+        };
+    }, [restoreCallTabFavicon]);
+
     useEffect(() => {
         if (!incomingProgressStage) return;
 
-        if (activeCall || postActive) {
+        if (activeCall || effectivePostActive) {
             setIncomingProgressStage(null);
             setIncomingProgressFrom("");
+            setIncomingProgressToneMode("none");
             return;
         }
 
         if (sipStatus === SessionState.Terminated) {
             setIncomingProgressStage(null);
             setIncomingProgressFrom("");
+            setIncomingProgressToneMode("none");
             return;
         }
 
@@ -2516,6 +2815,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             if (showInterOverlay) {
                 setIncomingProgressStage(null);
                 setIncomingProgressFrom("");
+                setIncomingProgressToneMode("none");
                 return;
             }
             setIncomingProgressStage((prev) => prev === "loading_card" ? prev : "loading_card");
@@ -2533,26 +2833,38 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         if (!incoming && !sipStatus) {
             setIncomingProgressStage(null);
             setIncomingProgressFrom("");
+            setIncomingProgressToneMode("none");
         }
-    }, [activeCall, incoming, incomingProgressStage, postActive, showInterOverlay, sipStatus]);
+    }, [activeCall, effectivePostActive, incoming, incomingProgressStage, showInterOverlay, sipStatus]);
 
     useEffect(() => {
-        if (!autoAnswerEnabled) return;
+        const shouldAutoAcceptIncoming = autoAnswerEnabled || outboundCall;
+        if (!shouldAutoAcceptIncoming) return;
         if (!incoming || incoming.state !== SessionState.Initial) return;
-        if (activeCall || postActive) return;
+        if (activeCall || effectivePostActive) return;
         if (autoAnsweredIncomingRef.current === incoming) return;
 
         autoAnsweredIncomingRef.current = incoming;
-        setIncomingProgressFrom(incoming.remoteIdentity.uri.user || "");
-        setIncomingProgressStage("accepted");
+
+        if (outboundCall) {
+            setIncomingProgressStage(null);
+            setIncomingProgressFrom("");
+            setIncomingProgressToneMode("none");
+        } else {
+            setIncomingProgressFrom(incoming.remoteIdentity.uri.user || "");
+            setIncomingProgressStage("accepted");
+            setIncomingProgressToneMode("once");
+        }
+
         answerCall().catch(() => {
             if (autoAnsweredIncomingRef.current === incoming) {
                 autoAnsweredIncomingRef.current = null;
             }
             setIncomingProgressStage(null);
             setIncomingProgressFrom("");
+            setIncomingProgressToneMode("none");
         });
-    }, [activeCall, answerCall, autoAnswerEnabled, incoming, postActive]);
+    }, [activeCall, answerCall, autoAnswerEnabled, effectivePostActive, incoming, outboundCall]);
 
     useEffect(() => {
         if (!incoming || incoming.state === SessionState.Terminated) {
@@ -2565,12 +2877,14 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         autoAnsweredIncomingRef.current = incoming;
         setIncomingProgressFrom(incoming.remoteIdentity.uri.user || "");
         setIncomingProgressStage("accepted");
+        setIncomingProgressToneMode("none");
         answerCall().catch(() => {
             if (autoAnsweredIncomingRef.current === incoming) {
                 autoAnsweredIncomingRef.current = null;
             }
             setIncomingProgressStage(null);
             setIncomingProgressFrom("");
+            setIncomingProgressToneMode("none");
         });
         // clearIncoming();
     };
@@ -2579,6 +2893,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         autoAnsweredIncomingRef.current = null;
         setIncomingProgressStage(null);
         setIncomingProgressFrom("");
+        setIncomingProgressToneMode("none");
         hangUp()
         clearIncoming();
     };
@@ -2597,12 +2912,14 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         incoming &&
         incoming.state === SessionState.Initial &&
         !incomingProgressStage &&
-        !autoAnswerEnabled
+        !autoAnswerEnabled &&
+        !outboundCall
     );
     const showIncomingProgressPopup = Boolean(
         incomingProgressStage &&
         !activeCall &&
-        !postActive
+        !effectivePostActive &&
+        !outboundCall
     );
 
 
@@ -2628,23 +2945,27 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                             from={popupFrom}
                             onAccept={onAccept}
                             onReject={onReject}
+                            toneMode={outboundCall ? "none" : "loop"}
                         />
                     )}
                     {showIncomingProgressPopup && (
                         <NotificationPopup
                             from={popupFrom}
                             progressStage={incomingProgressStage}
+                            toneMode={incomingProgressToneMode}
                         />
                     )}
                 </>
             )}
+
 
             {/* Шапка с панелью управления (HeaderPanel) */}
             <HeaderPanel
                 setShowScriptPanel={setShowScriptPanel}
                 showScriptPanel={showScriptPanel}
                 selectedProject={selectedProject}
-                setPostActive={setPostActive}
+                postActive={effectivePostActive}
+                setPostActive={setUnifiedPostActive}
                 setSelectedProject={setSelectedProject}
                 setOutboundCall={setOutboundCall}
                 setActiveProjectName={setActiveProjectName}
@@ -2685,7 +3006,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             ) : showTasksDashboard ? (
                 <>
                     {/* Показываем Dashboard, если нет активного звонка */}
-                    {!(activeCall || postActive) && openedPhones.length === 0 && (
+                    {!(activeCall || effectivePostActive) && openedPhones.length === 0 && (
                         <TasksDashboard
                             openedGroup={openedGroup}
                             setOpenedGroup={setOpenedGroup}
@@ -2836,14 +3157,14 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                         minHeight: 0,
                                     }}
                                 >
-                                    {(openedPhones.length > 0 || activeCall || postActive) && (
+                                    {(openedPhones.length > 0 || activeCall || effectivePostActive) && (
                                         <MemoCallControlPanel
                                             call={selectedCall}
                                             hasActiveCall={activeCall}
                                             activeProject={scriptProject}
                                             onClose={onCloseCall}
-                                            postActive={postActive}
-                                            setPostActive={setPostActive}
+                                            postActive={effectivePostActive}
+                                            setPostActive={setUnifiedPostActive}
                                             currentPage={currentPage}
                                             outActivePhone={outActivePhone}
                                             outActiveProjectName={outActiveProjectName}
@@ -2856,6 +3177,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                             modules={modules}
                                             prefix={prefix}
                                             outboundCall={outboundCall}
+                                            setOutboundCall={setOutboundCall}
                                             tuskMode={showTasksDashboard}
                                             setTuskMode={setShowTasksDashboard}
                                             fullWidthCard={fullWidthCard}
@@ -2877,6 +3199,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                             phoneID={phoneID}
                                             setPhoneID={setPhoneID}
                                             checkBox={activeGuid}
+                                            setActiveGuid={setActiveGuid}
                                             interCall={interCall}
                                             showInterCallHeader={showInterInCardHeader}
                                             onHangupInterCall={hangupInterCall}
@@ -2901,7 +3224,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                 minWidth: 0,
                             }}
                         >
-                            {!postActive && !activeCall && openedPhones.length > 0 && (
+                            {!effectivePostActive && !activeCall && openedPhones.length > 0 && (
                                 <div style={{ marginLeft: 13, marginRight: 14 }}>
                                     {groupProjects.length > 1 && (
                                         <div
@@ -2945,6 +3268,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                     uuid={postCallData?.uuid}
                                     bUuid={postCallData?.b_uuid}
                                     tuskMode={showTasksDashboard}
+                                    suspendAutoStart={effectivePostActive}
                                 />
                             )}
                         </div>
@@ -2958,14 +3282,14 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                     minWidth: 0,
                                 }}
                             >
-                                {(openedPhones.length > 0 || activeCall || postActive) && (
+                                {(openedPhones.length > 0 || activeCall || effectivePostActive) && (
                                     <MemoCallControlPanel
                                         call={selectedCall}
                                         hasActiveCall={activeCall}
                                         activeProject={scriptProject}
                                         onClose={onCloseCall}
-                                        postActive={postActive}
-                                        setPostActive={setPostActive}
+                                        postActive={effectivePostActive}
+                                        setPostActive={setUnifiedPostActive}
                                         currentPage={currentPage}
                                         outActivePhone={outActivePhone}
                                         outActiveProjectName={outActiveProjectName}
@@ -2978,6 +3302,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                         modules={modules}
                                         prefix={prefix}
                                         outboundCall={outboundCall}
+                                        setOutboundCall={setOutboundCall}
                                         tuskMode={showTasksDashboard}
                                         setTuskMode={setShowTasksDashboard}
                                         fullWidthCard={fullWidthCard}
@@ -2999,6 +3324,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                         phoneID={phoneID}
                                         setPhoneID={setPhoneID}
                                         checkBox={activeGuid}
+                                        setActiveGuid={setActiveGuid}
                                         interCall={interCall}
                                         showInterCallHeader={showInterInCardHeader}
                                         onHangupInterCall={hangupInterCall}
@@ -3016,20 +3342,22 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                         className={fullWidthCard ? "col-12" : "col-12 col-md-6"}
                         style={{ order: fullWidthCard ? 2 : 1 }}
                     >
-                        {selectedCall && scriptDir && scriptProject && !postActive && !activeCalls.length ? (
+                        {selectedCall && scriptDir && scriptProject && !effectivePostActive && !activeCalls.length ? (
                             <ScriptPanel
                                 direction={scriptDir}
                                 projectName={scriptProject}
                                 onClose={() => setSelectedCall(null)}
                                 tuskMode={showTasksDashboard}
                                 selectedCall={selectedCall}
+                                suspendAutoStart={effectivePostActive}
                             />
-                        ) : showScriptPanel || (activeCall && activeProjectName) || (postActive && activeProjectName) ? (
+                        ) : showScriptPanel || (activeCall && activeProjectName) || (effectivePostActive && activeProjectName) ? (
                             <ScriptPanel
                                 direction={scriptDir}
                                 projectName={activeProjectName}
                                 onClose={() => setShowScriptPanel(false)}
                                 tuskMode={showTasksDashboard}
+                                suspendAutoStart={effectivePostActive}
                             />
                         ) : (
                             <CallsDashboard
@@ -3047,14 +3375,14 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                         className={fullWidthCard ? "col-12" : "col-12 col-md-6"}
                         style={{ order: fullWidthCard ? 1 : 2 }}
                     >
-                        {(selectedCall || activeCall || postActive) && (
+                        {(selectedCall || activeCall || effectivePostActive) && (
                             <MemoCallControlPanel
                                 call={selectedCall}
                                 hasActiveCall={activeCall}
                                 activeProject={activeProjectName}
                                 onClose={onCloseCall}
-                                postActive={postActive}
-                                setPostActive={setPostActive}
+                                postActive={effectivePostActive}
+                                setPostActive={setUnifiedPostActive}
                                 currentPage={currentPage}
                                 outActivePhone={outActivePhone}
                                 outActiveProjectName={outActiveProjectName}
@@ -3067,6 +3395,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                 modules={modules}
                                 prefix={prefix}
                                 outboundCall={outboundCall}
+                                setOutboundCall={setOutboundCall}
                                 tuskMode={showTasksDashboard}
                                 fullWidthCard={fullWidthCard}
                                 setFullWidthCard={setFullWidthCard}
@@ -3076,6 +3405,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                 monoModules={monoModules}
                                 setMonoModules={setMonoModules}
                                 expressCall={expressCall}
+                                setActiveGuid={setActiveGuid}
                                 interCall={interCall}
                                 showInterCallHeader={showInterInCardHeader}
                                 onHangupInterCall={hangupInterCall}

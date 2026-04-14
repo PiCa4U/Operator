@@ -92,6 +92,7 @@ interface ScriptPanelProps {
     onClose: () => void;
     tuskMode?: boolean
     selectedCall?: CallData
+    suspendAutoStart?: boolean;
 }
 
 const ScriptPanel: React.FC<ScriptPanelProps> = ({
@@ -102,6 +103,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
                                                      onClose,
                                                      tuskMode = false,
                                                      selectedCall,
+                                                     suspendAutoStart = false,
                                                  }) => {
     const {
         sipLogin   = '',
@@ -159,6 +161,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
     const activeCalls: any[] = useSelector((state: RootState) => state.operator.activeCalls);
     const hasActiveCall = Array.isArray(activeCalls) && activeCalls.length ? activeCalls.some(ac => Object.keys(ac).length > 0) : false
     useEffect(() => {
+        if (suspendAutoStart) return;
         if (hasActiveCall || tuskMode || selectedCall) {
 
             const currentUuid = activeCalls.length ? activeCalls[0].uuid : selectedCall?.special_key_call;
@@ -176,7 +179,7 @@ const ScriptPanel: React.FC<ScriptPanelProps> = ({
             });
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [projectName, direction, activeCalls, selectedCall]);
+    }, [projectName, direction, activeCalls, selectedCall, suspendAutoStart, tuskMode]);
 
     useEffect(() => {
         function handleStartScript(msg: any) {

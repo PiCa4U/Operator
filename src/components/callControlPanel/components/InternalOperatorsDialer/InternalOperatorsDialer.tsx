@@ -446,8 +446,6 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                     sipEstablished;
 
                 try {
-                    await ensureMainCallHeld();
-
                     socket.emit("transfer_data", {
                         worker,
                         session_key: sessionKey,
@@ -460,6 +458,7 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                         await blindTransfer(operatorLogin);
                     } else {
                         if (!onTakeoverTransfer) return;
+                        await ensureMainCallHeld();
                         setBusyKind("transfer");
                         await onTakeoverTransfer(operatorLogin);
                     }
@@ -553,7 +552,6 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                 setBusyKind("blind");
 
                 try {
-                    await ensureMainCallHeld();
                     await blindTransfer(String(item.ext));
 
                     await Swal.fire({
@@ -575,7 +573,7 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                     setBusyKind(null);
                 }
             },
-            [enabled, webrtcEnabled, blindTransfer, sipEstablished, ensureMainCallHeld]
+            [enabled, webrtcEnabled, blindTransfer, sipEstablished]
         );
 
         const badge = useMemo(() => {

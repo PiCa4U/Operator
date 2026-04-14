@@ -3,6 +3,7 @@ import s from './NotificationPopup.module.css';
 import { readExternalConfig, subscribeExternalConfig, AppExternalConfig } from '../../externalConfig';
 
 type ProgressStage = 'accepted' | 'connecting' | 'loading_card';
+type ToneMode = 'none' | 'loop' | 'once';
 
 interface Props {
     from?: string;
@@ -11,6 +12,7 @@ interface Props {
     onAccept?(): void;
     onReject?(): void;
     progressStage?: ProgressStage | null;
+    toneMode?: ToneMode;
 }
 
 const progressOrder: ProgressStage[] = ['accepted', 'connecting', 'loading_card'];
@@ -40,6 +42,7 @@ const NotificationPopup: React.FC<Props> = ({
     onAccept,
     onReject,
     progressStage,
+    toneMode = 'loop',
 }) => {
     const acceptRef = useRef<HTMLButtonElement>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -69,10 +72,10 @@ const NotificationPopup: React.FC<Props> = ({
         a.currentTime = 0;
     };
 
-    const startRingtone = (url: string, volume: number) => {
+    const playTone = (url: string, volume: number, loop: boolean) => {
         stopRingtone();
         const a = new Audio(url);
-        a.loop = true;
+        a.loop = loop;
         a.volume = Math.max(0, Math.min(1, volume ?? 0.6));
         audioRef.current = a;
 
@@ -88,16 +91,21 @@ const NotificationPopup: React.FC<Props> = ({
     };
 
     useEffect(() => {
-        if (isProgressMode) {
+        if (toneMode === 'none') {
             stopRingtone();
             return;
         }
 
-        acceptRef.current?.focus();
-
         const url = resolveIncoming(cfgRef.current);
         const vol = cfgRef.current.volume ?? 0.6;
-        startRingtone(url, vol);
+        const isLoop = toneMode === 'loop';
+        playTone(url, vol, isLoop);
+
+        if (!isLoop) {
+            return () => {
+                stopRingtone();
+            };
+        }
 
         const unsub = subscribeExternalConfig((next: AppExternalConfig): void => {
             cfgRef.current = {
@@ -108,7 +116,7 @@ const NotificationPopup: React.FC<Props> = ({
 
             const newUrl = resolveIncoming(cfgRef.current);
             const newVol = cfgRef.current.volume ?? 0.6;
-            startRingtone(newUrl, newVol);
+            playTone(newUrl, newVol, true);
         });
 
         return () => {
@@ -116,6 +124,11 @@ const NotificationPopup: React.FC<Props> = ({
             stopRingtone();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [toneMode]);
+
+    useEffect(() => {
+        if (isProgressMode) return;
+        acceptRef.current?.focus();
     }, [isProgressMode]);
 
     const handleAccept = () => {

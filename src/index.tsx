@@ -72,14 +72,14 @@ const DEV_USERS = [
         label: "1012 / 1.fs@akc24.ru",
         sipLogin: "1012",
         worker: "1.fs@akc24.ru",
-        sessionKey: "s:1.fs@akc24.ru:f3e0aaf2203f6c331f82e94d0812899e67f555eb613e6c2e",
+        sessionKey: "s:1.fs@akc24.ru:a8c52a8eca866a1588f24b8c3610735eed4199718f25e471",
     },
     {
         id: "1000",
         label: "1000 / 4.fs@akc24.ru",
         sipLogin: "1000",
         worker: "4.fs@akc24.ru",
-        sessionKey: "s:4.fs@akc24.ru:5d98d78fac53010150a7997f08a2049147084821faa9a49f",
+        sessionKey: "s:4.fs@akc24.ru:59122f2cc35e7326cf74bd7148840e8422b9e3fffd6775b7",
     },
     {
         id: "1014",

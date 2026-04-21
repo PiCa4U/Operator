@@ -461,6 +461,27 @@ type GroupFieldValues = Record<
     Record<string/*field_id*/, string/*value*/>
 >;
 
+type ProjectFieldsPayload = {
+    project_fields: string;
+    as_is_dict: Record<string, FieldDefinition[]>;
+    call_reasons: ReasonItem[];
+    call_results: ResultItem[];
+    group_instructions: any;
+};
+
+function areFlatStringMapsEqual(
+    a: Record<string, string> = {},
+    b: Record<string, string> = {}
+): boolean {
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    if (aKeys.length !== bKeys.length) return false;
+    for (const key of aKeys) {
+        if ((a[key] ?? "") !== (b[key] ?? "")) return false;
+    }
+    return true;
+}
+
 export interface ExpressState {
     project: string;
     express_id: number;
@@ -470,6 +491,53 @@ export interface ExpressState {
 }
 
 type CallLike = Partial<ActiveCall> & Record<string, any>;
+
+function normalizeCallLegState(value: unknown): string {
+    return String(value ?? "").trim().toUpperCase();
+}
+
+const TERMINAL_CHANNEL_STATES = new Set([
+    "CS_HANGUP",
+    "CS_REPORTING",
+    "CS_DESTROY",
+    "CS_ROUTING",
+]);
+
+const TERMINAL_CALL_STATES = new Set([
+    "HANGUP",
+    "DOWN",
+    "DESTROY",
+    "TERMINATED",
+]);
+
+function isLegAlive(uuid: unknown, channelState: string, callState: string): boolean {
+    const hasAnyLegData = Boolean(String(uuid ?? "").trim() || channelState || callState);
+    if (!hasAnyLegData) return false;
+    if (TERMINAL_CHANNEL_STATES.has(channelState)) return false;
+    if (TERMINAL_CALL_STATES.has(callState)) return false;
+    return true;
+}
+
+function isLegHeld(channelState: string, callState: string): boolean {
+    return callState === "HELD" || channelState.includes("HIBERNATE");
+}
+
+function isCallOnHold(callLike?: Partial<ActiveCall> | null): boolean {
+    if (!callLike) return false;
+
+    const aCallState = normalizeCallLegState(callLike.callstate);
+    const aChannelState = normalizeCallLegState(callLike.state);
+    const aUuid = String(callLike.uuid ?? callLike.call_uuid ?? "").trim();
+
+    const bCallState = normalizeCallLegState(callLike.b_callstate);
+    const bChannelState = normalizeCallLegState(callLike.b_state);
+    const bUuid = String(callLike.b_uuid ?? callLike.b_call_uuid ?? "").trim();
+
+    const aHeld = isLegAlive(aUuid, aChannelState, aCallState) && isLegHeld(aChannelState, aCallState);
+    const bHeld = isLegAlive(bUuid, bChannelState, bCallState) && isLegHeld(bChannelState, bCallState);
+
+    return aHeld || bHeld;
+}
 
 function extractSipLoginFromPresence(value?: string | number | null): string {
     const raw = String(value ?? "").trim();
@@ -927,12 +995,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const activeCalls: ActiveCall[] = useSelector((state: RootState) => state.operator.activeCalls);
     const isMainCallHeld = useMemo(() => {
         const mainActiveCall = activeCalls?.[0];
-        if (!mainActiveCall) return false;
-
-        return (
-            mainActiveCall.callstate === "HELD" ||
-            mainActiveCall.b_callstate === "HELD"
-        );
+        return isCallOnHold(mainActiveCall);
     }, [activeCalls]);
 
     const [manualNumber, setManualNumber] = useState('');
@@ -1041,6 +1104,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const activeCallsRef = useRef(activeCalls);
     useEffect(() => { activeCallsRef.current = activeCalls; }, [activeCalls]);
+    const projectFieldsHandlerRef = useRef<(data: ProjectFieldsPayload) => void>(() => {});
+    const lastInboundProjectFieldsRequestRef = useRef<string>("");
 
     const postCallDataRef = useRef(postCallData);
     useEffect(() => { postCallDataRef.current = postCallData; }, [postCallData]);
@@ -1537,22 +1602,39 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 });
             }
         }
-    }, [openedPhones, tuskMode, sessionKey, worker, isClient, selectedProjects]);
+    }, [openedPhones, glagolParent, isClient, sessionKey, worker]);
 
+
+    const inboundProjectFieldsRequestKey = useMemo(() => {
+        const currentCall = activeCalls?.[0];
+        if (currentCall?.direction !== "inbound" || !activeProject) return "";
+        const callKey = String(currentCall?.uuid || currentCall?.call_uuid || currentCall?.b_uuid || "");
+        return `${activeProject}|${callKey}`;
+    }, [activeCalls, activeProject]);
 
     useEffect(() => {
-        if (activeCalls[0]?.direction === "inbound" && activeProject) {
-            socket.emit("get_project_fields", {
-                projects: [activeProject],
-                session_key: sessionKey,
-                worker
-            });
+        if (!inboundProjectFieldsRequestKey || !activeProject) {
+            lastInboundProjectFieldsRequestRef.current = "";
+            return;
         }
-    }, [activeCalls, activeProject, sessionKey, worker]);
+
+        if (lastInboundProjectFieldsRequestRef.current === inboundProjectFieldsRequestKey) return;
+        lastInboundProjectFieldsRequestRef.current = inboundProjectFieldsRequestKey;
+
+        socket.emit("get_project_fields", {
+            projects: [activeProject],
+            session_key: sessionKey,
+            worker
+        });
+    }, [activeProject, inboundProjectFieldsRequestKey, sessionKey, worker]);
 
     useEffect(() => {
         if (!hasActiveCall && !postActive && call?.project_name) {
-            const projectNames = Object.keys(call.projects).map((proj => cleanProjectName(proj)));
+            const callProjects =
+                call?.projects && typeof call.projects === "object" ? call.projects : {};
+            const projectNames = Object.keys(callProjects).map((proj => cleanProjectName(proj)));
+            if (!projectNames.length) return;
+
             if (projectNames.length === 1 && projectNames[0] === "outbound") {
                 socket.emit("get_project_fields", {
                     projects: [call.variable_last_arg],
@@ -1568,7 +1650,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             }
 
             const projectName = projectNames[0];
-            const projectDataArray = Object.values(call.projects) as Array<{
+            const projectDataArray = Object.values(callProjects) as Array<{
                 call_reason: number;
                 call_result: number;
                 comment: string;
@@ -1591,13 +1673,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     }, [call, hasActiveCall, postActive, sessionKey, worker]);
 
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-    const handleProjectFields = (data: {
-        project_fields: string;
-        as_is_dict: Record<string, FieldDefinition[]>;
-        call_reasons: ReasonItem[];
-        call_results: ResultItem[];
-        group_instructions: any;
-    }) => {
+    const handleProjectFields = (data: ProjectFieldsPayload) => {
         const mapAll = new Map<string, MergedField>();
         const mapUi  = new Map<string, MergedField>();
         setGroup_instructions(data.group_instructions || null);
@@ -1661,11 +1737,14 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 });
             }
 
-            if (call && momoProjectRepo && momoProjectRepo.current) {
+            const callProjectsMap =
+                call?.projects && typeof call.projects === "object" ? call.projects : {};
+
+            if (call && momoProjectRepo && momoProjectRepo.current && Object.keys(callProjectsMap).length > 0) {
                 type InitKwargs = {
                     [K in keyof ProjectsMap]: ProjectsMap[K]['base_fields']
                 };
-                const initKwargs = Object.entries(call.projects).reduce<InitKwargs>(
+                const initKwargs = Object.entries(callProjectsMap).reduce<InitKwargs>(
                     (acc, [projName, project]) => {
                         acc[projName as keyof ProjectsMap] = project.base_fields;
                         return acc;
@@ -1675,8 +1754,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     setValues(initKwargs);
 
 
-                const firstProject   = Object.values(call.projects)[0];
-                const projNames = Object.keys(call.projects)
+                const firstProject   = Object.values(callProjectsMap)[0];
+                const projNames = Object.keys(callProjectsMap)
                 const rawReasonId    = firstProject.call_reason;
                 const rawResultId    = firstProject.call_result;
                 const rawComment     = firstProject.comment || '';
@@ -1743,14 +1822,20 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         }
 
+    useEffect(() => {
+        projectFieldsHandlerRef.current = handleProjectFields;
+    }, [handleProjectFields]);
 
     useEffect(() => {
-
-        socket.on("project_fields", handleProjectFields);
-        return () => {
-            socket.off("project_fields", handleProjectFields);
+        const handleProjectFieldsSocket = (data: ProjectFieldsPayload) => {
+            projectFieldsHandlerRef.current(data);
         };
-    }, [openedPhones, call, hasActiveCall, selectedProjects, values]);
+
+        socket.on("project_fields", handleProjectFieldsSocket);
+        return () => {
+            socket.off("project_fields", handleProjectFieldsSocket);
+        };
+    }, []);
 
     useEffect(() => {
         const handleReports = (msg: any) => {
@@ -1915,6 +2000,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
 
         const manual = Boolean(options?.manual);
+        const callProjectKeys =
+            call?.projects && typeof call.projects === "object"
+                ? Object.keys(call.projects)
+                : [];
         const scopeProjects =
             selectedProjects.length > 0 ? selectedProjects : Object.keys(monoModules || {});
 
@@ -1924,8 +2013,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             )
             : activeProject
                 ? [activeProject]
-                : call && Object.keys(call.projects)[0] !== "outbound"
-                    ? [cleanProjectName(Object.keys(call.projects)[0])]
+                : callProjectKeys[0] && callProjectKeys[0] !== "outbound"
+                    ? [cleanProjectName(callProjectKeys[0])]
                     : call
                         ? [call.variable_last_arg]
                         : [""];
@@ -1937,7 +2026,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
         const projectsPayload: Record<string, Record<string, string>> = {};
         projectList.forEach(project => {
-            const projectMod = monoModules[project].find(m => m.filename === mod.filename) || mod;
+            if (!project) return;
+
+            const projectModules = Array.isArray(monoModules?.[project]) ? monoModules[project] : [];
+            const projectMod = projectModules.find((m) => m.filename === mod.filename) || mod;
             const specKwargs = projectMod.kwargs || {};
 
             const fieldMap =
@@ -2015,6 +2107,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
             projectsPayload[project] = kw;
         });
+
+        if (Object.keys(projectsPayload).length === 0) {
+            console.warn(`Пропускаем запуск модуля ${mod.filename}: пустой projectsPayload`);
+            return;
+        }
 
         const ac0 = activeCallsRef.current?.[0];
         const payload = {
@@ -3315,7 +3412,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const renderActiveCallHeader = (activeCall: ActiveCall) => {
         const mainActiveCall = activeCall || postCallData
-        const isHeld = (mainActiveCall.callstate === 'HELD' || mainActiveCall.b_callstate === 'HELD');
+        const isHeld = isCallOnHold(mainActiveCall);
         const iconName = isHeld ? 'play_arrow' : 'pause';
         const iconColor = mainActiveCall.direction === 'outbound' ?  '#f26666' : '#7cd420';
         return (
@@ -4117,14 +4214,22 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             });
         });
 
-        setValues(cur => {
+        setValues((cur) => {
+            let changed = false;
             const merged: GroupFieldValues = { ...cur };
-            Object.keys(nextValues).forEach(p => {
-                merged[p] = { ...(cur[p] || {}), ...nextValues[p] };
+
+            Object.keys(nextValues).forEach((p) => {
+                const nextProjectValues = { ...(cur[p] || {}), ...(nextValues[p] || {}) };
+                if (areFlatStringMapsEqual(cur[p] || {}, nextProjectValues)) return;
+                merged[p] = nextProjectValues;
+                changed = true;
             });
-            return merged;
+
+            return changed ? merged : cur;
         });
-        setSelectedPhoneByField(nextSelected);
+        setSelectedPhoneByField((prev) =>
+            areFlatStringMapsEqual(prev, nextSelected) ? prev : nextSelected
+        );
     }, [contactInfoOptions, selectedProjects, openedPhones, mergedFieldsAll, mergedFields, selectedContactKey]);
 
     useEffect(() => {
@@ -4168,20 +4273,29 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         if (!hasDropdowns) return;
 
         setValues((cur) => {
+            let changed = false;
             const merged: GroupFieldValues = { ...cur };
+
             Object.entries(dropdownValues).forEach(([proj, fields]) => {
-                merged[proj] = { ...(cur[proj] || {}), ...fields };
+                const nextProjectValues = { ...(cur[proj] || {}), ...fields };
+                if (areFlatStringMapsEqual(cur[proj] || {}, nextProjectValues)) return;
+                merged[proj] = nextProjectValues;
+                changed = true;
             });
-            return merged;
+
+            return changed ? merged : cur;
         });
 
-        setSelectedPhoneByField(dropdownSelected);
+        setSelectedPhoneByField((prev) =>
+            areFlatStringMapsEqual(prev, dropdownSelected) ? prev : dropdownSelected
+        );
     }, [contactInfoOptions, selectedProjects, openedPhones, mergedFieldsAll, mergedFields]);
 
     useEffect(() => {
         if (!openedPhones?.length) return;
 
-        setValues(prev => {
+        setValues((prev) => {
+            let changed = false;
             const nextValues: GroupFieldValues = { ...prev };
 
             Object.entries(contactInfoOptions).forEach(([fieldId, opts]) => {
@@ -4191,13 +4305,19 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 if (uniq.length === 1) {
                     const single = uniq[0];
                     selectedProjects.forEach(proj => {
-                        if (!nextValues[proj]) nextValues[proj] = {};
-                        nextValues[proj][fieldId] = single;
+                        const currentValue = String(prev?.[proj]?.[fieldId] ?? "");
+                        if (currentValue === single) return;
+
+                        nextValues[proj] = {
+                            ...(nextValues[proj] || {}),
+                            [fieldId]: single,
+                        };
+                        changed = true;
                     });
                 }
             });
 
-            return nextValues;
+            return changed ? nextValues : prev;
         });
     }, [openedPhones, contactInfoOptions, selectedProjects]);
 

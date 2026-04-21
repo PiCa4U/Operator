@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSelector } from "react-redux";
 import {
     MainContainer,
     ChatContainer,
@@ -10,65 +9,9 @@ import {
 } from "@chatscope/chat-ui-kit-react";
 import ReactDOM from "react-dom";
 import styles from "./style.module.css";
+import { buildChatDownloadUrl, downloadChatFile, openChatFileInNewTab } from "./api";
 
 export type Role = "client" | "operator" | "manager";
-
-const DOWNLOAD_HOST = "https://my.glagol.ai";
-
-function readSocketHostForDownloads(): string {
-    const el = document.getElementById("root") as HTMLElement | null;
-    let raw =
-        (el?.dataset?.chatServer ||
-            el?.dataset?.chatApiBase ||
-            el?.dataset?.fsServer ||
-            "")!.trim();
-
-    if (!raw) return "wwstest.glagol.ai/chat";
-
-    if (raw.startsWith("//")) raw = `${window.location.protocol}${raw}`;
-    if (!/^[a-zA-Z][\w+.-]*:\/\//.test(raw)) raw = `${window.location.protocol}//${raw}`;
-
-    try {
-        const u = new URL(raw);
-        return `${u.host}/chat`;
-    } catch {
-        const noProto = raw.replace(/^[a-zA-Z][\w+.-]*:\/\//, "");
-        const host = noProto.split("/")[0];
-        return `${host}/chat`;
-    }
-}
-const SOCKET_HOST = readSocketHostForDownloads();
-
-function buildDownloadUrl(hostOnly: string, guid: string, filename: string) {
-    const encFile = encodeURIComponent(filename);
-    const encGuid = encodeURIComponent(guid);
-    return `${DOWNLOAD_HOST}/get_cc_files/${hostOnly}/${encGuid}/${encFile}`;
-}
-
-function readFilesApiBaseFallback(): string {
-    const el = document.getElementById("root") as HTMLElement | null;
-    let raw = (
-        el?.dataset?.fsServer || // <div id="root" data-fs-server="https://fs.host">
-        el?.dataset?.filesApiBase ||
-        el?.dataset?.chatApiBase ||
-        ""
-    ).trim();
-
-    if (!raw) return "";
-    if (raw.startsWith("//")) raw = `${window.location.protocol}${raw}`;
-    if (!/^https?:\/\//i.test(raw)) raw = `${window.location.protocol}//${raw}`;
-    return raw.replace(/\/+$/, "");
-}
-
-function trimRightSlashes(s: string) {
-    return s.replace(/\/+$/, "");
-}
-
-function buildPreviewUrl(filesApiBase: string, guid: string, filename: string) {
-    return `${trimRightSlashes(filesApiBase)}/api/v1/download/${encodeURIComponent(
-        guid
-    )}/${encodeURIComponent(filename)}`;
-}
 
 async function openPdfPreview(urlPreview: string, urlDownload: string) {
     try {
@@ -341,33 +284,9 @@ export default function LocalChat({
     const isControlled = Array.isArray(messages);
     const [internal, setInternal] = useState<UiMessage[]>(initialMessages);
 
-    const fsServerFromRedux = useSelector((state: any) =>
-        state?.common?.fs_server ?? state?.common?.fsServer ??
-        state?.app?.fs_server ?? state?.app?.fsServer ??
-        state?.config?.fs_server ?? state?.config?.fsServer ??
-        state?.settings?.fs_server ?? state?.settings?.fsServer
-    ) as string | undefined;
-
-    const filesApiBase = useMemo(() => {
-        const fromRedux = typeof fsServerFromRedux === "string" ? fsServerFromRedux.trim() : "";
-        const base = fromRedux || readFilesApiBaseFallback();
-        const norm = base ? base.replace(/\/+$/, "") : "";
-        console.debug("filesApiBase =", norm || "(empty)");
-        return norm;
-    }, [fsServerFromRedux]);
-
     useEffect(() => {
         if (!isControlled) setInternal(initialMessages);
     }, [initialMessages]);
-
-    useEffect(() => {
-        if (!filesApiBase) {
-            console.warn(
-                "[chat] filesApiBase is empty — using legacy get_cc_files. " +
-                "Проверь Redux: fs_server/fsServer или data-fs-server на #root."
-            );
-        }
-    }, [filesApiBase]);
 
     const list = isControlled ? (messages as UiMessage[]) : internal;
 
@@ -549,7 +468,7 @@ export default function LocalChat({
                                         const messageImageItems: LightboxItem[] = (m.attachments || [])
                                             .filter((att) => (att.file?.type ? att.file.type.startsWith("image/") : isImageName(att.name)))
                                             .map((att) => ({
-                                                url: (!!att.file && !!att.url) ? att.url! : buildDownloadUrl(SOCKET_HOST, guid, att.name),
+                                                url: (!!att.file && !!att.url) ? att.url! : buildChatDownloadUrl(guid, att.name),
                                                 title: att.name,
                                             }));
 
@@ -590,10 +509,9 @@ export default function LocalChat({
                                                                         {m.attachments.map((a) => {
                                                                             const isLocal = !!a.file && !!a.url;
 
-                                                                            // URL для ПРОСМОТРА (через fs_server) и для СТАРОГО СКАЧИВАНИЯ
-                                                                            const baseUrl = isLocal ? a.url! : buildDownloadUrl(SOCKET_HOST, guid, a.name);
-                                                                            const urlPreview  = baseUrl;
-                                                                            const urlDownload = baseUrl;
+                                                                            // URL для просмотра и скачивания
+                                                                            const urlDownload = isLocal ? a.url! : buildChatDownloadUrl(guid, a.name);
+                                                                            const urlPreview = urlDownload;
 
                                                                             // тип
                                                                             const isImg = isLocal
@@ -634,6 +552,13 @@ export default function LocalChat({
                                                                                                 rel="noreferrer"
                                                                                                 className={`${styles.fileChip} badge bg-light text-dark`}
                                                                                                 title={`Скачать: ${a.name}`}
+                                                                                                onClick={(e) => {
+                                                                                                    e.preventDefault();
+                                                                                                    e.stopPropagation();
+                                                                                                    void downloadChatFile(guid, a.name, a.name).catch((err) =>
+                                                                                                        console.error("downloadChatFile failed", err)
+                                                                                                    );
+                                                                                                }}
                                                                                                 download={a.name}
                                                                                                 style={{ lineHeight: 1, padding: "0.2rem 0.45rem" }}
                                                                                             >
@@ -654,7 +579,15 @@ export default function LocalChat({
                                                                                             type="button"
                                                                                             className={`${styles.fileChip} badge bg-secondary`}
                                                                                             title={`Открыть PDF: ${a.name}`}
-                                                                                            onClick={() => openPdfPreview(urlPreview, urlDownload)}
+                                                                                            onClick={() => {
+                                                                                                if (isLocal) {
+                                                                                                    void openPdfPreview(urlPreview, urlDownload);
+                                                                                                    return;
+                                                                                                }
+                                                                                                void openChatFileInNewTab(guid, a.name).catch((err) =>
+                                                                                                    console.error("openChatFileInNewTab failed", err)
+                                                                                                );
+                                                                                            }}
                                                                                             style={{ cursor: "zoom-in" }}
                                                                                         >
                                                                                           <span className={styles.fileChipText}>📄 {a.name}</span>

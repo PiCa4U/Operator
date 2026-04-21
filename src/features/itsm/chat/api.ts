@@ -2,7 +2,11 @@ import axios from "axios";
 
 const DEFAULT_CHAT_BASE = "https://wwstest.glagol.ai/chat";
 
-function readChatBaseURL(): string {
+function trimRightSlashes(value: string): string {
+    return value.replace(/\/+$/, "");
+}
+
+export function readChatBaseURL(): string {
     const el = document.getElementById("root") as HTMLElement | null;
     let raw = (el?.dataset?.chatServer || el?.dataset?.chatApiBase || "").trim();
     if (!raw) return DEFAULT_CHAT_BASE;
@@ -13,7 +17,49 @@ function readChatBaseURL(): string {
         raw = `${window.location.protocol}//${raw}`;
     }
 
-    return raw.replace(/\/+$/, "");
+    return trimRightSlashes(raw);
+}
+
+export function buildChatDownloadUrl(guid: string, filename: string, baseURL?: string): string {
+    const base = trimRightSlashes(baseURL || readChatBaseURL());
+    const encGuid = encodeURIComponent(guid);
+    const encFilename = encodeURIComponent(filename);
+    return `${base}/api/v1/download/${encGuid}/${encFilename}`;
+}
+
+export async function fetchChatFileBlob(guid: string, filename: string): Promise<Blob> {
+    const url = buildChatDownloadUrl(guid, filename);
+    const response = await fetch(url, {
+        method: "GET",
+        credentials: "omit",
+    });
+    if (!response.ok) {
+        throw new Error(`Failed to fetch file blob: ${response.status}`);
+    }
+    return response.blob();
+}
+
+export async function openChatFileInNewTab(guid: string, filename: string): Promise<void> {
+    const url = buildChatDownloadUrl(guid, filename);
+    try {
+        const blob = await fetchChatFileBlob(guid, filename);
+        const blobUrl = URL.createObjectURL(blob);
+        window.open(blobUrl, "_blank", "noopener,noreferrer");
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    } catch {
+        window.open(url, "_blank", "noopener,noreferrer");
+    }
+}
+
+export async function downloadChatFile(guid: string, filename: string, downloadAs?: string): Promise<void> {
+    const a = document.createElement("a");
+    a.href = buildChatDownloadUrl(guid, filename);
+    a.download = downloadAs || filename;
+    a.target = "_blank";
+    a.rel = "noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
 }
 
 export const chatApi = axios.create({
@@ -22,14 +68,6 @@ export const chatApi = axios.create({
 
 chatApi.interceptors.request.use((config) => {
     config.baseURL = readChatBaseURL();
-
-    const el = document.getElementById("root") as HTMLElement | null;
-    const sessionKey = (el?.dataset?.sessionKey || "").trim();
-    if (sessionKey) {
-        config.headers = config.headers ?? {};
-        (config.headers as any).Authorization = `Bearer ${sessionKey}`;
-    }
-
     return config;
 });
 
@@ -59,8 +97,9 @@ function normalizeUploadResponse(raw: any): UploadItem[] {
 }
 
 export async function fetchChatHistory(guid: string, sessionKey: string): Promise<RawChatMessage[]> {
+    const token = String(sessionKey || "").trim();
     const { data } = await chatApi.get(`/api/v1/chat/${encodeURIComponent(guid)}`, {
-        headers: sessionKey ? { Authorization: `Bearer ${sessionKey}` } : undefined,
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     });
     const rows = Array.isArray(data?.data) ? data.data : [];
     return rows as RawChatMessage[];

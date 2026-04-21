@@ -10,8 +10,7 @@ import {
 
 import SearchableSelect from "../../../../callControlPanel/components/select";
 import { useSelector } from "react-redux";
-import { store } from "../../../../../redux/store";
-import { makeSelectAccessibleProjectPool } from "../../../../../redux/operatorSlice";
+import { RootState, store } from "../../../../../redux/store";
 
 type KVRow = { id: string; key: string; values: string };
 
@@ -262,21 +261,31 @@ export const LogsTab: React.FC = () => {
     const filenameValueForSelect = (filters.filename ?? "").trim();
 
     const {
-        sipLogin   = '',
         worker     = '',
         glagolParent      = ''
     } = store.getState().credentials;
 
-    const selectAccessibleProjectPool = useMemo(() => makeSelectAccessibleProjectPool(sipLogin), [sipLogin]);
-    const rawProjectPool = useSelector(selectAccessibleProjectPool);
-    const projectPool = useMemo(() => rawProjectPool || [], [rawProjectPool]);
+    const allProjectsByName = useSelector((state: RootState) => state.operator.monitorData.allProjects);
     const projectOptions = useMemo(
-        () =>
-            projectPool.map((p: any) => ({
-                id: p.project_name as string,
-                name: (p.glagol_name as string) || (p.project_name as string),
-            })),
-        [projectPool]
+        () => {
+            const options: Array<{ id: string; name: string }> = [];
+            const seen = new Set<string>();
+
+            Object.entries(allProjectsByName || {}).forEach(([projectKey, project]) => {
+                const projectObj = (project || {}) as any;
+                const projectName = String(projectObj?.project_name || projectKey || "").trim();
+                if (!projectName || seen.has(projectName)) return;
+
+                seen.add(projectName);
+                options.push({
+                    id: projectName,
+                    name: String(projectObj?.glagol_name || projectName).trim() || projectName,
+                });
+            });
+
+            return options.sort((a, b) => a.name.localeCompare(b.name));
+        },
+        [allProjectsByName]
     );
 
     const [modulesByProject, setModulesByProject] = useState<Record<string, ModuleInfo[]>>({});

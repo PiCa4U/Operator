@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useSelector } from "react-redux";
+import { shallowEqual, useSelector } from "react-redux";
 import { RootState, store } from "./redux/store";
 import { SipProvider, useSip } from "./context/SipContext";
 import MainApp from "./components/mainApp";
@@ -591,7 +591,13 @@ export default function App() {
     const { sipLogin = "", worker = "", glagolParent = "", webrtcUrl = "" } =
         store.getState().credentials;
 
-    const { ha1, turnCreds } = useSelector((s: RootState) => s.operator);
+    const { ha1, turnCreds } = useSelector(
+        (s: RootState) => ({
+            ha1: s.operator.ha1,
+            turnCreds: s.operator.turnCreds,
+        }),
+        shallowEqual
+    );
     const operatorAccess = useSelector(selectOperatorAccess);
     const operatorProfile = useSelector(selectOperatorProfile);
     const allProjectsMap = useSelector((s: RootState) => s.operator.monitorData.allProjects);

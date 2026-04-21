@@ -124,7 +124,7 @@ const responseHasSDP = (res: any) => {
 
 // Voice calls use a faster ICE profile than screen sharing.
 // Screen share sessions override transport policy/timeouts in their own hooks.
-const SIP_VOICE_ICE_GATHERING_TIMEOUT = 500;
+const SIP_VOICE_ICE_GATHERING_TIMEOUT = 1000;
 const SIP_VOICE_ICE_POLICY: RTCIceTransportPolicy = "all";
 
 function buildSipVoicePeerConnectionConfiguration(creds: TurnCredentials | null): RTCConfiguration {

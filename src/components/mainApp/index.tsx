@@ -632,6 +632,7 @@ function fsStatusSig(msg: any): string {
         msg?.status ?? "",
         msg?.state ?? "",
         msg?.sip_login ?? "",
+        normalizeSofiaStatus(msg?.sofia_status),
     ].join("|");
 }
 
@@ -667,7 +668,10 @@ function fsCallsSig(calls: any[]): string {
         .map((c) => [
             c?.uuid ?? c?.b_uuid ?? "",
             c?.application ?? "",
+            c?.callstate ?? "",
             c?.b_callstate ?? "",
+            c?.state ?? "",
+            c?.b_state ?? "",
             c?.direction ?? "",
             c?.cid_num ?? "",
             c?.b_line_num ?? "",
@@ -855,8 +859,24 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         setPostTransitionPending(false);
     }, []);
     const hasExternalActive = activeCalls.length > 0 || activeCall || effectivePostActive;
+    const shouldWarnBeforeUnload = activeCalls.length > 0 || activeCall || effectivePostActive;
     const showInterOverlay = !!interCall && !hasExternalActive;
     const showInterInCardHeader = !!interCall && hasExternalActive;
+
+    useEffect(() => {
+        if (!shouldWarnBeforeUnload) return;
+
+        const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+            event.preventDefault();
+            event.returnValue = "";
+            return "";
+        };
+
+        window.addEventListener("beforeunload", handleBeforeUnload);
+        return () => {
+            window.removeEventListener("beforeunload", handleBeforeUnload);
+        };
+    }, [shouldWarnBeforeUnload]);
 
 
 
@@ -1911,8 +1931,16 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
     useEffect(() => {
         const first = activeCalls && activeCalls.length ? activeCalls[0] : {};
+        const stateCandidates = [
+            String(first?.callstate ?? "").trim().toUpperCase(),
+            String(first?.b_callstate ?? "").trim().toUpperCase(),
+            String(first?.state ?? "").trim().toUpperCase(),
+            String(first?.b_state ?? "").trim().toUpperCase(),
+        ];
+        const hasLiveLikeState =
+            stateCandidates.includes("ACTIVE") || stateCandidates.includes("HELD");
 
-        if (activeCalls.length > 0 && !activeCall && (first?.application || first?.b_callstate === "ACTIVE")) {
+        if (activeCalls.length > 0 && !activeCall && (first?.application || hasLiveLikeState)) {
             if (first.direction === "outbound") {
                 socket.emit("get_data", {
                     worker,
@@ -2483,15 +2511,23 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
     useEffect(() => {
         const handleFsStatus = (msg: any) => {
-            dispatch(setFsStatus(msg));
+            const normalizedMsg = {
+                ...msg,
+                sofia_status: normalizeSofiaStatus(msg?.sofia_status),
+            };
+            const sig = fsStatusSig(normalizedMsg);
+            if (sig === lastFsStatusSigRef.current) return;
+            lastFsStatusSigRef.current = sig;
+
+            dispatch(setFsStatus(normalizedMsg));
 
             if (!isOwner || !enabled) return;
 
-            if (msg.status === "Available (On Demand)" && msg.state === "Idle") {
+            if (normalizedMsg.status === "Available (On Demand)" && normalizedMsg.state === "Idle") {
                 confirmUnifiedPostActive();
             } else if (
-                msg.status === "Available (On Demand)" &&
-                msg.state !== "Idle" &&
+                normalizedMsg.status === "Available (On Demand)" &&
+                normalizedMsg.state !== "Idle" &&
                 !postTransitionPending
             ) {
                 setUnifiedPostActive(false);
@@ -2563,7 +2599,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     useEffect(() => {
         if (!(activeCalls[0] && Object.keys(activeCalls[0]).length > 0)) return
         const first = activeCalls[0]
-        if (first.direction === "inbound") {
+        const hasGroupedContext =
+            momoProjectRepo.current ||
+            (showTasksDashboard && (openedPhones.length > 0 || openedGroup.length > 0 || GroupIDs.length > 0));
+
+        if (first.direction === "inbound" && !hasGroupedContext) {
             setShowTasksDashboard(false)
         }
         if (first.uuid !== "" && first.cid_num !== "" && !get_callcenter && !outboundCall){
@@ -2577,7 +2617,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             };
             socket.emit('get_callcenter_queues', requestParams);
         }
-    }, [activeCall, activeCalls, get_callcenter, outboundCall]);
+    }, [activeCall, activeCalls, get_callcenter, outboundCall, showTasksDashboard, openedPhones.length, openedGroup.length, GroupIDs.length]);
 
     const findNameProject = (projectName: string)=> {
         if (!projectName) return "";

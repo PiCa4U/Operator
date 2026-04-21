@@ -297,20 +297,100 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                                        }) => {
     const [fieldValues, setFieldValues] = useState<{ [fieldId: string]: string }>(initialValues);
 
-    const visibleParams = params.filter(param => !param.deleted);
-    const baseOptionsRef = useRef<string[]>([]);
+    const visibleParams = useMemo(() => params.filter(param => !param.deleted), [params]);
+    const baseOptionsRef = useRef<Record<string, string[]>>({});
     const baseLinksRef = useRef<any[]>([]);
     const overrideOptionsRef = useRef(null);
 
     useEffect(() => {
-        setFieldValues(initialValues);
+        setFieldValues((prev) => {
+            const next = initialValues ?? {};
+            const prevKeys = Object.keys(prev);
+            const nextKeys = Object.keys(next);
+
+            if (
+                prevKeys.length === nextKeys.length &&
+                nextKeys.every((k) => String(prev[k] ?? "") === String(next[k] ?? ""))
+            ) {
+                return prev;
+            }
+
+            return { ...next };
+        });
     }, [initialValues]);
 
     const handleChange = (fieldId: string, newValue: string) => {
-        const newValues = { ...fieldValues, [fieldId]: newValue };
-        setFieldValues(newValues);
-        onChange?.(newValues);
+        setFieldValues((prev) => {
+            if (String(prev[fieldId] ?? "") === String(newValue ?? "")) {
+                return prev;
+            }
+
+            const newValues = { ...prev, [fieldId]: newValue };
+            onChange?.(newValues);
+            return newValues;
+        });
     };
+
+    useEffect(() => {
+        let changed = false;
+        const next = { ...fieldValues };
+
+        for (const param of visibleParams) {
+            if (param.field_type !== "select" && param.field_type !== "dates_available") continue;
+
+            const fieldId = param.field_id;
+            const rawField = String(next[fieldId] ?? "");
+            const trimmed = rawField.trim();
+            if (!isJsonLike(trimmed)) continue;
+
+            const parsed = tryParseJson<any>(trimmed);
+            if (!parsed || typeof parsed !== "object") continue;
+
+            if (Array.isArray(parsed.options) && parsed.options.length > 0) {
+                baseOptionsRef.current[fieldId] = parsed.options
+                    .map((v: any) => String(v).trim())
+                    .filter(Boolean);
+            }
+
+            if (param.field_type === "select") {
+                if (parsed.select == null) continue;
+
+                const normalized = Array.isArray(parsed.select)
+                    ? parsed.select.join(",")
+                    : String(parsed.select ?? "");
+
+                if (normalized !== rawField) {
+                    next[fieldId] = normalized;
+                    changed = true;
+                }
+                continue;
+            }
+
+            let normalizedDate = "";
+            if (parsed.select != null) {
+                const raw = Array.isArray(parsed.select)
+                    ? String(parsed.select[0] ?? "")
+                    : String(parsed.select ?? "");
+
+                if (raw) {
+                    const [day, month, year] = raw.split(".");
+                    if (day && month && year) {
+                        normalizedDate = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+                    }
+                }
+            }
+
+            if (normalizedDate !== rawField) {
+                next[fieldId] = normalizedDate;
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            setFieldValues(next);
+            onChange?.(next);
+        }
+    }, [fieldValues, visibleParams, onChange]);
 
 
     function toIsoDate(raw: string): string {
@@ -635,15 +715,17 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         {/*)}*/}
 
                         {param.field_type === 'select' && (() => {
+                            const cacheKey = String(param.field_id);
                             const rawVals = param.field_vals || "";
                             const splitVals = rawVals.includes("|_|_|")
                                 ? rawVals.split("|_|_|")
                                 : rawVals.split(",");
-                            let opts
-                            if (!baseOptionsRef.current.length) {
+                            let opts: string[];
+                            const cachedOptions = baseOptionsRef.current[cacheKey];
+                            if (!cachedOptions?.length) {
                                 opts = splitVals.map(s => s.trim()).filter(Boolean);
                             } else {
-                                opts = baseOptionsRef.current
+                                opts = cachedOptions;
                             }
 
                             const rawField = fieldValues[param.field_id] || "";
@@ -657,14 +739,13 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                 try {
                                     const parsed = JSON.parse(trimmed);
                                     if (Array.isArray(parsed.options) && parsed.options.length > 0) {
-                                        opts = parsed.options;
-                                        baseOptionsRef.current = opts
+                                        opts = parsed.options.map((o: any) => String(o).trim()).filter(Boolean);
+                                        baseOptionsRef.current[cacheKey] = opts;
                                     }
                                     if (parsed.select != null) {
                                         defaultValue = Array.isArray(parsed.select)
                                             ? parsed.select.join(",")
                                             : String(parsed.select) || "";
-                                        onChange({[param.field_id]: defaultValue})
                                     }
                                 } catch {
                                 }
@@ -864,8 +945,10 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         })()}
 
                         {param.field_type === 'dates_available' && (() => {
+                            const cacheKey = String(param.field_id);
                             let dates: string[] = [] ;
-                            if(!baseOptionsRef.current.length) {
+                            const cachedDates = baseOptionsRef.current[cacheKey];
+                            if(!cachedDates?.length) {
                                 if (Array.isArray(param.field_vals)) {
                                     dates = param.field_vals;
                                 } else if (typeof param.field_vals === 'string') {
@@ -878,7 +961,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                     }
                                 }
                             } else {
-                                dates = baseOptionsRef.current
+                                dates = cachedDates;
                             }
 
 
@@ -892,8 +975,8 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                 try {
                                     const parsed = JSON.parse(trimmed);
                                     if (Array.isArray(parsed.options) && parsed.options.length > 0) {
-                                        dates = parsed.options;
-                                        baseOptionsRef.current = dates
+                                        dates = parsed.options.map((d: any) => String(d).trim()).filter(Boolean);
+                                        baseOptionsRef.current[cacheKey] = dates;
                                     }
                                     if (parsed.select != null) {
                                         const raw = Array.isArray(parsed.select)
@@ -904,14 +987,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                             const [day, month, year] = raw.split('.');
 
                                             selectDateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-
-
-                                            onChange({ [param.field_id]: selectDateStr });
-                                        } else {
-                                            onChange({ [param.field_id]: "" });
                                         }
-                                    } else {
-                                        onChange({ [param.field_id]: "" });
                                     }
                                 } catch {
                                 }

@@ -1,41 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Swal from "sweetalert2";
-import { chatApi } from "./api";
+import { buildChatDownloadUrl, chatApi } from "./api";
 import ReactDOM from "react-dom";
 import { useOperatorsDirectory } from "../../signals/useOperatorsDirectory";
+import { store } from "../../../redux/store";
 
-const DOWNLOAD_HOST_CC = "https://my.glagol.ai";
-
-function readSocketHostForDownloads(): string {
-    const el = document.getElementById("root") as HTMLElement | null;
-    let raw =
-        (el?.dataset?.chatServer ||
-            el?.dataset?.chatApiBase ||
-            el?.dataset?.fsServer ||
-            "")!.trim();
-
-    if (!raw) return "wwstest.glagol.ai/chat";
-
-    if (raw.startsWith("//")) raw = `${window.location.protocol}${raw}`;
-    if (!/^[a-zA-Z][\w+.-]*:\/\//.test(raw))
-        raw = `${window.location.protocol}//${raw}`;
-
-    try {
-        const u = new URL(raw);
-        return `${u.host}/chat`;
-    } catch {
-        const noProto = raw.replace(/^[a-zA-Z][\w+.-]*:\/\//, "");
-        const host = noProto.split("/")[0];
-        return `${host}/chat`;
-    }
-}
-
-function buildContactDownloadUrl(chatBaseUrl: string, guid: string, filename: string) {
-    const encBase = encodeURIComponent((chatBaseUrl || "").replace(/\/+$/, ""));
-    const encGuid = encodeURIComponent(guid);
-    const encFile = encodeURIComponent(filename);
-    return `${DOWNLOAD_HOST_CC}/get_cc_files/${encBase}/${encGuid}/${encFile}`;
-}
 
 function fileEmojiByExt(name: string) {
     const ext = (name.split(".").pop() || "").toLowerCase();
@@ -343,8 +312,6 @@ export function ContactFilesPanel({
     const [isOpen, setIsOpen] = useState(false);
     const contentRef = useRef<HTMLDivElement | null>(null);
 
-    const SOCKET_HOST_CC = readSocketHostForDownloads();
-
     // refresh (после upload можно дергать window.dispatchEvent(new CustomEvent('contact-files:refresh')))
     const [reloadTick, setReloadTick] = useState(0);
     useEffect(() => {
@@ -483,11 +450,11 @@ export function ContactFilesPanel({
                 .map((r) => {
                     const nameForUrl = r.inner_name || r.filename;
                     return {
-                        url: buildContactDownloadUrl(SOCKET_HOST_CC, r.guid, nameForUrl),
+                        url: buildChatDownloadUrl(r.guid, nameForUrl),
                         title: r.filename || r.inner_name,
                     };
                 }),
-        [rows, SOCKET_HOST_CC]
+        [rows]
     );
 
     const [lb, setLb] = useState<{ items: LightboxItem[]; index: number } | null>(null);
@@ -646,6 +613,9 @@ export function ContactFilesPanel({
 
     async function handleDelete(r: StorageFileRow) {
         const k = rowKeyOf(r);
+        const state = store.getState();
+        const token = String(state.operator?.sessionKey || state.credentials?.sessionKey || "").trim();
+        const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined;
         const nameForOps = r.inner_name || r.filename; // на удаление/скачивание лучше inner_name
 
         const res = await Swal.fire({
@@ -666,9 +636,11 @@ export function ContactFilesPanel({
         try {
             await chatApi.delete("/api/v1/contacts/storage/remove", {
                 data: { guid: r.guid, storage: [nameForOps] },
+                headers: authHeaders,
             });
             await chatApi.delete("/api/v1/storage/delete", {
                 data: { guid: r.guid, storage: [nameForOps] },
+                headers: authHeaders,
             });
 
             await Swal.fire({
@@ -806,7 +778,7 @@ export function ContactFilesPanel({
                             const displayName = r.filename || r.inner_name;
                             const nameForUrl = r.inner_name || r.filename;
 
-                            const href = buildContactDownloadUrl(SOCKET_HOST_CC, r.guid, nameForUrl);
+                            const href = buildChatDownloadUrl(r.guid, nameForUrl);
 
                             const emoji = fileEmojiByExt(nameForUrl);
                             const img = isImage(nameForUrl);

@@ -120,10 +120,11 @@ export const makeSelectFullProjectPool = (sipLogin: string) =>
         (state: RootState) => state.operator.monitorData.allProjects,
         (state: RootState) => state.operator.monitorData.monitorCallcenter[sipLogin] || [],
         (allProjects, myProjects) => {
-            // Если проектов нет – вернём пустой массив.
+            // Если в очередях есть ключи без проекта, отбрасываем их,
+            // чтобы потребители селектора не падали на undefined.
             return myProjects
                 .map((pName: string) => allProjects[pName])
-                // .filter(proj => proj && proj.out_active);
+                .filter((proj: any) => Boolean(proj && proj.project_name));
         }
     );
 

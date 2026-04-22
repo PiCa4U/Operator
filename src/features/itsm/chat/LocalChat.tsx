@@ -303,6 +303,8 @@ export default function LocalChat({
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const [pendingUrls, setPendingUrls] = useState<string[]>([]);
     const fileRef = useRef<HTMLInputElement | null>(null);
+    const sendLockRef = useRef(false);
+    const [isSending, setIsSending] = useState(false);
 
     const [isDragging, setDragging] = useState(false);
     const dragCounter = useRef(0);
@@ -367,6 +369,10 @@ export default function LocalChat({
     async function sendNow(messageType: string = "msg") {
         const trimmed = text.trim();
         if (!trimmed) return;
+        if (sendLockRef.current) return;
+
+        sendLockRef.current = true;
+        setIsSending(true);
 
         const id = crypto.randomUUID();
         const atts: UiAttachment[] = pendingFiles.map((f, i) => ({
@@ -394,12 +400,15 @@ export default function LocalChat({
         try {
             await onSend?.(trimmed, pendingFiles, messageType);
         } catch {}
-
-        setText("");
-        setPendingFiles([]);
-        pendingUrls.forEach((u) => URL.revokeObjectURL(u));
-        setPendingUrls([]);
-        if (fileRef.current) fileRef.current.value = "";
+        finally {
+            setText("");
+            setPendingFiles([]);
+            pendingUrls.forEach((u) => URL.revokeObjectURL(u));
+            setPendingUrls([]);
+            if (fileRef.current) fileRef.current.value = "";
+            sendLockRef.current = false;
+            setIsSending(false);
+        }
     }
     function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
         if (e.key === "Enter" && !e.shiftKey) {
@@ -636,7 +645,8 @@ export default function LocalChat({
                                                             title={readTooltip || undefined}
                                                         >
                                                           {ruTime(cur)}
-                                                            {direction === "outgoing" && isReadByOthers ? " · ✓" : ""}
+                                                            {direction === "outgoing" && m.status === "pending" ? " · Отправка..." : ""}
+                                                            {direction === "outgoing" && m.status !== "pending" && isReadByOthers ? " · ✓" : ""}
                                                         </span>
                                                     </Message.Footer>
                                                 </Message>
@@ -663,9 +673,12 @@ export default function LocalChat({
                         <button
                             type="button"
                             className={`btn btn-outline-secondary ${styles.iconBtn}`}
-                            onClick={() => fileRef.current?.click()}
+                            onClick={() => {
+                                if (!isSending) fileRef.current?.click();
+                            }}
                             title="Прикрепить файлы"
                             aria-label="Прикрепить файлы"
+                            disabled={isSending}
                         >
                             <PaperclipIcon className={styles.icon} />
                         </button>
@@ -682,6 +695,7 @@ export default function LocalChat({
                           type="button"
                           className={styles.removeBtn}
                           onClick={() => removePending(i)}
+                          disabled={isSending}
                           aria-label="Убрать файл"
                       >
                         ×
@@ -698,6 +712,7 @@ export default function LocalChat({
                                 onKeyDown={onKeyDown}
                                 className={`form-control ${styles.autoTextarea}`}
                                 rows={1}
+                                disabled={isSending}
                                 placeholder={
                                     pendingFiles.length
                                         ? "Добавлены файлы — напишите текст и нажмите Enter для отправки"
@@ -707,12 +722,18 @@ export default function LocalChat({
                         </div>
 
                         <div className="d-flex" style={{ gap: 8 }}>
+                            {isSending && (
+                                <span className={styles.sendingHint} role="status" aria-live="polite">
+                                    <span className={styles.sendingSpinner} />
+                                    Отправляем...
+                                </span>
+                            )}
                             {selfRole !== "client" && (
                                 <button
                                     type="button"
                                     className="btn btn-outline-success"
                                     onClick={() => sendNow("comment")}
-                                    disabled={!text.trim()}
+                                    disabled={!text.trim() || isSending}
                                     title="Отправить комментарий (видно только операторам)"
                                 >
                                     💬
@@ -723,7 +744,7 @@ export default function LocalChat({
                                 type="button"
                                 className="btn btn-dark"
                                 onClick={() => sendNow("msg")}
-                                disabled={!text.trim()}
+                                disabled={!text.trim() || isSending}
                                 title="Отправить (Enter)"
                             >
                                 Отправить

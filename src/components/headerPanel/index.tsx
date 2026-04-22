@@ -244,12 +244,20 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const post = postActive;
 
     const selectFullProjectPool = useMemo(() => makeSelectFullProjectPool(sipLogin), [sipLogin]);
-    const projectPool = useSelector(selectFullProjectPool) || [];
+    const rawProjectPool = useSelector(selectFullProjectPool) || [];
+    const projectPool = useMemo(() => {
+        if (!Array.isArray(rawProjectPool)) return [];
+        return rawProjectPool.filter(
+            (project: any) => Boolean(project && String(project?.project_name ?? "").trim())
+        );
+    }, [rawProjectPool]);
     const operatorAccess = useSelector(selectOperatorAccess);
     const accessibleProjectNames = useSelector(selectAccessibleProjectNames);
 
     const projectPoolForCall = useMemo(() => {
-        return projectPool.map((project: any) => project.project_name);
+        return projectPool
+            .map((project: any) => String(project?.project_name ?? "").trim())
+            .filter(Boolean);
     }, [projectPool]);
     const outboundFlowIds = useMemo(() => {
         return Array.from(

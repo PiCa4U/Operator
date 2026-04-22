@@ -116,7 +116,28 @@
     font-weight:700; font-size:16px; padding:0 2px 2px; line-height:1; cursor:pointer;
 }
 .removeBtn:hover{ color:#dc3545; }
+.removeBtn:disabled{ opacity:.45; cursor:not-allowed; }
 .ellipsis{ max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+.sendingHint{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    font-size:12px;
+    color:#64748b;
+    padding:0 4px;
+}
+.sendingSpinner{
+    width:12px;
+    height:12px;
+    border:2px solid #cbd5e1;
+    border-top-color:#2563eb;
+    border-radius:50%;
+    animation:chatSpin .8s linear infinite;
+}
+@keyframes chatSpin{
+    to{ transform:rotate(360deg); }
+}
 
 .chatShell{ background:#fff; position:relative; z-index:1; }
 

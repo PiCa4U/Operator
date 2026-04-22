@@ -1624,12 +1624,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         window.location.href = "https://my.glagol.ai/login_work/";
 };
 
-    useEffect(() => {
-        socket.on('logout', handleLogout);
-        return () => {
-            socket.off('logout', handleLogout);
-        };
-    }, []);
+    // useEffect(() => {
+    //     socket.on('logout', handleLogout);
+    //     return () => {
+    //         socket.off('logout', handleLogout);
+    //     };
+    // }, []);
 
     useEffect(() => {
         const now = new Date().toISOString();

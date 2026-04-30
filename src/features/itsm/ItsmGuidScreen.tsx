@@ -4,7 +4,7 @@ import axios from "axios";
 import { useSelector } from "react-redux";
 
 import LocalChat, { type UiMessage, type Role } from "./chat/LocalChat";
-import { chatApi, fetchChatHistory, type RawChatMessage } from "./chat/api";
+import { chatApi, fetchChatHistory, normalizeStorageRefs, toChatIso, type RawChatMessage } from "./chat/api";
 import { useChatSocket } from "./chat/useChatSocket";
 import { useChatCollapsed } from "./useChatCollapsed";
 
@@ -56,22 +56,19 @@ function dedupeByKey(list: UiMessage[]) {
     }
     return out;
 }
-function toIsoFromServer(dt: string): string {
-    const [d, t = "00:00:00"] = dt.trim().split(" ");
-    const [y, m, day] = d.split("-").map(Number);
-    const [hh, mm, ss] = t.split(":").map(Number);
-    return new Date(Date.UTC(y, (m || 1) - 1, day || 1, hh || 0, mm || 0, ss || 0)).toISOString();
-}
 function mapRow(r: RawChatMessage): UiMessage {
     const isClient = r.sender === "client";
     const role: Role = isClient ? "client" : "operator";
-    const attachments = Array.isArray(r.storage)
-        ? r.storage.map((name, i) => ({ id: `${r.id}:${i}`, name }))
-        : [];
+    const attachments = normalizeStorageRefs(r.storage).map((entry, i) => ({
+        id: `${r.id}:${entry.id ?? i}`,
+        name: entry.filename,
+        storageId: entry.id,
+        originGuid: entry.origin_guid,
+    }));
     return {
         id: String(r.id),
         text: r.text ?? "",
-        created_at: toIsoFromServer(r.created_dt),
+        created_at: toChatIso(r.created_dt),
         authorLogin: isClient ? null : r.sender,
         authorName: r.sender,
         authorRole: role,
@@ -378,23 +375,18 @@ export default function ItsmGuidScreen() {
 
     const [serverFilesByGuid, setServerFilesByGuid] = useState<Record<string, string[]>>({});
 
-    function extractFilesFromContacts(arr: any[]): string[] {
-        const all: string[] = [];
-        for (const c of arr ?? []) {
-            const storage = Array.isArray(c?.storage)
-                ? c.storage.map((it: any) => (typeof it === "string" ? it : (it?.name ?? it?.filename ?? "")))
-                : [];
-            for (const s of storage) if (s) all.push(s);
-        }
-        return Array.from(new Set(all));
-    }
-
     async function refreshContactFiles(g: string) {
         if (!g) return;
         try {
-            const { data: resp } = await chatApi.get(`/api/v1/contacts/${encodeURIComponent(g)}`);
-            const contacts = Array.isArray(resp?.data) ? resp.data : [];
-            const files = extractFilesFromContacts(contacts);
+            const { data: resp } = await chatApi.get("/api/v1/storage", {
+                params: { glagol_parent: glagolParent, guid: g },
+            });
+            const rows = Array.isArray(resp) ? resp : [];
+            const files = Array.from(new Set(
+                rows
+                    .map((row: any) => String(row?.inner_name ?? row?.filename ?? "").trim())
+                    .filter(Boolean)
+            ));
             setServerFilesByGuid(prev => ({ ...prev, [g]: files }));
         } catch (e) {
             console.warn("refreshContactFiles failed", e);
@@ -472,9 +464,15 @@ export default function ItsmGuidScreen() {
             if (activeGuid) void refreshUnreadCounts([activeGuid], hasSip, loginForUnread);
         },
 
-        onAck: ({ tempId, message_id }) => {
+        onAck: ({ tempId, message_id, status, message }) => {
             setOptimistic((prev: UiMessage[]) =>
-                prev.map(m => (m.tempId === tempId ? { ...m, id: String(message_id), status: "sent" } : m))
+                prev.map(m => {
+                    if (m.tempId !== tempId) return m;
+                    if (status === "sent" && typeof message_id === "number" && Number.isFinite(message_id)) {
+                        return { ...m, id: String(message_id), status: "sent", errorText: undefined };
+                    }
+                    return { ...m, status: "failed", errorText: message || "Ошибка отправки" };
+                })
             );
         },
 
@@ -487,13 +485,15 @@ export default function ItsmGuidScreen() {
         //     if (activeGuid) void refreshUnreadCounts([activeGuid], hasSip, loginForUnread);
         // },
 
-        onUploaded: ({ tempId, filenames }) => {
+        onUploaded: ({ tempId, files }) => {
             setOptimistic(prev =>
                 prev.map(m => {
                     if (m.tempId !== tempId) return m;
-                    const nextAtts = filenames.map((name, i) => ({
-                        id: `${m.id}:${i}`,
-                        name,
+                    const nextAtts = files.map((fileRef, i) => ({
+                        id: `${m.id}:${fileRef.id ?? i}`,
+                        name: fileRef.filename,
+                        storageId: fileRef.id,
+                        originGuid: fileRef.origin_guid || activeGuid,
                         url: m.attachments?.[i]?.url,
                     }));
                     return { ...m, attachments: nextAtts };

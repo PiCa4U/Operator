@@ -72,14 +72,14 @@ const DEV_USERS = [
         label: "1012 / 1.fs@akc24.ru",
         sipLogin: "1012",
         worker: "1.fs@akc24.ru",
-        sessionKey: "s:1.fs@akc24.ru:4139b7b914e504ef54fa7586d06999c9151c05311366de78",
+        sessionKey: "s:1.fs@akc24.ru:b705ae573eeac790b9cad531e867c04b96515a98084fe574",
     },
     {
         id: "1000",
         label: "1000 / 4.fs@akc24.ru",
         sipLogin: "1000",
         worker: "4.fs@akc24.ru",
-        sessionKey: "s:4.fs@akc24.ru:b961ca86b1626b0f54ab52093b28e3194b2909dcebfe7ab0",
+        sessionKey: "s:4.fs@akc24.ru:91a2eb8fc8ac469a8300f2e3118b93d7ec41357d2f7f6947",
     },
     {
         id: "1014",
@@ -100,7 +100,7 @@ const PROD_USERS = [
         label: "1112 / 113.privet@pm.ru",
         sipLogin: "1112",
         worker: "113.privet@pm.ru",
-        sessionKey: "s:113.privet@pm.ru:116bf4ea42da43eae995dab0d32d57422e149d670af92baf",
+        sessionKey: "s:113.privet@pm.ru:fe09fdfc58454897df7d4eb2602ffed2c3bc8fff02165bb8",
     },
 ] as const;
 

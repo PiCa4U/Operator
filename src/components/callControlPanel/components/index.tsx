@@ -256,6 +256,33 @@ function normalizeNewlines(s: string) {
     return (s ?? "").replace(/\r\n/g, "\n");
 }
 
+function normalizeFieldUiValue(value: unknown): string {
+    if (value == null) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+
+    if (typeof value === "object") {
+        const obj = value as any;
+        const preferred =
+            obj?.name ??
+            obj?.value ??
+            obj?.label ??
+            obj?.guid ??
+            obj?.id;
+
+        if (typeof preferred === "string" && preferred.trim()) return preferred;
+        if (typeof preferred === "number" || typeof preferred === "boolean") return String(preferred);
+
+        try {
+            return JSON.stringify(obj);
+        } catch {
+            return "";
+        }
+    }
+
+    return String(value);
+}
+
 interface EditableFieldsProps {
     params: FieldDefinition[];
     initialValues?: { [fieldId: string]: string };
@@ -517,7 +544,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
             }
         >
             {visibleParams.map(param => {
-                const currentValue = fieldValues[param.field_id] || '';
+                const currentValue = normalizeFieldUiValue(fieldValues[param.field_id]);
                 const stableParamId = String(param.id ?? param.field_id);
 
                 const commonProps = {
@@ -610,7 +637,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
 
                             let savedObj: Record<string, string> = {};
                             if (isDefaultsOnly) {
-                                const raw = (fieldValues[storeFieldId] || "").trim();
+                                const raw = normalizeFieldUiValue(fieldValues[storeFieldId]).trim();
                                 if ((raw.startsWith("{") && raw.endsWith("}")) || (raw.startsWith("[") && raw.endsWith("]"))) {
                                     try { savedObj = JSON.parse(raw) || {}; } catch {}
                                 }
@@ -728,7 +755,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                                 opts = cachedOptions;
                             }
 
-                            const rawField = fieldValues[param.field_id] || "";
+                            const rawField = normalizeFieldUiValue(fieldValues[param.field_id]);
                             const trimmed = rawField.trim();
                             let defaultValue = rawField;
 
@@ -811,7 +838,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         )}
 
                         {param.field_type === 'many' && (() => {
-                            const rawField = fieldValues[param.field_id] || "";
+                            const rawField = normalizeFieldUiValue(fieldValues[param.field_id]);
                             const { options, selected } = parseManyValue(rawField, param.field_vals);
                             const stableParamId = String(param.id ?? param.field_id);
 
@@ -850,7 +877,7 @@ const EditableFields: React.FC<EditableFieldsProps> = ({
                         })()}
 
                         {param.field_type === 'href' && (() => {
-                            const rawField = fieldValues[param.field_id] || "";
+                            const rawField = normalizeFieldUiValue(fieldValues[param.field_id]);
                             const trimmedField = rawField.trim();
 
                             let links: Array<{ text: string; url: string }> = [];

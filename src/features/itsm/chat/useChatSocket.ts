@@ -1,9 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { createChatSocket } from "./socket";
-import { uploadAndAttach, type UploadItem } from "./api";
+import {
+    normalizeStorageRefs,
+    toChatIso,
+    toMessageSendStorage,
+    uploadAndAttach,
+    type ChatStorageRef,
+    type UploadItem
+} from "./api";
 import { store } from "../../../redux/store";
 
-export type UiAttachment = { id: string; name: string; url?: string };
+export type UiAttachment = { id: string; name: string; url?: string; storageId?: number; originGuid?: string };
 export type Role = "client" | "operator" | "manager";
 export type UiMessage = {
     id: string;
@@ -20,18 +27,15 @@ export type UiMessage = {
 };
 
 function toIso(s: string): string {
-    const [d, t = "00:00:00"] = s.trim().split(" ");
-    const [y, m, day] = d.split("-").map(Number);
-    const [hh, mm, ss] = t.split(":").map(Number);
-    return new Date(Date.UTC(y, (m || 1) - 1, day || 1, hh || 0, mm || 0, ss || 0)).toISOString();
+    return toChatIso(s);
 }
 
 /** коллбэки событий */
 type Handlers = {
     onIncoming?: (msg: UiMessage) => void;
-    onAck?: (ack: { tempId: string; message_id: number }) => void;
+    onAck?: (ack: { tempId: string; message_id: number | null; status: "sent" | "error"; message?: string }) => void;
     onRead?: (e: ReadEvent) => void;
-    onUploaded?: (p: { tempId: string; filenames: string[] }) => void;
+    onUploaded?: (p: { tempId: string; files: ChatStorageRef[] }) => void;
 };
 
 export type ReadByType = Record<string, number[]>;
@@ -47,7 +51,7 @@ export function useChatSocket(
 ) {
     const { guid, login, glagol_parent, onIncoming, onAck, onRead, onUploaded } = opts;
 
-    const { sipLogin = "", worker = "" } = store.getState().credentials;
+    const { worker = "" } = store.getState().credentials;
     const { sessionKey } = store.getState().operator;
 
     const sockRef = useRef<ReturnType<typeof createChatSocket> | null>(null);
@@ -78,24 +82,55 @@ export function useChatSocket(
         s.on("connect_error", (e: any) => setError(e?.message || "connect_error"));
 
         // ACK на наш message:send
-        s.on("message:sent", (payload: { status: "ok"; message_id: number }) => {
+        s.on("message:sent", (payload: any) => {
             const tempId = pendingQueue.current.shift();
-            handlersRef.current.onAck?.({ tempId: tempId ?? "", message_id: payload.message_id });
+            if (!tempId) return;
+
+            const status = String(payload?.status ?? "").trim().toLowerCase();
+            if (status === "error" || status === "failed") {
+                handlersRef.current.onAck?.({
+                    tempId,
+                    message_id: null,
+                    status: "error",
+                    message: String(payload?.message ?? "Не удалось отправить сообщение"),
+                });
+                return;
+            }
+
+            const messageId = Number(payload?.message_id);
+            if (!Number.isFinite(messageId) || messageId <= 0) {
+                handlersRef.current.onAck?.({
+                    tempId,
+                    message_id: null,
+                    status: "error",
+                    message: "Некорректный ответ сервера на отправку сообщения",
+                });
+                return;
+            }
+
+            handlersRef.current.onAck?.({
+                tempId,
+                message_id: messageId,
+                status: "sent",
+            });
         });
 
         s.on("message", (p: {
             login: string;
             message_id: number;
             message: string;
-            storage: string[] | null;
+            storage: any[] | null;
             created_dt?: string;
             message_type?: string | null;
         }) => {
             const isClient = p.login === "client";
             const role: Role = isClient ? "client" : "operator";
-            const attachments = Array.isArray(p.storage)
-                ? p.storage.map((name, i) => ({ id: `${p.message_id}:${i}`, name }))
-                : [];
+            const attachments = normalizeStorageRefs(p.storage, guid).map((entry, i) => ({
+                id: `${p.message_id}:${entry.id ?? i}`,
+                name: entry.filename,
+                storageId: entry.id,
+                originGuid: entry.origin_guid || guid,
+            }));
 
             const created_at = p.created_dt ? toIso(p.created_dt) : new Date().toISOString();
 
@@ -184,19 +219,30 @@ export function useChatSocket(
                 if (!glagol_parent) throw new Error("send(): glagol_parent is required for file upload");
             }
 
-            let storageNames: string[] = [];
+            let storagePayload: Array<{ id: number; filename: string; origin_guid?: string }> = [];
 
             if (files.length) {
                 const items: UploadItem[] = await uploadAndAttach(guid, files, login!, glagol_parent!);
-                storageNames = items.map((i) => i.filename);
-                handlersRef.current.onUploaded?.({ tempId, filenames: storageNames });
+                storagePayload = toMessageSendStorage(items);
+                if (!storagePayload.length) {
+                    throw new Error("Upload completed, but no successful file ids returned");
+                }
+                handlersRef.current.onUploaded?.({
+                    tempId,
+                    files: storagePayload.map((entry) => ({
+                        id: entry.id,
+                        filename: entry.filename,
+                        inner_name: entry.filename,
+                        origin_guid: entry.origin_guid || guid,
+                    })),
+                });
             }
 
             pendingQueue.current.push(tempId);
 
             sockRef.current?.emit("message:send", {
                 message: text,
-                storage: storageNames.length ? storageNames : undefined,
+                storage: storagePayload.length ? storagePayload : undefined,
                 message_type: messageType,
             });
         } catch (e) {

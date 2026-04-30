@@ -30,8 +30,37 @@ type DialplanExtensionItem = {
     project_name: string;
 };
 
+function extractDigits(value: unknown): string {
+    return String(value ?? "").replace(/\D/g, "");
+}
+
+function normalizeExternalBlindBody(number: string): string {
+    const digits = extractDigits(number);
+    if (digits.length === 11 && (digits.startsWith("7") || digits.startsWith("8"))) {
+        return digits.slice(1);
+    }
+    return digits;
+}
+
+function buildPrefixedBlindExternalTarget(number: string, prefix: string): string {
+    const cleanPrefix = extractDigits(prefix);
+    const body = normalizeExternalBlindBody(number);
+    return `${cleanPrefix}${body}`;
+}
+
 function toStr(v: any) {
     return String(v ?? "").trim();
+}
+
+function normalizeExternalTarget(raw: any) {
+    const value = String(raw ?? "").trim();
+    if (!value) return "";
+    return value.replace(/[^\d+]/g, "");
+}
+
+function isValidExternalTarget(value: string) {
+    const cleaned = String(value ?? "").trim().replace(/^\+/, "");
+    return /^\d{5,20}$/.test(cleaned);
 }
 
 function sanitizeOtherUsers(msg: any): Record<string, any> {
@@ -125,6 +154,26 @@ function isReadyByFs(fsStatus: any, fsState: any) {
     return st.includes("Available") && state === "Waiting";
 }
 
+function mapFsLabelUi(fsStatus: any, fsState: any) {
+    const st = String(fsStatus || "");
+    const state = String(fsState || "");
+
+    if (st === "Logged Out") return { text: "Выключен", color: "#f33333" };
+    if (st === "On Break") return { text: "Перерыв", color: "#cba200" };
+
+    if (state === "In a queue call" && st.includes("Available")) {
+        return { text: "Активный вызов", color: "#cba200" };
+    }
+    if (st.includes("Available") && state === "Idle") {
+        return { text: "Постобработка", color: "#cba200" };
+    }
+    if (st.includes("Available") && state === "Waiting") {
+        return { text: "На линии", color: "#0BB918" };
+    }
+
+    return { text: st || "Обновляется", color: "#6b7280" };
+}
+
 function mapFsLabel(fsStatus: any, fsState: any) {
     const st = String(fsStatus || "");
     const state = String(fsState || "");
@@ -143,6 +192,26 @@ function mapFsLabel(fsStatus: any, fsState: any) {
     }
 
     return { text: st || "Обновляется", color: "#6b7280" };
+}
+
+function mapFsLabelRu(fsStatus: any, fsState: any) {
+    const st = String(fsStatus || "");
+    const state = String(fsState || "");
+
+    if (st === "Logged Out") return { text: "\u0412\u044b\u043a\u043b\u044e\u0447\u0435\u043d", color: "#f33333" };
+    if (st === "On Break") return { text: "\u041f\u0435\u0440\u0435\u0440\u044b\u0432", color: "#cba200" };
+
+    if (state === "In a queue call" && st.includes("Available")) {
+        return { text: "\u0410\u043a\u0442\u0438\u0432\u043d\u044b\u0439 \u0432\u044b\u0437\u043e\u0432", color: "#cba200" };
+    }
+    if (st.includes("Available") && state === "Idle") {
+        return { text: "\u041f\u043e\u0441\u0442\u043e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430", color: "#cba200" };
+    }
+    if (st.includes("Available") && state === "Waiting") {
+        return { text: "\u041d\u0430 \u043b\u0438\u043d\u0438\u0438", color: "#0BB918" };
+    }
+
+    return { text: st || "\u041e\u0431\u043d\u043e\u0432\u043b\u044f\u0435\u0442\u0441\u044f", color: "#6b7280" };
 }
 
 function pickPrimaryInterCall(list: any[]) {
@@ -179,6 +248,9 @@ type Props = {
 
     dialplanExtensions?: DialplanExtensionItem[];
     findProjectLabel?: (projectName: string) => string;
+    onExternalConsultCall?: (target: string) => Promise<void> | void;
+    externalBlindPrefix?: string;
+    externalBlindProjectName?: string;
 };
 
 const EMPTY_STATUSES: Record<string, any> = {};
@@ -196,6 +268,9 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
          isMainCallHeld,
          dialplanExtensions = [],
          findProjectLabel,
+         onExternalConsultCall,
+         externalBlindPrefix,
+         externalBlindProjectName,
      }) => {
         const dispatch = useDispatch();
 
@@ -227,8 +302,9 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
         const [busyLogin, setBusyLogin] = useState<string | null>(null);
 
         const [busyKind, setBusyKind] = useState<
-            "call" | "transfer" | "blind" | "extension" | null
+            "call" | "transfer" | "blind" | "extension" | "external" | null
         >(null);
+        const [manualExternalTarget, setManualExternalTarget] = useState("");
 
         const sleep = (ms: number) =>
             new Promise<void>((resolve) => window.setTimeout(resolve, ms));
@@ -303,7 +379,7 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                     const st = userStatuses?.[String(o.login)] || {};
                     const sofiaOk = isOnlineBySofia(st?.sofia_status);
                     const readyOk = isReadyByFs(st?.status, st?.state);
-                    const fsLabel = mapFsLabel(st?.status, st?.state);
+                    const fsLabel = mapFsLabelRu(st?.status, st?.state);
 
                     return {
                         ...o,
@@ -381,6 +457,25 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
             typeof blindTransfer === "function" &&
             sipEstablished;
         const canCall = enabled && webrtcEnabled && !hasInterCall && !hasConsult;
+        const normalizedExternalTarget = useMemo(
+            () => normalizeExternalTarget(manualExternalTarget),
+            [manualExternalTarget]
+        );
+        const normalizedBlindPrefix = useMemo(
+            () => extractDigits(externalBlindPrefix),
+            [externalBlindPrefix]
+        );
+        const hasExternalBlindPrefix = normalizedBlindPrefix.length > 0;
+        const canDialExternal =
+            canCall && isValidExternalTarget(normalizedExternalTarget);
+        const canBlindTransferExternal =
+            enabled &&
+            !hasInterCall &&
+            webrtcEnabled &&
+            typeof blindTransfer === "function" &&
+            sipEstablished &&
+            hasExternalBlindPrefix &&
+            isValidExternalTarget(normalizedExternalTarget);
 
         const handleCall = useCallback(
             async (operatorLogin: string) => {
@@ -576,6 +671,142 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
             [enabled, webrtcEnabled, blindTransfer, sipEstablished]
         );
 
+        const handleExternalConsultCall = useCallback(async () => {
+            if (!enabled) return;
+
+            if (!webrtcEnabled) {
+                await Swal.fire({
+                    icon: "info",
+                    title: "Телефония выключена",
+                    text: "SIP/WebRTC сейчас недоступен.",
+                    timer: 1700,
+                    showConfirmButton: false,
+                });
+                return;
+            }
+
+            const target = normalizeExternalTarget(manualExternalTarget);
+            if (!isValidExternalTarget(target)) {
+                await Swal.fire({
+                    icon: "warning",
+                    title: "Неверный номер",
+                    text: "Укажите корректный внешний номер (минимум 5 цифр).",
+                });
+                return;
+            }
+
+            const busyKey = "external:manual";
+            setBusyLogin(busyKey);
+            setBusyKind("external");
+
+            try {
+                if (onExternalConsultCall) {
+                    await onExternalConsultCall(target);
+                } else {
+                    await ensureMainCallHeld();
+                    await startConsultCall(target);
+                }
+                setManualExternalTarget(target);
+
+                await Swal.fire({
+                    icon: "success",
+                    title: "Консультация начата",
+                    text: `Номер: ${target}`,
+                    timer: 1200,
+                    showConfirmButton: false,
+                });
+            } catch (e: any) {
+                console.error(e);
+                await Swal.fire({
+                    icon: "error",
+                    title: "Не удалось начать консультацию",
+                    text: String(e?.message || e),
+                });
+            } finally {
+                setBusyLogin(null);
+                setBusyKind(null);
+            }
+        }, [
+            enabled,
+            ensureMainCallHeld,
+            manualExternalTarget,
+            onExternalConsultCall,
+            startConsultCall,
+            webrtcEnabled,
+        ]);
+
+        const handleExternalBlindTransfer = useCallback(async () => {
+            if (!enabled) return;
+            if (!webrtcEnabled || typeof blindTransfer !== "function" || !sipEstablished) return;
+
+            const target = normalizeExternalTarget(manualExternalTarget);
+            if (!isValidExternalTarget(target)) {
+                await Swal.fire({
+                    icon: "warning",
+                    title: "Неверный номер",
+                    text: "Укажите корректный номер для слепого перевода (минимум 5 цифр).",
+                });
+                return;
+            }
+
+            if (!hasExternalBlindPrefix) {
+                await Swal.fire({
+                    icon: "warning",
+                    title: "Недоступен слепой перевод",
+                    text: externalBlindProjectName
+                        ? `Для проекта "${externalBlindProjectName}" не настроен префикс исходящего шлюза.`
+                        : "Для текущего проекта не настроен префикс исходящего шлюза.",
+                });
+                return;
+            }
+
+            const transferTarget = buildPrefixedBlindExternalTarget(target, normalizedBlindPrefix);
+            if (!transferTarget) {
+                await Swal.fire({
+                    icon: "warning",
+                    title: "Неверный номер",
+                    text: "Не удалось сформировать номер для слепого перевода.",
+                });
+                return;
+            }
+
+            const busyKey = "external:manual";
+            setBusyLogin(busyKey);
+            setBusyKind("blind");
+
+            try {
+                await blindTransfer(transferTarget);
+                setManualExternalTarget(target);
+
+                await Swal.fire({
+                    icon: "success",
+                    title: "Слепой перевод выполнен",
+                    text: `Номер: ${target}`,
+                    timer: 1100,
+                    showConfirmButton: false,
+                });
+            } catch (e: any) {
+                console.error(e);
+                await Swal.fire({
+                    icon: "error",
+                    title: "Не удалось выполнить слепой перевод",
+                    text: String(e?.message || e),
+                });
+            } finally {
+                setBusyLogin(null);
+                setBusyKind(null);
+            }
+        }, [
+            blindTransfer,
+            enabled,
+            externalBlindProjectName,
+            hasExternalBlindPrefix,
+            manualExternalTarget,
+            normalizedBlindPrefix,
+            sipEstablished,
+            webrtcEnabled,
+        ]);
+
         const badge = useMemo(() => {
             const s = String(sipStatus || "").toLowerCase();
 
@@ -669,6 +900,114 @@ const InternalOperatorsDialer: React.FC<Props> = React.memo(
                             >
                                 ✕
                             </button>
+                        </div>
+
+                        <div
+                            style={{
+                                border: "1px solid rgba(0,0,0,.08)",
+                                borderRadius: 10,
+                                padding: 10,
+                                marginBottom: 12,
+                            }}
+                        >
+                            <div
+                                style={{
+                                    fontWeight: 700,
+                                    fontSize: 13,
+                                    marginBottom: 8,
+                                    color: "#374151",
+                                }}
+                            >
+                                Внешний номер (консультация)
+                            </div>
+
+                            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                <input
+                                    className="form-control"
+                                    value={manualExternalTarget}
+                                    onChange={(e) =>
+                                        setManualExternalTarget(normalizeExternalTarget(e.target.value))
+                                    }
+                                    placeholder="Например: 79991234567"
+                                    style={{ minWidth: 0 }}
+                                />
+
+                                <button
+                                    className="btn btn-sm btn-outline-success"
+                                    onClick={handleExternalConsultCall}
+                                    disabled={!canDialExternal || !!busyLogin}
+                                    style={{ whiteSpace: "nowrap" }}
+                                    title={
+                                        canDialExternal
+                                            ? "Начать консультационный внешний вызов"
+                                            : "Проверьте номер или состояние SIP"
+                                    }
+                                >
+                                    {busyLogin === "external:manual" && busyKind === "external" ? (
+                                        <>
+                                            <span
+                                                className="spinner-border spinner-border-sm"
+                                                role="status"
+                                                aria-hidden="true"
+                                                style={{ marginRight: 8, verticalAlign: "middle" }}
+                                            />
+                                            Вызов...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <span
+                                                className="material-icons"
+                                                style={{
+                                                    fontSize: 18,
+                                                    verticalAlign: "middle",
+                                                    marginRight: 6,
+                                                }}
+                                            >
+                                                call
+                                            </span>
+                                            Позвонить
+                                        </>
+                                        )}
+                                </button>
+
+                                <button
+                                    className="btn btn-sm btn-outline-primary"
+                                    onClick={handleExternalBlindTransfer}
+                                    disabled={!canBlindTransferExternal || !!busyLogin}
+                                    style={{ whiteSpace: "nowrap" }}
+                                    title={
+                                        canBlindTransferExternal
+                                            ? "Слепой перевод на внешний номер"
+                                            : "Слепой перевод недоступен (проверьте SIP/номер)"
+                                    }
+                                >
+                                    {busyLogin === "external:manual" && busyKind === "blind" ? (
+                                        <>
+                                            <span
+                                                className="spinner-border spinner-border-sm"
+                                                role="status"
+                                                aria-hidden="true"
+                                                style={{ marginRight: 8, verticalAlign: "middle" }}
+                                            />
+                                            Перевод...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <span
+                                                className="material-icons"
+                                                style={{
+                                                    fontSize: 18,
+                                                    verticalAlign: "middle",
+                                                    marginRight: 6,
+                                                }}
+                                            >
+                                                call_split
+                                            </span>
+                                            Слепой перевод
+                                        </>
+                                    )}
+                                </button>
+                            </div>
                         </div>
 
                         {dialplanExtensions.length > 0 && (

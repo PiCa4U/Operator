@@ -31,9 +31,33 @@ async function openPdfPreview(urlPreview: string, urlDownload: string) {
 }
 
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif"];
-const extOf = (name: string) => (name.split(".").pop() || "").toLowerCase();
-const isImageName = (name: string) => IMAGE_EXTS.includes(extOf(name));
-const isPdfName = (name: string) => extOf(name) === "pdf";
+const normalizeAttachmentName = (name: unknown): string => {
+    if (typeof name === "string") return name;
+    if (name == null) return "";
+
+    if (typeof name === "object") {
+        const obj = name as any;
+        const fromKnownKeys =
+            obj?.name ??
+            obj?.filename ??
+            obj?.inner_name ??
+            obj?.storage_name ??
+            obj?.file_name;
+        if (typeof fromKnownKeys === "string") return fromKnownKeys;
+    }
+
+    return String(name);
+};
+const attachmentNameOf = (att: Partial<UiAttachment> | null | undefined): string =>
+    normalizeAttachmentName(att?.name);
+
+const extOf = (name: unknown) => {
+    const safe = normalizeAttachmentName(name);
+    const dot = safe.lastIndexOf(".");
+    return (dot >= 0 ? safe.slice(dot + 1) : "").toLowerCase();
+};
+const isImageName = (name: unknown) => IMAGE_EXTS.includes(extOf(name));
+const isPdfName = (name: unknown) => extOf(name) === "pdf";
 
 const PaperclipIcon = ({ className }: { className?: string }) => (
     <svg
@@ -68,7 +92,14 @@ function useAutoResize(
 }
 
 /* ===== Типы ===== */
-export type UiAttachment = { id: string; name: string; url?: string; file?: File };
+export type UiAttachment = {
+    id: string;
+    name: string;
+    url?: string;
+    file?: File;
+    storageId?: number;
+    originGuid?: string;
+};
 export type UiMessage = {
     id: string;
     text: string;
@@ -475,10 +506,17 @@ export default function LocalChat({
                                             : "";
 
                                         const messageImageItems: LightboxItem[] = (m.attachments || [])
-                                            .filter((att) => (att.file?.type ? att.file.type.startsWith("image/") : isImageName(att.name)))
+                                            .filter((att) => {
+                                                const fileName = attachmentNameOf(att);
+                                                return att.file?.type
+                                                    ? att.file.type.startsWith("image/")
+                                                    : isImageName(fileName);
+                                            })
                                             .map((att) => ({
-                                                url: (!!att.file && !!att.url) ? att.url! : buildChatDownloadUrl(guid, att.name),
-                                                title: att.name,
+                                                url: (!!att.file && !!att.url)
+                                                    ? att.url!
+                                                    : buildChatDownloadUrl(att.originGuid || guid, attachmentNameOf(att)),
+                                                title: attachmentNameOf(att),
                                             }));
 
                                         return (
@@ -517,18 +555,21 @@ export default function LocalChat({
                                                                     <div className={styles.filesChips}>
                                                                         {m.attachments.map((a) => {
                                                                             const isLocal = !!a.file && !!a.url;
+                                                                            const fileName = attachmentNameOf(a);
+                                                                            if (!fileName) return null;
 
                                                                             // URL для просмотра и скачивания
-                                                                            const urlDownload = isLocal ? a.url! : buildChatDownloadUrl(guid, a.name);
+                                                                            const originGuid = a.originGuid || guid;
+                                                                            const urlDownload = isLocal ? a.url! : buildChatDownloadUrl(originGuid, fileName);
                                                                             const urlPreview = urlDownload;
 
                                                                             // тип
                                                                             const isImg = isLocal
                                                                                 ? (a.file?.type || "").startsWith("image/")
-                                                                                : isImageName(a.name);
+                                                                                : isImageName(fileName);
                                                                             const isPdf = isLocal
                                                                                 ? a.file?.type === "application/pdf"
-                                                                                : isPdfName(a.name);
+                                                                                : isPdfName(fileName);
 
                                                                             if (isImg) {
                                                                                 const idx = messageImageItems.findIndex((i) => i.url === urlPreview);
@@ -540,18 +581,18 @@ export default function LocalChat({
                                                                                         <button
                                                                                             type="button"
                                                                                             className={`${styles.fileChip} badge bg-secondary`}
-                                                                                            title={`Просмотр: ${a.name}`}
+                                                                                            title={`Просмотр: ${fileName}`}
                                                                                             onClick={() =>
                                                                                                 setLb({
                                                                                                     items: messageImageItems.length
                                                                                                         ? messageImageItems
-                                                                                                        : [{ url: urlPreview, title: a.name }],
+                                                                                                        : [{ url: urlPreview, title: fileName }],
                                                                                                     index: idx >= 0 ? idx : 0,
                                                                                                 })
                                                                                             }
                                                                                             style={{ cursor: "zoom-in" }}
                                                                                         >
-                                                                                          <span className={styles.fileChipText}>{a.name}</span>
+                                                                                          <span className={styles.fileChipText}>{fileName}</span>
                                                                                         </button>
 
                                                                                         {!isLocal && (
@@ -560,15 +601,15 @@ export default function LocalChat({
                                                                                                 target="_blank"
                                                                                                 rel="noreferrer"
                                                                                                 className={`${styles.fileChip} badge bg-light text-dark`}
-                                                                                                title={`Скачать: ${a.name}`}
+                                                                                                title={`Скачать: ${fileName}`}
                                                                                                 onClick={(e) => {
                                                                                                     e.preventDefault();
                                                                                                     e.stopPropagation();
-                                                                                                    void downloadChatFile(guid, a.name, a.name).catch((err) =>
+                                                                                                    void downloadChatFile(originGuid, fileName, fileName).catch((err) =>
                                                                                                         console.error("downloadChatFile failed", err)
                                                                                                     );
                                                                                                 }}
-                                                                                                download={a.name}
+                                                                                                download={fileName}
                                                                                                 style={{ lineHeight: 1, padding: "0.2rem 0.45rem" }}
                                                                                             >
                                                                                                 ⬇
@@ -587,19 +628,19 @@ export default function LocalChat({
                                                                                         <button
                                                                                             type="button"
                                                                                             className={`${styles.fileChip} badge bg-secondary`}
-                                                                                            title={`Открыть PDF: ${a.name}`}
+                                                                                            title={`Открыть PDF: ${fileName}`}
                                                                                             onClick={() => {
                                                                                                 if (isLocal) {
                                                                                                     void openPdfPreview(urlPreview, urlDownload);
                                                                                                     return;
                                                                                                 }
-                                                                                                void openChatFileInNewTab(guid, a.name).catch((err) =>
+                                                                                                void openChatFileInNewTab(originGuid, fileName).catch((err) =>
                                                                                                     console.error("openChatFileInNewTab failed", err)
                                                                                                 );
                                                                                             }}
                                                                                             style={{ cursor: "zoom-in" }}
                                                                                         >
-                                                                                          <span className={styles.fileChipText}>📄 {a.name}</span>
+                                                                                          <span className={styles.fileChipText}>📄 {fileName}</span>
                                                                                         </button>
                                                                                         {!isLocal && (
                                                                                             <a
@@ -607,8 +648,8 @@ export default function LocalChat({
                                                                                                 target="_blank"
                                                                                                 rel="noreferrer"
                                                                                                 className={`${styles.fileChip} badge bg-light text-dark`}
-                                                                                                title={`Скачать: ${a.name}`}
-                                                                                                download={a.name}
+                                                                                                title={`Скачать: ${fileName}`}
+                                                                                                download={fileName}
                                                                                                 style={{ lineHeight: 1, padding: "0.2rem 0.45rem" }}
                                                                                             >
                                                                                                 ⬇
@@ -621,15 +662,15 @@ export default function LocalChat({
                                                                             return (
                                                                                 <a
                                                                                     key={a.id}
-                                                                                    href={urlDownload}
-                                                                                    target="_blank"
-                                                                                    rel="noreferrer"
-                                                                                    className={`${styles.fileChip} badge bg-secondary`}
-                                                                                    title={a.name}
-                                                                                    {...(!isLocal ? { download: a.name } : {})}
-                                                                                >
-                                                                                    <span className={styles.fileChipText}>{a.name}</span>
-                                                                                </a>
+                                                                                href={urlDownload}
+                                                                                target="_blank"
+                                                                                rel="noreferrer"
+                                                                                className={`${styles.fileChip} badge bg-secondary`}
+                                                                                title={fileName}
+                                                                                {...(!isLocal ? { download: fileName } : {})}
+                                                                            >
+                                                                                <span className={styles.fileChipText}>{fileName}</span>
+                                                                            </a>
                                                                             );
                                                                         })}
                                                                     </div>

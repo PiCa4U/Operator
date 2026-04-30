@@ -182,6 +182,30 @@ function normalizeContactUsers(resp: any): string[] {
     return arr.map(String).map((s: any) => s.trim()).filter(Boolean);
 }
 
+function fieldValueToString(value: any): string {
+    if (value == null) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+
+    if (typeof value === "object") {
+        const maybeName = (value as any)?.name;
+        const maybeValue = (value as any)?.value;
+        const maybeGuid = (value as any)?.guid;
+
+        if (typeof maybeName === "string" && maybeName.trim()) return maybeName;
+        if (typeof maybeValue === "string" && maybeValue.trim()) return maybeValue;
+        if (typeof maybeGuid === "string" && maybeGuid.trim()) return maybeGuid;
+
+        try {
+            return JSON.stringify(value);
+        } catch {
+            return "";
+        }
+    }
+
+    return String(value);
+}
+
 
 function collectAlerts(payload: any): AlertMsg[] {
     const out: AlertMsg[] = [];
@@ -580,6 +604,57 @@ function isInternalExtensionTarget(callLike?: CallLike, currentSipLogin?: string
     return Boolean(fromPresence && fromPresence !== ownSip);
 }
 
+function resolveBridgeUuid(callLike?: CallLike, preferBForOutbound = true): string {
+    if (!callLike) return "";
+
+    const direction = String(callLike?.direction ?? "").toLowerCase();
+    const preferB = preferBForOutbound && direction === "outbound";
+
+    if (preferB) {
+        const bSide = String(callLike?.b_uuid ?? callLike?.b_call_uuid ?? "").trim();
+        if (bSide) return bSide;
+    }
+
+    const aSide = String(callLike?.uuid ?? callLike?.call_uuid ?? "").trim();
+    if (aSide) return aSide;
+
+    const bFallback = String(callLike?.b_uuid ?? callLike?.b_call_uuid ?? "").trim();
+    return bFallback;
+}
+
+function resolveOwnLegSideByPresence(
+    callLike?: CallLike,
+    currentSipLogin?: string
+): "a" | "b" | null {
+    if (!callLike) return null;
+    const ownSip = String(currentSipLogin ?? "").trim();
+    if (!ownSip) return null;
+
+    const aPresence = extractSipLoginFromPresence(callLike?.presence_id);
+    const bPresence = extractSipLoginFromPresence(callLike?.b_presence_id);
+
+    if (aPresence && aPresence === ownSip) return "a";
+    if (bPresence && bPresence === ownSip) return "b";
+    return null;
+}
+
+function resolvePeerBridgeUuid(
+    callLike?: CallLike,
+    currentSipLogin?: string,
+    preferBForOutbound = true
+): string {
+    if (!callLike) return "";
+
+    const aSide = String(callLike?.uuid ?? callLike?.call_uuid ?? "").trim();
+    const bSide = String(callLike?.b_uuid ?? callLike?.b_call_uuid ?? "").trim();
+
+    const ownSide = resolveOwnLegSideByPresence(callLike, currentSipLogin);
+    if (ownSide === "a") return bSide || aSide;
+    if (ownSide === "b") return aSide || bSide;
+
+    return resolveBridgeUuid(callLike, preferBForOutbound);
+}
+
 function parseDialplanExtensions(
     resp: DialplanExtensionsResponse
 ): DialplanExtensionItem[] {
@@ -707,21 +782,6 @@ function getContactSelectionKey(c: any): string {
         `${String(c?.project ?? "")}:${String(c?.phone ?? "")}`
     );
 }
-function normalizeStorage(storage: any): string[] {
-    if (!Array.isArray(storage)) return [];
-    return storage
-        .map((it) => (typeof it === "string" ? it : it?.name ?? it?.filename ?? ""))
-        .filter((s: string) => !!s);
-}
-function extractFilesFromContacts(arr: any[]): string[] {
-    const all: string[] = [];
-    for (const c of arr ?? []) {
-        const storage = normalizeStorage(c?.storage);
-        for (const s of storage) if (s) all.push(s);
-    }
-    return Array.from(new Set(all));
-}
-
 const toTabKey = (v: any): string | null => {
     if (v === undefined || v === null) return null;
     const s = String(v).trim();
@@ -992,11 +1052,21 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     );
     const projectPool = accessibleProjectPool;
 
-    const activeCalls: ActiveCall[] = useSelector((state: RootState) => state.operator.activeCalls);
-    const isMainCallHeld = useMemo(() => {
-        const mainActiveCall = activeCalls?.[0];
-        return isCallOnHold(mainActiveCall);
-    }, [activeCalls]);
+    const rawActiveCalls = useSelector((state: RootState) => state.operator.activeCalls as any);
+    const activeCalls: ActiveCall[] = useMemo(() => {
+        return Array.isArray(rawActiveCalls)
+            ? rawActiveCalls
+            : Object.values(rawActiveCalls || {});
+    }, [rawActiveCalls]);
+    const rawExternalConsultCalls = useSelector(
+        (state: RootState) => (state.operator as any).externalConsultCalls
+    );
+    const externalConsultCalls: ActiveCall[] = useMemo(() => {
+        return Array.isArray(rawExternalConsultCalls)
+            ? rawExternalConsultCalls
+            : Object.values(rawExternalConsultCalls || {});
+    }, [rawExternalConsultCalls]);
+    const firstOpenedPhoneProject = openedPhones?.[0]?.project;
 
     const [manualNumber, setManualNumber] = useState('');
 
@@ -1017,13 +1087,22 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const [mergedFieldsAll, setMergedFieldsAll] = useState<MergedField[]>([]);
     const [mergedFields,    setMergedFields]    = useState<MergedField[]>([]);
     const [values, setValues] = useState<GroupFieldValues>({});
+    const mergedFieldsAllRef = useRef<MergedField[]>([]);
+    const mergedFieldsRef = useRef<MergedField[]>([]);
 
     useEffect(() => {
         console.log("values: ", values)
     }, [values]);
+    useEffect(() => {
+        mergedFieldsAllRef.current = mergedFieldsAll;
+    }, [mergedFieldsAll]);
+    useEffect(() => {
+        mergedFieldsRef.current = mergedFields;
+    }, [mergedFields]);
 
 
     const [isParams, setIsParams] = useState<boolean>(true)
+    const [callEndingPending, setCallEndingPending] = useState<boolean>(false);
     const [groupSelectedIds, setGroupSelectedIds] = useState<number[]>([]);
     const swalRef = useRef<any>(null);
     const [activeTab, setActiveTab] = useState<string>(TAB_ALL);
@@ -1083,7 +1162,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     );
 
 
-    const POST_LIMIT = worker.includes('fs@akc24.ru') ? 12000 : 1800;
+    const POST_LIMIT = worker.includes('fs@akc24.ru') ? 12000 : 180;
 
     const postSecondsRef = useRef<number>(POST_LIMIT);
 
@@ -1103,7 +1182,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     useEffect(() => { commentRef.current = comment; }, [comment]);
 
     const activeCallsRef = useRef(activeCalls);
-    useEffect(() => { activeCallsRef.current = activeCalls; }, [activeCalls]);
+    const externalConsultCallsRef = useRef(externalConsultCalls);
+    const primaryCardCallIdentityRef = useRef<string>("");
     const projectFieldsHandlerRef = useRef<(data: ProjectFieldsPayload) => void>(() => {});
     const lastInboundProjectFieldsRequestRef = useRef<string>("");
 
@@ -1160,6 +1240,222 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const getExtensionDialProject = (item: DialplanExtensionItem): string => {
         return item.project_name || activeProject || selectedProjects[0] || groupProjects[0] || '';
     };
+
+    const resolveActiveCallIdentity = useCallback((callLike: any): string => {
+        return String(
+            callLike?.call_uuid ??
+            callLike?.uuid ??
+            callLike?.b_call_uuid ??
+            callLike?.b_uuid ??
+            ""
+        ).trim();
+    }, []);
+
+    const interCallIdentity = useMemo(
+        () => resolveActiveCallIdentity(interCall),
+        [interCall, resolveActiveCallIdentity]
+    );
+
+    const pickMainActiveCall = useCallback((callsLike: any[] | undefined): ActiveCall | null => {
+        const calls = Array.isArray(callsLike) ? callsLike : [];
+        if (!calls.length) return null;
+
+        const pinnedIdentity = primaryCardCallIdentityRef.current;
+        if (pinnedIdentity) {
+            const pinned = calls.find((item) => resolveActiveCallIdentity(item) === pinnedIdentity);
+            if (pinned) return pinned as ActiveCall;
+        }
+
+        if (interCallIdentity) {
+            const nonInter = calls.find((item) => {
+                const identity = resolveActiveCallIdentity(item);
+                return Boolean(identity) && identity !== interCallIdentity;
+            });
+            if (nonInter) return nonInter as ActiveCall;
+        }
+
+        return (calls[0] as ActiveCall) ?? null;
+    }, [interCallIdentity, resolveActiveCallIdentity]);
+
+    const mainActiveCall = useMemo(
+        () => pickMainActiveCall(activeCalls),
+        [activeCalls, pickMainActiveCall]
+    );
+
+    useEffect(() => {
+        const resolvedMainCall = pickMainActiveCall(activeCalls);
+        if (!resolvedMainCall) {
+            primaryCardCallIdentityRef.current = "";
+            return;
+        }
+        const identity = resolveActiveCallIdentity(resolvedMainCall);
+        if (identity) {
+            primaryCardCallIdentityRef.current = identity;
+        }
+    }, [activeCalls, pickMainActiveCall, resolveActiveCallIdentity]);
+
+    const getMainActiveCallFromRef = useCallback((): ActiveCall | null => {
+        return pickMainActiveCall(activeCallsRef.current as any[]) ?? null;
+    }, [pickMainActiveCall]);
+
+    useEffect(() => {
+        activeCallsRef.current = activeCalls;
+    }, [activeCalls]);
+    useEffect(() => {
+        externalConsultCallsRef.current = externalConsultCalls;
+    }, [externalConsultCalls]);
+
+    const primaryActiveCallProject = cleanProjectName(String((mainActiveCall as any)?.project_name ?? ""));
+    const isMainCallHeld = useMemo(() => isCallOnHold(mainActiveCall), [mainActiveCall]);
+
+    const resolveExternalConsultProject = useCallback((): string => {
+        const candidates = [
+            activeProject,
+            outActiveProjectName,
+            openedPhones?.[0]?.project,
+            call?.project_name,
+        ]
+            .map((v) => String(v ?? "").trim())
+            .filter(Boolean);
+
+        return candidates.find((v) => v.toLowerCase() !== "outbound") || "";
+    }, [activeProject, outActiveProjectName, openedPhones, call?.project_name]);
+
+    const externalBlindTransferMeta = useMemo(() => {
+        const projectName = cleanProjectName(resolveExternalConsultProject());
+        if (!projectName) {
+            return { projectName: "", prefix: "" };
+        }
+
+        const project = projectPool.find(
+            (item: any) => cleanProjectName(String(item?.project_name ?? "")) === projectName
+        );
+
+        const gateways = project?.out_gateways;
+        if (!gateways || typeof gateways !== "object") {
+            return { projectName, prefix: "" };
+        }
+
+        const prefix = Object.values(gateways as Record<string, any>)
+            .map((gateway: any) => String(gateway?.prefix ?? "").trim())
+            .find(Boolean) || "";
+
+        return { projectName, prefix };
+    }, [projectPool, resolveExternalConsultProject]);
+
+    const waitForExternalConsultLeg = useCallback(
+        async (beforeKeys: Set<string>, timeoutMs = 10000): Promise<boolean> => {
+            const startedAt = Date.now();
+
+            while (Date.now() - startedAt < timeoutMs) {
+                const nowMainCalls = activeCallsRef.current || [];
+                const nowExternalCalls = externalConsultCallsRef.current || [];
+                const nowCalls = [...nowMainCalls, ...nowExternalCalls];
+                if (nowExternalCalls.length > 0 || nowCalls.length >= 2) return true;
+
+                const hasNewIdentity = nowCalls.some((callLike) => {
+                    const key = resolveActiveCallIdentity(callLike);
+                    return Boolean(key) && !beforeKeys.has(key);
+                });
+                if (hasNewIdentity) return true;
+
+                await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
+            }
+
+            return false;
+        },
+        [resolveActiveCallIdentity]
+    );
+
+    const handleExternalConsultCallViaApi = useCallback(
+        async (phone: string) => {
+            const normalizedPhone = String(phone ?? "").trim();
+            if (!normalizedPhone) {
+                throw new Error("Пустой номер для внешней консультации");
+            }
+
+            const projectName = resolveExternalConsultProject();
+            if (!projectName) {
+                throw new Error("Не удалось определить проект для внешнего вызова");
+            }
+
+            const beforeCalls = [
+                ...(activeCallsRef.current || []),
+                ...(externalConsultCallsRef.current || []),
+            ];
+            const beforeKeys = new Set(
+                beforeCalls
+                    .map((callLike) => resolveActiveCallIdentity(callLike))
+                    .filter(Boolean)
+            );
+
+            setOutboundCall?.(true);
+
+            let holdToggledByFlow = false;
+            const toggleMainHold = (): boolean => {
+                const currentMainCall = getMainActiveCallFromRef();
+                const currentUUID = currentMainCall?.call_uuid || currentMainCall?.uuid;
+                if (!currentUUID) return false;
+
+                socket.emit("sofia_operations", {
+                    worker,
+                    session_key: sessionKey,
+                    uuid: currentUUID,
+                    action: "hold_toggle",
+                });
+                return true;
+            };
+
+            try {
+                await axios.post("/api/v1/calls/call", {
+                    glagol_parent: glagolParent,
+                    project_name: projectName,
+                    sip_login: sipLogin,
+                    phone: normalizedPhone,
+                });
+
+                const mainCall = getMainActiveCallFromRef();
+                const mainHeld = isCallOnHold(mainCall);
+                if (!mainHeld) {
+                    holdToggledByFlow = toggleMainHold();
+                }
+
+                const consultAppeared = await waitForExternalConsultLeg(beforeKeys, 10000);
+                if (!consultAppeared) {
+                    throw new Error("Консультационный вызов не появился (таймаут 10 сек)");
+                }
+
+                setOutboundCall?.(false);
+            } catch (error: any) {
+                if (holdToggledByFlow) {
+                    const mainCall = getMainActiveCallFromRef();
+                    if (isCallOnHold(mainCall)) {
+                        toggleMainHold();
+                    }
+                }
+
+                setOutboundCall?.(false);
+
+                const message =
+                    error?.response?.data?.message ||
+                    error?.response?.data?.error ||
+                    error?.message ||
+                    "Не удалось запустить внешний консультационный вызов";
+                throw new Error(String(message));
+            }
+        },
+        [
+            activeCallsRef,
+            externalConsultCallsRef,
+            glagolParent,
+            resolveActiveCallIdentity,
+            resolveExternalConsultProject,
+            sessionKey,
+            setOutboundCall,
+            sipLogin,
+            waitForExternalConsultLeg, worker, getMainActiveCallFromRef,
+        ]
+    );
 
     const ONCHANGE_DEBOUNCE_MS = 400;
 
@@ -1224,17 +1520,24 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const hasAnyGuid = guidsFromOpened.length > 0;
 
 
-    function extractUploadedNames(up: any): string[] {
-        if (Array.isArray(up)) {
-            return up.map((o: any) => o?.filename || o?.name || o?.storage_name).filter(Boolean);
-        }
+    function extractUploadedItems(up: any): Array<{ id?: number; filename: string; status: string }> {
+        const unpack = (arr: any[]) =>
+            arr
+                .map((o: any) => ({
+                    status: String(o?.status ?? "success"),
+                    filename: String(o?.filename ?? o?.inner_name ?? o?.name ?? o?.storage_name ?? "").trim(),
+                    id: Number.isInteger(Number(o?.id)) && Number(o?.id) > 0 ? Number(o?.id) : undefined,
+                }))
+                .filter((it) => it.filename);
+
+        if (Array.isArray(up)) return unpack(up);
         const candidates = [up?.data, up?.result, up?.uploaded, up?.files, up?.storage];
         for (const c of candidates) {
-            if (Array.isArray(c)) {
-                return c.map((o: any) => o?.filename || o?.name || o?.storage_name).filter(Boolean);
-            }
+            if (Array.isArray(c)) return unpack(c);
         }
-        if (typeof up === 'object' && up?.filename) return [up.filename];
+        if (typeof up === "object" && up?.filename) {
+            return unpack([up]);
+        }
         return [];
     }
 
@@ -1262,21 +1565,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         fd
                     );
 
-                    const storage = extractUploadedNames(up);
-                    if (!storage.length) {
+                    const uploaded = extractUploadedItems(up).filter((it) => {
+                        const st = String(it.status).toLowerCase();
+                        return !st || st === "ok" || st === "success";
+                    });
+
+                    if (!uploaded.length) {
                         console.warn("upload ok, but no filenames in response:", up);
                         window.dispatchEvent(new CustomEvent("contact-files:refresh", { detail: { guid } }));
                         return;
-                    }
-
-                    try {
-                        await chatApi.post(`/api/v1/contacts/storage/add`, {
-                            guid,
-                            storage,
-                        });
-                    } catch (e: any) {
-                        const code = e?.response?.status;
-                        if (code !== 409 && code !== 400) throw e;
                     }
 
                     window.dispatchEvent(new CustomEvent("contact-files:refresh", { detail: { guid } }));
@@ -1313,9 +1610,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     async function refreshContactFilesByGuid(g: string) {
         if (!g) return;
         try {
-            const { data: resp } = await chatApi.get(`/api/v1/contacts/${encodeURIComponent(g)}`);
-            const contacts = Array.isArray(resp?.data) ? resp.data : [];
-            const files = extractFilesFromContacts(contacts);
+            const { data: resp } = await chatApi.get("/api/v1/storage", {
+                params: { glagol_parent: glagolParent, guid: g },
+            });
+            const rows = Array.isArray(resp) ? resp : [];
+            const files = Array.from(new Set(
+                rows
+                    .map((row: any) => String(row?.inner_name ?? row?.filename ?? "").trim())
+                    .filter(Boolean)
+            ));
             setServerFilesByGuid(prev => ({ ...prev, [g]: files }));
         } catch (e) {
             console.warn("refreshContactFilesByGuid failed", e);
@@ -1465,7 +1768,49 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         [openedPhones]);
 
     useEffect(() => {
-        if (groupProjects.length === 0 && activeProject) {
+        if (hasActiveCall) {
+            const blockedProjectNames = new Set(["outbound", "api_call", "no_project_out"]);
+            const knownProjectNames = new Set<string>([
+                ...projectPool.map((project: any) => cleanProjectName(String(project?.project_name ?? ""))),
+                ...(openedPhones || []).map((phone: any) => cleanProjectName(String(phone?.project ?? ""))),
+            ].filter(Boolean));
+
+            const callProjectCandidate = [
+                primaryActiveCallProject,
+                activeProject,
+                outActiveProjectName,
+                call?.project_name,
+                firstOpenedPhoneProject,
+            ]
+                .map((value) => cleanProjectName(String(value ?? "")))
+                .find((value) => value && !blockedProjectNames.has(value.toLowerCase())) || "";
+
+            const currentCallProject =
+                callProjectCandidate ||
+                [
+                    activeProject,
+                    outActiveProjectName,
+                    call?.project_name,
+                    primaryActiveCallProject,
+                    firstOpenedPhoneProject,
+                ]
+                    .map((value) => cleanProjectName(String(value ?? "")))
+                    .find((value) => {
+                        if (!value) return false;
+                        if (blockedProjectNames.has(value.toLowerCase())) return false;
+                        if (!knownProjectNames.size) return true;
+                        return knownProjectNames.has(value);
+                    }) || "";
+
+            setSelectedProjects((prev) => {
+                if (currentCallProject) {
+                    if (prev.length === 1 && prev[0] === currentCallProject) return prev;
+                    return [currentCallProject];
+                }
+                if (prev.length) return prev;
+                return groupProjects.length ? groupProjects : [];
+            });
+        } else if (groupProjects.length === 0 && activeProject) {
             setSelectedProjects([activeProject])
         } else if (call && call.project_name) {
             if(Object.keys(call?.projects).length   > 1 ) {
@@ -1478,7 +1823,17 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         } else {
             setSelectedProjects(groupProjects)
         }
-    },[activeProject, call, groupProjects])
+    },[
+        activeProject,
+        outActiveProjectName,
+        firstOpenedPhoneProject,
+        primaryActiveCallProject,
+        call,
+        groupProjects,
+        hasActiveCall,
+        projectPool,
+        openedPhones,
+    ])
     function moduleComparator(a: ModuleData, b: ModuleData) {
         // 1) сначала manual, потом всё остальное
         const aManual = a.start_modes?.includes('manual') ? 0 : 1;
@@ -1606,11 +1961,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
 
     const inboundProjectFieldsRequestKey = useMemo(() => {
-        const currentCall = activeCalls?.[0];
+        const currentCall = mainActiveCall;
         if (currentCall?.direction !== "inbound" || !activeProject) return "";
         const callKey = String(currentCall?.uuid || currentCall?.call_uuid || currentCall?.b_uuid || "");
         return `${activeProject}|${callKey}`;
-    }, [activeCalls, activeProject]);
+    }, [mainActiveCall, activeProject]);
 
     useEffect(() => {
         if (!inboundProjectFieldsRequestKey || !activeProject) {
@@ -1657,18 +2012,31 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 base_fields: Record<string, string>;
             }>;
 
-            setValues({ [projectName]: {} });
-
             const firstProjectData = projectDataArray[0];
             const baseFields = firstProjectData?.base_fields || {};
 
             const sanitized: Record<string, string> = {};
             Object.entries(baseFields).forEach(([fid, val]) => {
                 if (!fid.startsWith("AS_")) return;
-                sanitized[fid] = String(val);
+                sanitized[fid] = fieldValueToString(val);
             });
 
-            setValues({ [projectName]: sanitized });
+            setValues((prev) => {
+                const prevProject = prev?.[projectName] || {};
+                const nextProject = {
+                    ...prevProject,
+                    ...sanitized,
+                };
+
+                if (areFlatStringMapsEqual(prevProject, nextProject)) {
+                    return prev;
+                }
+
+                return {
+                    ...prev,
+                    [projectName]: nextProject,
+                };
+            });
         }
     }, [call, hasActiveCall, postActive, sessionKey, worker]);
 
@@ -1725,8 +2093,23 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         const all = Array.from(mapAll.values());
         const ui  = Array.from(mapUi.values());
 
-        setMergedFieldsAll(all);
-        setMergedFields(ui);
+        const protectLiveCardContext =
+            hasActiveCall &&
+            Array.isArray(openedPhones) &&
+            openedPhones.length > 0 &&
+            (mergedFieldsRef.current.length > 0 || mergedFieldsAllRef.current.length > 0) &&
+            ui.length === 0 &&
+            all.length === 0;
+
+        if (!protectLiveCardContext) {
+            setMergedFieldsAll(all);
+            setMergedFields(ui);
+        } else {
+            console.debug("[project_fields] suppress empty payload overwrite", {
+                selectedProjects,
+                openedPhones: openedPhones.length,
+            });
+        }
 
             const init: GroupFieldValues = { ...values };
             if (selectedProjects.length) {
@@ -1746,7 +2129,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 };
                 const initKwargs = Object.entries(callProjectsMap).reduce<InitKwargs>(
                     (acc, [projName, project]) => {
-                        acc[projName as keyof ProjectsMap] = project.base_fields;
+                        const rawBase =
+                            project?.base_fields && typeof project.base_fields === "object"
+                                ? project.base_fields
+                                : {};
+                        const sanitizedBase = Object.fromEntries(
+                            Object.entries(rawBase).map(([k, v]) => [k, fieldValueToString(v)])
+                        ) as ProjectsMap[keyof ProjectsMap]["base_fields"];
+
+                        acc[projName as keyof ProjectsMap] = sanitizedBase;
                         return acc;
                     },
                     {} as InitKwargs
@@ -1799,10 +2190,18 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     const nextValues: GroupFieldValues = { ...prev };
 
                     Object.keys(init).forEach((proj) => {
-                        const contactInfo = preferredByProject.get(proj)?.contact_info || {};
+                        const contactInfoRaw = preferredByProject.get(proj)?.contact_info || {};
+                        const contactInfo = Object.fromEntries(
+                            Object.entries(contactInfoRaw).map(([k, v]) => [k, fieldValueToString(v)])
+                        );
+                        const initProjectRaw = init[proj] || {};
+                        const initProject = Object.fromEntries(
+                            Object.entries(initProjectRaw).map(([k, v]) => [k, fieldValueToString(v)])
+                        );
+
                         nextValues[proj] = {
                             ...(prev[proj] || {}),
-                            ...(init[proj] || {}),
+                            ...initProject,
                             ...contactInfo,
                         };
                     });
@@ -1868,9 +2267,8 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     }, [hasActiveCall]);
 
     useEffect(() => {
-
-        if (hasActiveCall && activeCalls.length && !postActive && activeCalls[0].application){
-            setPostCallData(activeCalls[0] as ActiveCall);
+        if (hasActiveCall && mainActiveCall && !postActive && (mainActiveCall as any).application) {
+            setPostCallData(mainActiveCall as ActiveCall);
         }
 
         // if (hasActiveCall  && !postActive && activeCalls[0].application) {
@@ -1884,7 +2282,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         //
         //     }
         // }
-    }, [activeCalls, activeProject, hasActiveCall, modules, postActive]);
+    }, [mainActiveCall, activeProject, hasActiveCall, modules, postActive]);
 
     const findNameProject = (projectName: string)=> {
         if (!projectName) return "";
@@ -2039,6 +2437,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 {};
 
             const kw: Record<string, string> = {};
+            const activeMainCall = getMainActiveCallFromRef();
 
             Object.entries(specKwargs).forEach(([inputName, spec]: [string, any]) => {
                 const key = spec.source;
@@ -2058,32 +2457,32 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         value = callResults.find(r => String(r.id) === String(callResultRef.current))?.name || '';
                         break;
                     case 'phone': {
-                        const ac = activeCallsRef.current?.[0];
+                        const ac = activeMainCall;
                         value = ac?.direction === 'outbound' ? ac?.b_dest : (ac?.cid_num || '');
                         break;
                     }
                     case 'uuid': {
-                        const ac = activeCallsRef.current?.[0];
+                        const ac = activeMainCall;
                         value = ac?.uuid || postCallDataRef.current?.uuid || '';
                         break;
                     }
                     case 'b_uuid': {
-                        const ac = activeCallsRef.current?.[0];
+                        const ac = activeMainCall;
                         value = ac?.b_uuid || postCallDataRef.current?.b_uuid || '';
                         break;
                     }
                     case 'datetime_start': {
-                        const ac = activeCallsRef.current?.[0];
+                        const ac = activeMainCall;
                         value = ac?.created || '';
                         break;
                     }
                     case 'dest': {
-                        const ac = activeCallsRef.current?.[0];
+                        const ac = activeMainCall;
                         value = ac?.dest || '';
                         break;
                     }
                     case 'cid_num': {
-                        const ac = activeCallsRef.current?.[0];
+                        const ac = activeMainCall;
                         value = ac?.cid_num || '';
                         break;
                     }
@@ -2113,7 +2512,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             return;
         }
 
-        const ac0 = activeCallsRef.current?.[0];
+        const ac0 = getMainActiveCallFromRef();
         const payload = {
             filename:    mod.filename,
             common_code: Boolean(mod.common_code),
@@ -2444,7 +2843,11 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
 
     const startModules = useMemo<ModuleData[]>(() => {
         if (monoModules && Object.keys(monoModules).length) {
-            const projectsScope = selectedProjects.length ? selectedProjects : Object.keys(monoModules);
+            const projectsScope = selectedProjects.length
+                ? selectedProjects
+                : hasActiveCall
+                    ? []
+                    : Object.keys(monoModules);
             const seen = new Set<string>();
             const out: ModuleData[] = [];
 
@@ -2471,7 +2874,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 mod.start_modes.includes('start')
             )
             .sort(moduleComparator);
-    }, [monoModules, modules, selectedProjects]);
+    }, [monoModules, modules, selectedProjects, hasActiveCall]);
 
     const startModulesPayloadReady = useMemo(() => {
         if (!startModules.length) return false;
@@ -2526,7 +2929,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     const startContextKey = useMemo(() => {
         // 1) активный звонок — ключ по uuid (или call_uuid)
         if (hasActiveCall) {
-            const ac = activeCalls?.[0];
+            const ac = mainActiveCall;
             const u = String(ac?.uuid || ac?.call_uuid || ac?.b_uuid || "");
             return u ? `call:${u}` : "call:unknown";
         }
@@ -2545,7 +2948,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         if (call?.id != null) return `edit:${call.id}`;
 
         return "none";
-    }, [hasActiveCall, activeCalls, tuskMode, openedPhones, call?.id]);
+    }, [hasActiveCall, mainActiveCall, tuskMode, openedPhones, call?.id]);
 
     const lastStartContextRef = useRef<string>("none");
 
@@ -2558,8 +2961,15 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             if (!postActive) {
                 startModulesRanRef.current = false;
             }
+
+            if (hasActiveCall && startContextKey.startsWith("call:")) {
+                // Новый звонок: очищаем кэш модулей прошлого контекста,
+                // чтобы старт не сработал по старой карточке.
+                setModules?.([]);
+                setMonoModules?.({});
+            }
         }
-    }, [startContextKey, startModulesRanRef, postActive]);
+    }, [startContextKey, startModulesRanRef, postActive, hasActiveCall, setModules, setMonoModules]);
 
 
     useEffect(() => {
@@ -2604,6 +3014,22 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         }
     }, [hasActiveCall]);
 
+    useEffect(() => {
+        if (!callEndingPending) return;
+        if (!hasActiveCall || postActive) {
+            setCallEndingPending(false);
+            return;
+        }
+
+        const timeout = window.setTimeout(() => {
+            setCallEndingPending(false);
+        }, 15000);
+
+        return () => {
+            window.clearTimeout(timeout);
+        };
+    }, [callEndingPending, hasActiveCall, postActive]);
+
     const handleAutoReturn = () => {
         Swal.fire({
             title: "Время постобработки истекло",
@@ -2628,7 +3054,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     };
 
     const handleHold = () => {
-        const currentUUID = activeCalls[0]?.call_uuid;
+        const currentUUID = mainActiveCall?.call_uuid || mainActiveCall?.uuid;
         if (!currentUUID) return;
         socket.emit('sofia_operations', {
             worker,
@@ -2639,8 +3065,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     };
 
     const handleStop = (activeCall: ActiveCall, callSection: number) => {
+        if (callEndingPending) return;
         const currentUUID = activeCall?.call_uuid || activeCall.uuid;
         if (!currentUUID) return;
+        setCallEndingPending(true);
         socket.emit('sofia_operations', {
             worker,
             sip_login: sipLogin,
@@ -2678,15 +3106,18 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             }
 
             setIsParams(false)
-            setPostActive(true)
             postSecondsRef.current = POST_LIMIT;
         }
     };
 
     const handleRedirect = () => {
-        if (activeCalls.length < 2) return;
-        const uuid1 = activeCalls[0].direction === "outbound" ? activeCalls[0]?.b_uuid : activeCalls[0]?.uuid;
-        const uuid2 = activeCalls[1]?.b_uuid;
+        const mainCall = mainActiveCall;
+        if (!mainCall || !interCall) return;
+        const uuid1 = mainCall?.direction === "outbound" ? mainCall?.b_uuid : mainCall?.uuid;
+        const uuid2 =
+            interCall?.dest === sipLogin
+                ? String(interCall?.uuid ?? "").trim()
+                : String(interCall?.b_uuid ?? "").trim();
         if (!uuid1 || !uuid2) return;
         socket.emit('sofia_operations', {
             worker,
@@ -2698,22 +3129,32 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
     };
 
     const handleRedirectToInterCall = () => {
-        const uuid1 =
-            activeCalls[0].direction === "outbound" && !expressCall
-                ? activeCalls[0]?.b_uuid
-                : activeCalls[0]?.uuid;
+        if (!mainActiveCall || !interCall) return;
 
-        const uuid2 =
-            interCall?.dest === sipLogin
-                ? interCall?.uuid
-                : interCall?.b_uuid;
+        const mainCall = mainActiveCall;
+        const mainUuid = resolvePeerBridgeUuid(mainCall, sipLogin, !expressCall);
+        if (!mainUuid) return;
 
-        if (!uuid1 || !uuid2) return;
+        const interIdentity = resolveActiveCallIdentity(interCall);
+        const hasSecondaryActiveLeg =
+            !!interIdentity &&
+            [...activeCalls, ...externalConsultCalls].some(
+                (callLike) => resolveActiveCallIdentity(callLike) === interIdentity
+            );
+
+        const consultUuidByPeer = resolvePeerBridgeUuid(interCall, sipLogin, true);
+        const consultUuid = hasSecondaryActiveLeg
+            ? consultUuidByPeer
+            : (consultUuidByPeer || (interCall?.dest === sipLogin
+                ? String(interCall?.uuid ?? "").trim()
+                : String(interCall?.b_uuid ?? "").trim()));
+
+        if (!consultUuid) return;
 
         const targetSipLogin = resolveCallTargetSipLogin(interCall, sipLogin);
         const internalExtension = isInternalExtensionTarget(interCall, sipLogin);
 
-        if (!internalExtension) {
+        if (internalExtension && targetSipLogin) {
             socket.emit("transfer_data", {
                 worker,
                 session_key: sessionKey,
@@ -2721,6 +3162,25 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 data: openedPhones,
             });
         }
+
+        console.debug("[transfer] uuid_bridge legs", {
+            mainUuid,
+            consultUuid,
+            mainDirection: String(mainCall?.direction ?? ""),
+            consultDirection: String(interCall?.direction ?? ""),
+            mainPresence: String(mainCall?.presence_id ?? ""),
+            mainBPresence: String(mainCall?.b_presence_id ?? ""),
+            consultPresence: String(interCall?.presence_id ?? ""),
+            consultBPresence: String(interCall?.b_presence_id ?? ""),
+        });
+
+        socket.emit("sofia_operations", {
+            worker,
+            session_key: sessionKey,
+            uuid: mainUuid,
+            uuid_2: consultUuid,
+            action: "uuid_bridge",
+        });
     };
 
     const handleSave = () => {
@@ -3135,7 +3595,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
             group.entries.forEach(entry => {
                 Object.entries(entry.contact_info || {}).forEach(([fieldId, value]) => {
                     if (!result[fieldId]) result[fieldId] = new Set();
-                    result[fieldId].add(String(value));
+                    result[fieldId].add(fieldValueToString(value));
                 });
             });
         });
@@ -3200,7 +3660,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         const variants = (entries || [])
             .map(e => ({
                 project: e.project,
-                value: e.contact_info[fieldId] || '',
+                value: fieldValueToString(e.contact_info[fieldId]),
             }))
             .filter(v => v.value !== '');
 
@@ -3415,15 +3875,27 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
         const isHeld = isCallOnHold(mainActiveCall);
         const iconName = isHeld ? 'play_arrow' : 'pause';
         const iconColor = mainActiveCall.direction === 'outbound' ?  '#f26666' : '#7cd420';
+        const callStatusText = callEndingPending
+            ? 'Завершение вызова'
+            : (isHeld ? 'На удержании' : 'Вызов активен');
+        const callStatusColor = callEndingPending
+            ? '#f39c12'
+            : (isHeld ? "#cba200" : "#0BB918");
         return (
             <div className="mb-3">
                 <div className="d-flex">
-                    <button className="btn btn-outline-warning mr-2" onClick={() => handleHold()}>
+                    <button
+                        className="btn btn-outline-warning mr-2"
+                        onClick={() => handleHold()}
+                        disabled={callEndingPending}
+                    >
                         <span className="material-icons">{iconName}</span>
                     </button>
-                    <button className="btn btn-outline-danger mr-2" onClick={() => handleStop(mainActiveCall, 1)}>
-                        <span className="material-icons">call_end</span>
-                    </button>
+                    {!callEndingPending && (
+                        <button className="btn btn-outline-danger mr-2" onClick={() => handleStop(mainActiveCall, 1)}>
+                            <span className="material-icons">call_end</span>
+                        </button>
+                    )}
                 </div>
                 <div className="d-flex align-items-center mt-2">
                   <span className="material-icons" style={{ color: iconColor }}>
@@ -3441,10 +3913,10 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                     <strong style={{
                         fontSize: 16,
                         fontWeight: 600,
-                        color: isHeld ? "#cba200" : "#0BB918"
+                        color: callStatusColor
                     }}
                     >
-                        {isHeld ? 'На удержании' : 'Вызов активен'}:</strong>{" "}
+                        {callStatusText}:</strong>{" "}
                         <CallDurationText created={mainActiveCall.created} glagol_parent={glagolParent}/>
                 </div>
                 {!tuskMode && <strong style={{whiteSpace: 'nowrap', marginTop: "4px", fontWeight: 600, fontSize: 16}}>
@@ -4035,7 +4507,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                 result[fieldId].push({
                     phone: ph.phone,
                     project: ph.project,
-                    value: String(value),
+                    value: fieldValueToString(value),
                     contactKey,
                 });
             });
@@ -4513,7 +4985,7 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                         {showInterCallHeader && interCall && (
                             <InterCallBanner
                                 interCall={interCall}
-                                canTransfer={activeCalls.length > 0}
+                                canTransfer={Boolean(mainActiveCall)}
                                 onTransfer={handleRedirectToInterCall}
                                 onHangup={(uuid) => onHangupInterCall?.(uuid)}
                                 style={{ marginBottom: 10 }}
@@ -4529,9 +5001,12 @@ const CallControlPanel: React.FC<CallControlPanelProps> = ({
                                 isMainCallHeld={isMainCallHeld}
                                 dialplanExtensions={dialplanExtensions}
                                 findProjectLabel={findNameProject}
+                                onExternalConsultCall={handleExternalConsultCallViaApi}
+                                externalBlindPrefix={externalBlindTransferMeta.prefix}
+                                externalBlindProjectName={externalBlindTransferMeta.projectName}
                             />
                         )}                
-                        {hasActiveCall && renderActiveCallHeader(activeCalls[0])}
+                        {hasActiveCall && mainActiveCall && renderActiveCallHeader(mainActiveCall)}
                         {!hasActiveCall && postActive && renderPostCallHeader()}
                         {tuskMode && !hasActiveCall && !postActive && !isChating && renderGroupPhones()}
 

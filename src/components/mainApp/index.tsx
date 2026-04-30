@@ -11,6 +11,7 @@ import {
     selectAccessibleProjectNames,
     selectOperatorAccess,
     setActiveCalls,
+    setExternalConsultCalls,
     setFsStatus,
     setInterCalls,
     setUserStatuses
@@ -23,7 +24,7 @@ import {ManagerPanel} from "../managerPanel";
 import { useSip } from '../../context/SipContext';
 import NotificationPopup from '../notifications';
 import {SessionState} from "sip.js";
-import {chatApi, fetchChatHistory, RawChatMessage} from "../../features/itsm/chat/api";
+import {chatApi, fetchChatHistory, normalizeStorageRefs, RawChatMessage, toChatIso} from "../../features/itsm/chat/api";
 import LocalChat, {Role, UiMessage} from "../../features/itsm/chat/LocalChat";
 import {formatOperator, useOperatorsDirectory} from "../../features/signals/useOperatorsDirectory";
 import {useChatCollapsed} from "../../features/itsm/useChatCollapsed";
@@ -31,13 +32,6 @@ import {useChatSocket} from "../../features/itsm/chat/useChatSocket";
 import {ContactFilesPanel} from "../../features/itsm/chat/FieldsPanel";
 import styles from "../../features/itsm/chat/style.module.css";
 import {FilterMethod, ServerAppliedByCol, ServerDraftByCol} from "../../redux/tasksTableSlice";
-
-function toIsoFromServer(dt: string): string {
-    const [d, t = "00:00:00"] = dt.trim().split(" ");
-    const [y, m, day] = d.split("-").map(Number);
-    const [hh, mm, ss] = t.split(":").map(Number);
-    return new Date(Date.UTC(y, (m || 1) - 1, day || 1, hh || 0, mm || 0, ss || 0)).toISOString();
-}
 
 const MemoCallControlPanel = React.memo(CallControlPanel);
 
@@ -47,6 +41,14 @@ type CallTabVisualState = "idle" | "incoming" | "active";
 
 function incomingSessionId(session: any): string {
     return String(session?.id ?? session?.request?.callId ?? "");
+}
+
+function incomingRemoteUser(session: any): string {
+    return String(session?.remoteIdentity?.uri?.user ?? "").trim();
+}
+
+function isApiOriginatedIncoming(session: any): boolean {
+    return incomingRemoteUser(session).toLowerCase().startsWith("api_");
 }
 
 function isPageHidden(): boolean {
@@ -289,23 +291,121 @@ function splitFsCalls(all: any[]) {
             !isInterWebRtcLeg(c)
     );
 
-    return { interCalls: inter, activeCalls: rest };
+    return { interCalls: inter, activeCandidates: rest };
+}
+
+function splitPrimaryAndExternalConsultCalls(sortedActiveCandidates: any[]) {
+    if (!Array.isArray(sortedActiveCandidates) || sortedActiveCandidates.length === 0) {
+        return { activeCalls: [], externalConsultCalls: [] };
+    }
+
+    const [mainCall, ...others] = sortedActiveCandidates;
+    const mainIdentity = resolveCallIdentity(mainCall);
+    const seen = new Set<string>();
+    const externalConsultCalls = others.filter((callLike) => {
+        const identity = resolveCallIdentity(callLike);
+        if (!identity) return true;
+        if (identity === mainIdentity) return false;
+        if (seen.has(identity)) return false;
+        seen.add(identity);
+        return true;
+    });
+
+    return {
+        activeCalls: [mainCall],
+        externalConsultCalls,
+    };
+}
+
+function resolveCallIdentity(callLike: any): string {
+    return String(
+        callLike?.call_uuid ??
+        callLike?.uuid ??
+        callLike?.b_call_uuid ??
+        callLike?.b_uuid ??
+        ""
+    ).trim();
+}
+
+function resolveCallCreatedEpoch(callLike: any): number {
+    const epochCandidates = [
+        callLike?.created_epoch,
+        callLike?.call_created_epoch,
+        callLike?.b_created_epoch,
+    ];
+
+    for (const candidate of epochCandidates) {
+        const n = Number(candidate);
+        if (Number.isFinite(n) && n > 0) return n;
+    }
+
+    const dateCandidates = [callLike?.created, callLike?.b_created];
+    for (const candidate of dateCandidates) {
+        const dt = Date.parse(String(candidate ?? ""));
+        if (Number.isFinite(dt) && dt > 0) return Math.floor(dt / 1000);
+    }
+
+    return Number.MAX_SAFE_INTEGER;
+}
+
+function prioritizePrimaryActiveCall(calls: any[], primaryUuid: string): any[] {
+    const sorted = [...(calls || [])].sort((a, b) => {
+        const da = resolveCallCreatedEpoch(a);
+        const db = resolveCallCreatedEpoch(b);
+        if (da !== db) return da - db;
+
+        const aKey = resolveCallIdentity(a);
+        const bKey = resolveCallIdentity(b);
+        return aKey.localeCompare(bKey);
+    });
+
+    if (!primaryUuid) return sorted;
+    const idx = sorted.findIndex((c) => resolveCallIdentity(c) === primaryUuid);
+    if (idx <= 0) return sorted;
+
+    const [primary] = sorted.splice(idx, 1);
+    sorted.unshift(primary);
+    return sorted;
 }
 
 function clamp(n: number, min: number, max: number) {
     return Math.min(max, Math.max(min, n));
 }
 
+function normalizeGuidValue(raw: any): string {
+    if (typeof raw === "string") return raw.trim();
+    if (typeof raw === "number") return String(raw);
+    if (!raw || typeof raw !== "object") return "";
+
+    const candidates = [
+        (raw as any).guid,
+        (raw as any).origin_guid,
+        (raw as any).uuid,
+        (raw as any).id,
+        (raw as any).name,
+    ];
+
+    for (const c of candidates) {
+        if (typeof c === "string" && c.trim()) return c.trim();
+        if (typeof c === "number") return String(c);
+    }
+
+    return "";
+}
+
 function mapRow(r: RawChatMessage): UiMessage {
     const isClient = r.sender === "client";
     const role: Role = isClient ? "client" : "operator";
-    const attachments = Array.isArray(r.storage)
-        ? r.storage.map((name, i) => ({ id: `${r.id}:${i}`, name }))
-        : [];
+    const attachments = normalizeStorageRefs(r.storage).map((entry, i) => ({
+        id: `${r.id}:${entry.id ?? i}`,
+        name: entry.filename,
+        storageId: entry.id,
+        originGuid: entry.origin_guid,
+    }));
     return {
         id: String(r.id),
         text: r.text ?? "",
-        created_at: toIsoFromServer(r.created_dt),
+        created_at: toChatIso(r.created_dt),
         authorLogin: isClient ? null : r.sender,
         authorName: r.sender,
         authorRole: role,
@@ -761,6 +861,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
     const lastFsStatusSigRef = useRef<string | null>(null);
     const lastFsCallsSigRef  = useRef<string | null>(null);
+    const primaryMissingSinceRef = useRef<number>(0);
+    const liveCallDropStartedAtRef = useRef<number>(0);
     const lastOtherUsersSigRef = useRef<string | null>(null);
     const inboundSearchSeqRef = useRef(0);
 
@@ -793,6 +895,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const createdFaviconLinkRef = useRef(false);
 
     const lastOutStartTokenRef = useRef<string>("");
+    const primaryActiveCallUuidRef = useRef<string>("");
+    const lastInboundContextResetIdentityRef = useRef<string>("");
 
     const [chatCallRatio, setChatCallRatio] = useState<number>(() => {
         const raw = Number(localStorage.getItem(ITSM_SPLIT_KEY));
@@ -819,6 +923,16 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     const interCalls: any[] = useMemo(() => {
         return Array.isArray(rawInterCalls) ? rawInterCalls : Object.values(rawInterCalls || {});
     }, [rawInterCalls]);
+    const rawExternalConsultCalls = useSelector((state: RootState) => (state.operator as any).externalConsultCalls);
+    const externalConsultCalls: any[] = useMemo(() => {
+        return Array.isArray(rawExternalConsultCalls)
+            ? rawExternalConsultCalls
+            : Object.values(rawExternalConsultCalls || {});
+    }, [rawExternalConsultCalls]);
+    const externalConsultCallsRef = useRef<any[]>(externalConsultCalls);
+    useEffect(() => {
+        externalConsultCallsRef.current = externalConsultCalls;
+    }, [externalConsultCalls]);
 
     function pickPrimaryInterCall(list: any[]) {
         const arr = (list || []).filter(Boolean);
@@ -840,6 +954,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     }
 
     const interCall = useMemo(() => pickPrimaryInterCall(interCalls), [interCalls]);
+    const cardInterCall = useMemo(() => {
+        if (interCall) return interCall;
+        if (!externalConsultCalls.length) return null;
+        return pickPrimaryInterCall(externalConsultCalls);
+    }, [externalConsultCalls, interCall]);
 
     const hasLiveConsult =
         !!consultSession && String(consultStatus ?? "") !== "Terminated";
@@ -858,10 +977,12 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         setPostActive(true);
         setPostTransitionPending(false);
     }, []);
-    const hasExternalActive = activeCalls.length > 0 || activeCall || effectivePostActive;
-    const shouldWarnBeforeUnload = activeCalls.length > 0 || activeCall || effectivePostActive;
-    const showInterOverlay = !!interCall && !hasExternalActive;
-    const showInterInCardHeader = !!interCall && hasExternalActive;
+    const hasExternalConsult = externalConsultCalls.length > 0;
+    const hasAnyLiveCall = activeCall || activeCalls.length > 0 || hasExternalConsult;
+    const hasExternalActive = hasAnyLiveCall || effectivePostActive;
+    const shouldWarnBeforeUnload = hasAnyLiveCall || effectivePostActive;
+    const showInterOverlay = !!cardInterCall && !hasExternalActive;
+    const showInterInCardHeader = !!cardInterCall && hasExternalActive;
 
     useEffect(() => {
         if (!shouldWarnBeforeUnload) return;
@@ -1038,11 +1159,20 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
 
     const [activeGuid, setActiveGuid] = useState<string>("");
+    const setActiveGuidSafe = React.useCallback((nextGuid: any) => {
+        setActiveGuid(normalizeGuidValue(nextGuid));
+    }, []);
     const openedGuids = useMemo(() => {
-        return openedPhones.filter(open => Boolean(open.guid));
+        return Array.from(
+            new Set(
+                (openedPhones ?? [])
+                    .map((open: any) => normalizeGuidValue(open?.guid))
+                    .filter(Boolean)
+            )
+        );
     }, [openedPhones]);
     const firstGuid = useMemo(() => {
-        return openedGuids.length > 0 ? openedGuids[0].guid : null;
+        return openedGuids.length > 0 ? openedGuids[0] : "";
     }, [openedGuids]);
     const prevPresetIdRef = useRef<number | null>(null);
 
@@ -1209,7 +1339,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         if (!openedGuids.length) return
         let alive = true;
         setLoading(true); setError(null);
-        chatApi.get(`/api/v1/contacts/${openedGuids[0].guid}`)
+        chatApi.get(`/api/v1/contacts/${encodeURIComponent(openedGuids[0])}`)
             .then(({ data }) => {
                 if (!alive) return;
                 const contacts = Array.isArray(data?.data) ? data.data : [];
@@ -1317,23 +1447,18 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         const setIds = new Set(ids.map(String));
         return arr.map(m => (setIds.has(m.id) ? { ...m, isRead: true } : m));
     };
-    function extractFilesFromContacts(arr: any[]): string[] {
-        const all: string[] = [];
-        for (const c of arr ?? []) {
-            const storage = Array.isArray(c?.storage)
-                ? c.storage.map((it: any) => (typeof it === "string" ? it : (it?.name ?? it?.filename ?? "")))
-                : [];
-            for (const s of storage) if (s) all.push(s);
-        }
-        return Array.from(new Set(all));
-    }
-
     async function refreshContactFiles(g: string) {
         if (!g) return;
         try {
-            const { data: resp } = await chatApi.get(`/api/v1/contacts/${encodeURIComponent(g)}`);
-            const contacts = Array.isArray(resp?.data) ? resp.data : [];
-            const files = extractFilesFromContacts(contacts);
+            const { data: resp } = await chatApi.get("/api/v1/storage", {
+                params: { glagol_parent: glagolParent, guid: g },
+            });
+            const rows = Array.isArray(resp) ? resp : [];
+            const files = Array.from(new Set(
+                rows
+                    .map((row: any) => String(row?.inner_name ?? row?.filename ?? "").trim())
+                    .filter(Boolean)
+            ));
             setServerFilesByGuid(prev => ({ ...prev, [g]: files }));
         } catch (e) {
             console.warn("refreshContactFiles failed", e);
@@ -1350,9 +1475,15 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             // if (activeGuid) void refreshUnreadCounts([activeGuid], true, sipLogin);
         },
 
-        onAck: ({ tempId, message_id }) => {
+        onAck: ({ tempId, message_id, status, message }) => {
             setOptimistic((prev: UiMessage[]) =>
-                prev.map(m => (m.tempId === tempId ? { ...m, id: String(message_id), status: "sent" } : m))
+                prev.map(m => {
+                    if (m.tempId !== tempId) return m;
+                    if (status === "sent" && typeof message_id === "number" && Number.isFinite(message_id)) {
+                        return { ...m, id: String(message_id), status: "sent", errorText: undefined };
+                    }
+                    return { ...m, status: "failed", errorText: message || "Ошибка отправки" };
+                })
             );
         },
 
@@ -1369,13 +1500,15 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             }
         },
 
-        onUploaded: ({ tempId, filenames }) => {
+        onUploaded: ({ tempId, files }) => {
             setOptimistic(prev =>
                 prev.map(m => {
                     if (m.tempId !== tempId) return m;
-                    const nextAtts = filenames.map((name, i) => ({
-                        id: `${m.id}:${i}`,
-                        name,
+                    const nextAtts = files.map((fileRef, i) => ({
+                        id: `${m.id}:${fileRef.id ?? i}`,
+                        name: fileRef.filename,
+                        storageId: fileRef.id,
+                        originGuid: fileRef.origin_guid || activeGuid,
                         url: m.attachments?.[i]?.url,
                     }));
                     return { ...m, attachments: nextAtts };
@@ -1447,6 +1580,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         if (!isOwner || !enabled) {
             dispatch(setActiveCalls([]));
             dispatch(setInterCalls([]));
+            dispatch(setExternalConsultCalls([]));
             setUnifiedPostActive(false);
         }
     }, [isOwner, enabled, dispatch, setUnifiedPostActive]);
@@ -1522,16 +1656,18 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     };
 
     const guidsFromOpened = useMemo(() => {
-        if (openedGuids.length === 0) return
+        if (openedGuids.length === 0) return [];
         const arr = Array.from(new Set(
             (openedPhones ?? [])
-                .map((it: any) => it?.guid || it?.contact_info?.guid || it?.b_uuid || it?.uuid)
+                .map((it: any) => normalizeGuidValue(
+                    it?.guid || it?.contact_info?.guid || it?.b_uuid || it?.uuid
+                ))
                 .filter(Boolean)
                 .map(String)
         ));
-        if (openedGuids[0].guid && !arr.includes(openedGuids[0].guid)) arr.unshift(openedGuids[0].guid);
+        if (openedGuids[0] && !arr.includes(openedGuids[0])) arr.unshift(openedGuids[0]);
         return arr;
-    }, [openedGuids]);
+    }, [openedPhones, openedGuids]);
 
     useEffect(() => {
         if (activeGuid) void refreshContactFiles(activeGuid);
@@ -1653,10 +1789,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
 
     useEffect(() => {
+        if (hasExternalActive) return;
         if (!selectedCall || !openedPhones.length) {
             setScriptProject("")
         }
-    },[openedPhones.length, selectedCall])
+    }, [hasExternalActive, openedPhones.length, selectedCall])
 
 
     const [outboundID, setOutboundID] = useState<number | null>(null)
@@ -1725,7 +1862,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             .trim();
     }
     useEffect(() => {
-        if (activeCalls.length || effectivePostActive) return
+        if (activeCalls.length || hasExternalConsult || effectivePostActive) return
         if (selectedCall) {
         }
         if (selectedCall && Object.values(selectedCall.projects)[0].call_result === null) {
@@ -1745,7 +1882,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             setScriptDir(scriptDirection)
             setScriptProject(cleanProjectName(scriptProj))
         }
-    },[activeCalls.length, effectivePostActive, selectedCall, sessionKey, worker])
+    }, [activeCalls.length, hasExternalConsult, effectivePostActive, selectedCall, sessionKey, worker])
 
     useEffect(()=> {
         if (showTasksDashboard && !momoProjectRepo.current) {
@@ -1773,7 +1910,10 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     // },[projectPoolForCall, sessionKey, worker])
 
     useEffect(() => {
-        if(!showTasksDashboard) {
+        const hasLiveLegs =
+            activeCall || activeCalls.length > 0 || externalConsultCalls.length > 0;
+
+        if (!showTasksDashboard && !hasLiveLegs && !effectivePostActive && !selectedCall) {
             setOpenedGroup([])
             setPhonesData([])
             setOpenedPhones([])
@@ -1785,7 +1925,14 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         //     setOpenedPhones([])
         //     setGroupIDs([])
         // }
-    },[showTasksDashboard, effectivePostActive, activeCalls.length, selectedCall])
+    },[
+        showTasksDashboard,
+        effectivePostActive,
+        activeCall,
+        activeCalls.length,
+        externalConsultCalls.length,
+        selectedCall,
+    ])
 
     const groupProjects = useMemo(() =>
             Array.from(new Set(openedPhones.map(p => p.project))),
@@ -1839,6 +1986,21 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         }
     }, [groupProjects, openedPhones.length]);
 
+    useEffect(() => {
+        if (!(hasAnyLiveCall || effectivePostActive)) return;
+        if (openedPhones.length > 0) return;
+        const normalizedActiveProject = cleanProjectName(activeProjectName);
+        if (!normalizedActiveProject) return;
+        if (scriptProject === normalizedActiveProject) return;
+        setScriptProject(normalizedActiveProject);
+    }, [
+        hasAnyLiveCall,
+        effectivePostActive,
+        openedPhones.length,
+        activeProjectName,
+        scriptProject,
+    ]);
+
     // useEffect(() => {
     //     if(!showTasksDashboard) {
     //         setOpenedPhones([])
@@ -1852,23 +2014,26 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 const matched = phonesData.filter(phone =>
                     openedGroup.includes(phone.id)
                 );
+                if (!matched.length) {
+                    console.debug("[calls] skip empty matched phones snapshot", {
+                        openedGroupLen: openedGroup.length,
+                        phonesDataLen: phonesData.length,
+                    });
+                    return;
+                }
+
                 setOpenedPhones(matched);
 
                 // 🔎 ищем первый контакт с guid
-                const contactWithGuid = matched.find(p => Boolean(p.guid));
+                const contactWithGuid = matched.find(p => Boolean(normalizeGuidValue(p?.guid)));
                 if (contactWithGuid) {
-                    setActiveGuid(contactWithGuid.guid);
+                    setActiveGuidSafe(contactWithGuid.guid);
                     setFullWidthCard(false)
-                } else {
-                    setActiveGuid("");
                 }
-            } else {
-                setOpenedPhones([]);
-                setActiveGuid("");
             }
         }
 
-    }, [openedGroup, phonesData, outboundID, GroupIDs, outboundCall, showTasksDashboard]);
+    }, [openedGroup, phonesData, outboundID, GroupIDs, outboundCall, showTasksDashboard, setActiveGuidSafe]);
 
 
 
@@ -1887,7 +2052,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     },[activeCall, effectivePostActive, modules.length, monoModules, openedPhones.length, selectedCall])
 
     useEffect(() => {
-        if (!activeCall && !effectivePostActive) {
+        const hasLiveLegsNow = activeCalls.length > 0 || externalConsultCalls.length > 0;
+        if (!activeCall && !effectivePostActive && !hasLiveLegsNow) {
             inboundSearchSeqRef.current += 1;
             setActiveProjectName('');
             setSelectedCall(null);
@@ -1904,7 +2070,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             // setGroupIDs([])
             setExpressCall(false)
         }
-    }, [activeCall, effectivePostActive]);
+    }, [activeCall, effectivePostActive, activeCalls.length, externalConsultCalls.length]);
 
     useEffect(() => {
         if(openedPhones.length === 0) {
@@ -1931,17 +2097,57 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
     useEffect(() => {
         const first = activeCalls && activeCalls.length ? activeCalls[0] : {};
+        const firstExternalConsult = externalConsultCalls.length ? externalConsultCalls[0] : {};
+        const firstLiveCall = activeCalls.length > 0 ? first : firstExternalConsult;
         const stateCandidates = [
-            String(first?.callstate ?? "").trim().toUpperCase(),
-            String(first?.b_callstate ?? "").trim().toUpperCase(),
-            String(first?.state ?? "").trim().toUpperCase(),
-            String(first?.b_state ?? "").trim().toUpperCase(),
+            String(firstLiveCall?.callstate ?? "").trim().toUpperCase(),
+            String(firstLiveCall?.b_callstate ?? "").trim().toUpperCase(),
+            String(firstLiveCall?.state ?? "").trim().toUpperCase(),
+            String(firstLiveCall?.b_state ?? "").trim().toUpperCase(),
         ];
         const hasLiveLikeState =
             stateCandidates.includes("ACTIVE") || stateCandidates.includes("HELD");
+        const hasAnyLiveLeg = activeCalls.length > 0 || externalConsultCalls.length > 0;
 
-        if (activeCalls.length > 0 && !activeCall && (first?.application || hasLiveLikeState)) {
-            if (first.direction === "outbound") {
+        if (hasAnyLiveLeg && !activeCall && (firstLiveCall?.application || hasLiveLikeState)) {
+            console.debug("[calls] promote to active", {
+                mainCalls: activeCalls.length,
+                externalCalls: externalConsultCalls.length,
+                direction: String(firstLiveCall?.direction ?? ""),
+                callstate: String(firstLiveCall?.callstate ?? ""),
+                state: String(firstLiveCall?.state ?? ""),
+            });
+            const direction = String(firstLiveCall?.direction ?? "").trim().toLowerCase();
+            if (direction === "inbound") {
+                const inboundIdentity = resolveCallIdentity(firstLiveCall);
+                const alreadyResetForThisInbound =
+                    Boolean(inboundIdentity) &&
+                    lastInboundContextResetIdentityRef.current === inboundIdentity;
+                if (!alreadyResetForThisInbound) {
+                // На входящем звонке сбрасываем контекст прошлой карточки до загрузки новых данных.
+                setSelectedCall(null);
+                setActiveProjectName("");
+                setAssignedKey("");
+                setExpressCall(false);
+                setOutActiveProjectName("");
+                setOutActivePhone(null);
+                setOutActivePhoneData(null);
+                setPhoneID(null);
+                setOpenedGroup([]);
+                setGroupIDs([]);
+                setOpenedPhones([]);
+                setPhonesData([]);
+                setModules([]);
+                setMonoModules({});
+                startModulesRanRef.current = false;
+
+                if (inboundIdentity) {
+                    lastInboundContextResetIdentityRef.current = inboundIdentity;
+                }
+            }
+            }
+
+            if (String(firstLiveCall?.direction ?? "").trim().toLowerCase() === "outbound") {
                 socket.emit("get_data", {
                     worker,
                     session_key: sessionKey,
@@ -1949,10 +2155,14 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 })
             }
             setActiveCall(true);
-        } else if (!activeCalls.length && activeCall) {
+        } else if (!hasAnyLiveLeg && activeCall) {
+            console.debug("[calls] drop active", {
+                mainCalls: activeCalls.length,
+                externalCalls: externalConsultCalls.length,
+            });
             setActiveCall(false);
         }
-    }, [activeCall, activeCalls]);
+    }, [activeCall, activeCalls, externalConsultCalls]);
 
     function normalizeGetDataRows(payload: any) {
         const arr =
@@ -2499,7 +2709,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
                     momoProjectRepo.current = true;
                 } else {
-                    setShowTasksDashboard(false);
+                    const hasAnyLiveLeg =
+                        activeCall || activeCalls.length > 0 || externalConsultCalls.length > 0;
+                    if (!hasAnyLiveLeg && !effectivePostActive) {
+                        setShowTasksDashboard(false);
+                    }
                 }
             } catch (err) {
                 console.error("Ошибка при проверке пресетов:", err);
@@ -2507,7 +2721,20 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         };
 
         fetchPresetsAndCheckPhone();
-    }, [glagolParent, operatorAccess.presetIds, phoneID, presetProjectScope, presets, role, selectedCall, worker]);
+    }, [
+        activeCall,
+        activeCalls.length,
+        effectivePostActive,
+        externalConsultCalls.length,
+        glagolParent,
+        operatorAccess.presetIds,
+        phoneID,
+        presetProjectScope,
+        presets,
+        role,
+        selectedCall,
+        worker,
+    ]);
 
     useEffect(() => {
         const handleFsStatus = (msg: any) => {
@@ -2546,14 +2773,117 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                 return !isGhostTransferredExtensionLeg(c, sipLogin, hasLiveConsult);
             });
 
-            const { interCalls, activeCalls } = splitFsCalls(filteredArray);
-            const sig = fsCallsSig(activeCalls) + "||" + fsCallsSig(interCalls);
+            const { interCalls, activeCandidates } = splitFsCalls(filteredArray);
+            const prioritizedActiveCalls = prioritizePrimaryActiveCall(
+                activeCandidates,
+                primaryActiveCallUuidRef.current
+            );
+            let {
+                activeCalls: nextMainActiveCalls,
+                externalConsultCalls: nextExternalConsultCalls,
+            } = splitPrimaryAndExternalConsultCalls(prioritizedActiveCalls);
+            const originalMainCandidateCalls = nextMainActiveCalls;
+            const originalExternalCandidateCalls = nextExternalConsultCalls;
+            const previousMainCall = activeCallsRef.current.length > 0 ? activeCallsRef.current[0] : null;
+            const previousMainIdentity = previousMainCall ? resolveCallIdentity(previousMainCall) : "";
+            const snapshotIdentities = [...nextMainActiveCalls, ...nextExternalConsultCalls]
+                .map((callLike) => resolveCallIdentity(callLike))
+                .filter(Boolean);
+            const hasPinnedPrimaryInSnapshot =
+                !!primaryActiveCallUuidRef.current &&
+                snapshotIdentities.includes(primaryActiveCallUuidRef.current);
+
+            if (
+                primaryActiveCallUuidRef.current &&
+                !hasPinnedPrimaryInSnapshot &&
+                snapshotIdentities.length > 0 &&
+                previousMainCall
+            ) {
+                if (!primaryMissingSinceRef.current) {
+                    primaryMissingSinceRef.current = Date.now();
+                }
+                const withinPrimaryGraceWindow =
+                    Date.now() - primaryMissingSinceRef.current < 3000;
+
+                if (withinPrimaryGraceWindow && previousMainIdentity) {
+                    nextMainActiveCalls = [previousMainCall];
+                    nextExternalConsultCalls = [
+                        ...originalMainCandidateCalls,
+                        ...originalExternalCandidateCalls,
+                    ].filter(
+                        (callLike) => resolveCallIdentity(callLike) !== previousMainIdentity
+                    );
+                }
+            } else {
+                primaryMissingSinceRef.current = 0;
+            }
+
+            if (!primaryActiveCallUuidRef.current && nextMainActiveCalls.length > 0) {
+                primaryActiveCallUuidRef.current = resolveCallIdentity(nextMainActiveCalls[0]);
+            }
+
+            if (primaryActiveCallUuidRef.current) {
+                const hasPrimary = nextMainActiveCalls.some(
+                    (callLike) => resolveCallIdentity(callLike) === primaryActiveCallUuidRef.current
+                );
+
+                if (!hasPrimary && !primaryMissingSinceRef.current) {
+                    primaryActiveCallUuidRef.current =
+                        nextMainActiveCalls.length > 0
+                            ? resolveCallIdentity(nextMainActiveCalls[0])
+                            : "";
+                }
+            }
+
+            const seenExternal = new Set<string>();
+            nextExternalConsultCalls = nextExternalConsultCalls.filter((callLike) => {
+                const key = resolveCallIdentity(callLike);
+                if (!key) return true;
+                if (seenExternal.has(key)) return false;
+                seenExternal.add(key);
+                return true;
+            });
+
+            const hadAnyLiveCalls =
+                activeCallsRef.current.length > 0 || externalConsultCallsRef.current.length > 0;
+            const hasNextAnyLiveCalls =
+                nextMainActiveCalls.length > 0 || nextExternalConsultCalls.length > 0;
+            const LIVE_CALL_FLAP_GRACE_MS = 2500;
+
+            if (!hasNextAnyLiveCalls && hadAnyLiveCalls) {
+                if (!liveCallDropStartedAtRef.current) {
+                    liveCallDropStartedAtRef.current = Date.now();
+                }
+
+                const elapsed = Date.now() - liveCallDropStartedAtRef.current;
+                if (elapsed < LIVE_CALL_FLAP_GRACE_MS) {
+                    console.debug("[calls] suppress empty fs_calls snapshot during grace", {
+                        elapsed,
+                        graceMs: LIVE_CALL_FLAP_GRACE_MS,
+                        nextMain: nextMainActiveCalls.length,
+                        nextExternal: nextExternalConsultCalls.length,
+                        nextInter: interCalls.length,
+                    });
+                    return;
+                }
+            } else {
+                liveCallDropStartedAtRef.current = 0;
+            }
+
+            const sig =
+                fsCallsSig(nextMainActiveCalls) +
+                "||" +
+                fsCallsSig(nextExternalConsultCalls) +
+                "||" +
+                fsCallsSig(interCalls);
             if (sig === lastFsCallsSigRef.current) return;
             lastFsCallsSigRef.current = sig;
-            const hadActiveCalls = activeCallsRef.current.length > 0;
-            const hasNextActiveCalls = activeCalls.length > 0;
 
-            if (!hasNextActiveCalls && hadActiveCalls) {
+            if (!hasNextAnyLiveCalls && hadAnyLiveCalls) {
+                primaryActiveCallUuidRef.current = "";
+                primaryMissingSinceRef.current = 0;
+                liveCallDropStartedAtRef.current = 0;
+                lastInboundContextResetIdentityRef.current = "";
                 beginUnifiedPostTransition();
                 setIsLoading(true);
                 socket.emit("fs_post_started", {
@@ -2562,12 +2892,13 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                     worker,
                     reason: "postobrabotka",
                 });
-            } else if (hasNextActiveCalls) {
+            } else if (hasNextAnyLiveCalls) {
                 setPostTransitionPending(false);
             }
 
             dispatch(setInterCalls(interCalls));
-            dispatch(setActiveCalls(activeCalls));
+            dispatch(setExternalConsultCalls(nextExternalConsultCalls));
+            dispatch(setActiveCalls(nextMainActiveCalls));
         };
 
         const handleOtherUsers = (msg: any) => {
@@ -2598,12 +2929,13 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     }, [beginUnifiedPostTransition, confirmUnifiedPostActive, dispatch, enabled, hasLiveConsult, isOwner, postTransitionPending, sessionKey, setUnifiedPostActive, sipLogin, worker]);
     useEffect(() => {
         if (!(activeCalls[0] && Object.keys(activeCalls[0]).length > 0)) return
+        if (hasLiveConsult) return;
         const first = activeCalls[0]
         const hasGroupedContext =
             momoProjectRepo.current ||
             (showTasksDashboard && (openedPhones.length > 0 || openedGroup.length > 0 || GroupIDs.length > 0));
 
-        if (first.direction === "inbound" && !hasGroupedContext) {
+        if (first.direction === "inbound" && !hasGroupedContext && !hasAnyLiveCall && !effectivePostActive) {
             setShowTasksDashboard(false)
         }
         if (first.uuid !== "" && first.cid_num !== "" && !get_callcenter && !outboundCall){
@@ -2617,7 +2949,19 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             };
             socket.emit('get_callcenter_queues', requestParams);
         }
-    }, [activeCall, activeCalls, get_callcenter, outboundCall, showTasksDashboard, openedPhones.length, openedGroup.length, GroupIDs.length]);
+    }, [
+        activeCall,
+        activeCalls,
+        get_callcenter,
+        outboundCall,
+        showTasksDashboard,
+        openedPhones.length,
+        openedGroup.length,
+        GroupIDs.length,
+        hasLiveConsult,
+        hasAnyLiveCall,
+        effectivePostActive,
+    ]);
 
     const findNameProject = (projectName: string)=> {
         if (!projectName) return "";
@@ -2661,6 +3005,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
             !enabled ||
             outboundCall ||
             activeCall ||
+            hasExternalConsult ||
             effectivePostActive ||
             !incoming ||
             incoming.state === SessionState.Terminated;
@@ -2713,6 +3058,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         autoAnswerEnabled,
         closeIncomingBrowserNotification,
         enabled,
+        hasExternalConsult,
         incoming,
         isOwner,
         outboundCall,
@@ -2734,7 +3080,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         [interCall]
     );
     const callTabVisualState = useMemo<CallTabVisualState>(() => {
-        const hasLiveCall = activeCall || activeCalls.length > 0 || hasActiveInterCall;
+        const hasLiveCall =
+            activeCall || activeCalls.length > 0 || externalConsultCalls.length > 0 || hasActiveInterCall;
         const hasIncomingCall =
             !outboundCall &&
             (((incoming && incoming.state !== SessionState.Terminated) ? true : false) || hasIncomingInterCall);
@@ -2742,7 +3089,15 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         if (hasIncomingCall && !hasLiveCall) return "incoming";
         if (hasLiveCall) return "active";
         return "idle";
-    }, [activeCall, activeCalls.length, hasActiveInterCall, hasIncomingInterCall, incoming, outboundCall]);
+    }, [
+        activeCall,
+        activeCalls.length,
+        externalConsultCalls.length,
+        hasActiveInterCall,
+        hasIncomingInterCall,
+        incoming,
+        outboundCall,
+    ]);
 
     const ensureManagedFaviconLink = React.useCallback(() => {
         if (typeof document === "undefined") return null;
@@ -2878,15 +3233,23 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
     }, [activeCall, effectivePostActive, incoming, incomingProgressStage, showInterOverlay, sipStatus]);
 
     useEffect(() => {
-        const shouldAutoAcceptIncoming = autoAnswerEnabled || outboundCall;
+        const apiIncoming = Boolean(incoming && isApiOriginatedIncoming(incoming));
+        const shouldAutoAcceptIncoming =
+            autoAnswerEnabled || outboundCall || (activeCall && apiIncoming);
         if (!shouldAutoAcceptIncoming) return;
         if (!incoming || incoming.state !== SessionState.Initial) return;
-        if (activeCall || effectivePostActive) return;
+
+        const allowDuringActiveCallForExternalConsult = Boolean(
+            activeCall && apiIncoming
+        );
+
+        if (effectivePostActive) return;
+        if (activeCall && !allowDuringActiveCallForExternalConsult) return;
         if (autoAnsweredIncomingRef.current === incoming) return;
 
         autoAnsweredIncomingRef.current = incoming;
 
-        if (outboundCall) {
+        if (outboundCall || apiIncoming) {
             setIncomingProgressStage(null);
             setIncomingProgressFrom("");
             setIncomingProgressToneMode("none");
@@ -2942,8 +3305,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         return g.length > len ? `...${g.slice(-len)}` : g;
     }
 
-    function labelForGuid(g: string) {
-        return shortGuid(g);
+    function labelForGuid(g: any) {
+        return shortGuid(normalizeGuidValue(g));
 
     }
 
@@ -2962,6 +3325,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
         !outboundCall
     );
 
+    const callControlActiveProjectForTasks =
+        hasAnyLiveCall || effectivePostActive
+            ? (activeProjectName || scriptProject)
+            : scriptProject;
+
 
     const onCloseCall = React.useCallback(() => {
         setSelectedCall(null);
@@ -2969,8 +3337,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
 
     return (
         <div className="container-fluid">
-            {showInterOverlay && interCall && (
-                <InterCallOverlay call={interCall} onHangup={hangupInterCall} />
+            {showInterOverlay && cardInterCall && (
+                <InterCallOverlay call={cardInterCall} onHangup={hangupInterCall} />
             )}
             {enabled && (
                 <>
@@ -3119,7 +3487,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                                                 className={`${styles.chatTabsBtn} ${isActive ? styles.isActive : ""} ${
                                                                     unread ? styles.hasUnread : ""
                                                                 }`}
-                                                                onClick={() => setActiveGuid(g)}
+                                                                onClick={() => setActiveGuidSafe(g)}
                                                                 title={labelForGuid(g)}
                                                                 aria-label={`${labelForGuid(g)}${
                                                                     unread ? `, непрочитанных: ${unread}` : ""
@@ -3197,11 +3565,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                         minHeight: 0,
                                     }}
                                 >
-                                    {(openedPhones.length > 0 || activeCall || effectivePostActive) && (
+                                    {(openedPhones.length > 0 || hasAnyLiveCall || effectivePostActive) && (
                                         <MemoCallControlPanel
                                             call={selectedCall}
-                                            hasActiveCall={activeCall}
-                                            activeProject={scriptProject}
+                                            hasActiveCall={hasAnyLiveCall}
+                                            activeProject={callControlActiveProjectForTasks}
                                             onClose={onCloseCall}
                                             postActive={effectivePostActive}
                                             setPostActive={setUnifiedPostActive}
@@ -3239,8 +3607,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                             phoneID={phoneID}
                                             setPhoneID={setPhoneID}
                                             checkBox={activeGuid}
-                                            setActiveGuid={setActiveGuid}
-                                            interCall={interCall}
+                                            setActiveGuid={setActiveGuidSafe}
+                                            interCall={cardInterCall}
                                             showInterCallHeader={showInterInCardHeader}
                                             onHangupInterCall={hangupInterCall}
                                             suspendStartModules={inboundSearchPending}
@@ -3264,7 +3632,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                 minWidth: 0,
                             }}
                         >
-                            {!effectivePostActive && !activeCall && openedPhones.length > 0 && (
+                            {!effectivePostActive && !hasAnyLiveCall && openedPhones.length > 0 && (
                                 <div style={{ marginLeft: 13, marginRight: 14 }}>
                                     {groupProjects.length > 1 && (
                                         <div
@@ -3322,11 +3690,11 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                     minWidth: 0,
                                 }}
                             >
-                                {(openedPhones.length > 0 || activeCall || effectivePostActive) && (
+                                {(openedPhones.length > 0 || hasAnyLiveCall || effectivePostActive) && (
                                     <MemoCallControlPanel
                                         call={selectedCall}
-                                        hasActiveCall={activeCall}
-                                        activeProject={scriptProject}
+                                        hasActiveCall={hasAnyLiveCall}
+                                        activeProject={callControlActiveProjectForTasks}
                                         onClose={onCloseCall}
                                         postActive={effectivePostActive}
                                         setPostActive={setUnifiedPostActive}
@@ -3364,8 +3732,8 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                         phoneID={phoneID}
                                         setPhoneID={setPhoneID}
                                         checkBox={activeGuid}
-                                        setActiveGuid={setActiveGuid}
-                                        interCall={interCall}
+                                        setActiveGuid={setActiveGuidSafe}
+                                        interCall={cardInterCall}
                                         showInterCallHeader={showInterInCardHeader}
                                         onHangupInterCall={hangupInterCall}
                                         suspendStartModules={inboundSearchPending}
@@ -3382,7 +3750,7 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                         className={fullWidthCard ? "col-12" : "col-12 col-md-6"}
                         style={{ order: fullWidthCard ? 2 : 1 }}
                     >
-                        {selectedCall && scriptDir && scriptProject && !effectivePostActive && !activeCalls.length ? (
+                        {selectedCall && scriptDir && scriptProject && !effectivePostActive && !hasExternalActive ? (
                             <ScriptPanel
                                 direction={scriptDir}
                                 projectName={scriptProject}
@@ -3415,10 +3783,10 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                         className={fullWidthCard ? "col-12" : "col-12 col-md-6"}
                         style={{ order: fullWidthCard ? 1 : 2 }}
                     >
-                        {(selectedCall || activeCall || effectivePostActive) && (
+                        {(selectedCall || hasAnyLiveCall || effectivePostActive) && (
                             <MemoCallControlPanel
                                 call={selectedCall}
-                                hasActiveCall={activeCall}
+                                hasActiveCall={hasAnyLiveCall}
                                 activeProject={activeProjectName}
                                 onClose={onCloseCall}
                                 postActive={effectivePostActive}
@@ -3437,16 +3805,28 @@ const MainApp: React.FC<MainAppProps> = ({ isOwner }) => {
                                 outboundCall={outboundCall}
                                 setOutboundCall={setOutboundCall}
                                 tuskMode={showTasksDashboard}
+                                setTuskMode={setShowTasksDashboard}
                                 fullWidthCard={fullWidthCard}
                                 setFullWidthCard={setFullWidthCard}
+                                openedPhones={openedPhones}
+                                setOpenedPhones={setOpenedPhones}
                                 postCallData={postCallData}
                                 setPostCallData={setPostCallData}
                                 startModulesRanRef={startModulesRanRef}
                                 monoModules={monoModules}
                                 setMonoModules={setMonoModules}
+                                setActiveProjectName={setActiveProjectName}
+                                selectedPreset={selectedPreset}
+                                role={role}
+                                setOpenedGroup={setOpenedGroup}
+                                setPhonesData={setPhonesData}
+                                momoProjectRepo={momoProjectRepo}
                                 expressCall={expressCall}
-                                setActiveGuid={setActiveGuid}
-                                interCall={interCall}
+                                phoneID={phoneID}
+                                setPhoneID={setPhoneID}
+                                checkBox={activeGuid}
+                                setActiveGuid={setActiveGuidSafe}
+                                interCall={cardInterCall}
                                 showInterCallHeader={showInterInCardHeader}
                                 onHangupInterCall={hangupInterCall}
                                 suspendStartModules={inboundSearchPending}

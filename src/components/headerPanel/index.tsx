@@ -277,6 +277,12 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     const activeCalls = useMemo(() => {
         return Array.isArray(rawActiveCalls) ? rawActiveCalls : Object.values(rawActiveCalls || {});
     }, [rawActiveCalls]);
+    const rawExternalConsultCalls = useSelector((state: RootState) => (state.operator as any).externalConsultCalls);
+    const externalConsultCalls = useMemo(() => {
+        return Array.isArray(rawExternalConsultCalls)
+            ? rawExternalConsultCalls
+            : Object.values(rawExternalConsultCalls || {});
+    }, [rawExternalConsultCalls]);
 
     const [showStatuses, setShowStatuses] = useState(false);
     const [phone, setPhone] = useState("");
@@ -354,9 +360,14 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
     };
 
     useEffect(() => {
-        if (activeCalls.length > 0 && Object.keys(activeCalls[0] || {}).length > 0) setHasActiveCall(true);
+        if (
+            (activeCalls.length > 0 && Object.keys(activeCalls[0] || {}).length > 0) ||
+            (externalConsultCalls.length > 0 && Object.keys(externalConsultCalls[0] || {}).length > 0)
+        ) {
+            setHasActiveCall(true);
+        }
         else setHasActiveCall(false);
-    }, [activeCalls]);
+    }, [activeCalls, externalConsultCalls]);
 
     useEffect(() => {
         setHandleOutboundCall(false);
@@ -368,7 +379,10 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         let intervalId: ReturnType<typeof setInterval> | undefined;
 
         if (hasActiveCall) {
-            const first: any = activeCalls && activeCalls.length ? activeCalls[0] : {};
+            const first: any =
+                activeCalls && activeCalls.length
+                    ? activeCalls[0]
+                    : (externalConsultCalls && externalConsultCalls.length ? externalConsultCalls[0] : {});
             const epoch = first.b_created_epoch || first.created_epoch;
             const start = epoch ? new Date(Number(epoch) * 1000) : first.b_created ? new Date(first.b_created) : new Date();
 
@@ -386,7 +400,7 @@ const HeaderPanel: React.FC<HeaderPanelProps> = ({
         return () => {
             if (intervalId) clearInterval(intervalId);
         };
-    }, [hasActiveCall, activeCalls]);
+    }, [hasActiveCall, activeCalls, externalConsultCalls]);
 
     useEffect(() => {
         if (sessionKey) {

@@ -275,6 +275,7 @@ type StorageFileRow = {
     id?: number;
     glagol_parent?: string;
     guid: string;
+    origin_guid?: string;
 
     filename: string; // отображение
     inner_name: string; // ключ
@@ -287,7 +288,7 @@ type StorageFileRow = {
     modified_dt?: string;
 };
 
-const rowKeyOf = (r: StorageFileRow) => `${r.guid}::${r.inner_name || r.filename}`;
+const rowKeyOf = (r: StorageFileRow) => `${r.origin_guid || r.guid}::${r.inner_name || r.filename}`;
 
 export function ContactFilesPanel({
                                       contacts,
@@ -342,6 +343,7 @@ export function ContactFilesPanel({
                     seen.add(key);
                     out.push({
                         guid: String(guid),
+                        origin_guid: String(guid),
                         filename: String(fname),
                         inner_name: String(fname),
                         description: null,
@@ -384,6 +386,7 @@ export function ContactFilesPanel({
                             id: it?.id,
                             glagol_parent: it?.glagol_parent,
                             guid: String(it?.guid ?? r.value.guid),
+                            origin_guid: String(it?.origin_guid ?? it?.guid ?? r.value.guid),
 
                             filename: String(it?.filename ?? it?.inner_name ?? ""),
                             inner_name: String(it?.inner_name ?? it?.filename ?? ""),
@@ -450,7 +453,7 @@ export function ContactFilesPanel({
                 .map((r) => {
                     const nameForUrl = r.inner_name || r.filename;
                     return {
-                        url: buildChatDownloadUrl(r.guid, nameForUrl),
+                        url: buildChatDownloadUrl(r.origin_guid || r.guid, nameForUrl),
                         title: r.filename || r.inner_name,
                     };
                 }),
@@ -530,7 +533,7 @@ export function ContactFilesPanel({
         try {
             await chatApi.put("/api/v1/storage/file", {
                 glagol_parent: glagolParent,
-                guid: r.guid,
+                origin_guid: r.origin_guid || r.guid,
                 inner_name: r.inner_name,
                 description: payloadDesc,
             });
@@ -634,12 +637,8 @@ export function ContactFilesPanel({
         setRows((prev) => prev.filter((x) => rowKeyOf(x) !== k));
 
         try {
-            await chatApi.delete("/api/v1/contacts/storage/remove", {
-                data: { guid: r.guid, storage: [nameForOps] },
-                headers: authHeaders,
-            });
             await chatApi.delete("/api/v1/storage/delete", {
-                data: { guid: r.guid, storage: [nameForOps] },
+                data: { origin_guid: r.origin_guid || r.guid, storage: [nameForOps] },
                 headers: authHeaders,
             });
 
@@ -778,7 +777,7 @@ export function ContactFilesPanel({
                             const displayName = r.filename || r.inner_name;
                             const nameForUrl = r.inner_name || r.filename;
 
-                            const href = buildChatDownloadUrl(r.guid, nameForUrl);
+                            const href = buildChatDownloadUrl(r.origin_guid || r.guid, nameForUrl);
 
                             const emoji = fileEmojiByExt(nameForUrl);
                             const img = isImage(nameForUrl);
